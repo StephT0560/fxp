@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/target/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+/bin/
+/out/
+
+# Generated protobuf (optional: remove if you want to commit generated files)
+/go_gateway/protobuf/*.pb.go
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Logs and temporary
+*.log

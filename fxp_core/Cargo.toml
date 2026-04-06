@@ -1,0 +1,21 @@
+[package]
+name = "fxp_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rand = "0.8"
+prost = "0.13"
+# Only necessary if using Protobuf well-known types:
+prost-types = "0.13"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "*"  # WebSocket library for Tokio
+futures-util = "0.3"        # For async stream handling
+url = "2.4"
+
+[build-dependencies]
+prost-build = "0.13"
+
+[lib]
+name = "fxp_core"
+path = "src/lib.rs"
