@@ -9,17 +9,17 @@ import (
 
 	"go_gateway/protobuf"
 
+	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 )
 
-const rustAddress = "127.0.0.1:8080" // FXP Core Address
+const rustAddress = "127.0.0.1:8080"
 
 var (
 	conn     net.Conn
 	connLock sync.Mutex
 )
 
-// StartTCPServer initializes the TCP server and handles incoming client connections
 func StartTCPServer() {
 	listener, err := net.Listen("tcp", ":8082")
 	if err != nil {
@@ -39,12 +39,13 @@ func StartTCPServer() {
 	}
 }
 
-// handleTCPClient processes incoming messages from TCP clients
 func handleTCPClient(clientConn net.Conn) {
 	defer clientConn.Close()
 
+	// sessionID is empty until a valid Logon is received for this connection.
+	sessionID := ""
+
 	for {
-		// Read 4-byte length prefix
 		lenBuf := make([]byte, 4)
 		_, err := io.ReadFull(clientConn, lenBuf)
 		if err != nil {
@@ -53,7 +54,6 @@ func handleTCPClient(clientConn net.Conn) {
 		}
 		msgLen := binary.BigEndian.Uint32(lenBuf)
 
-		// Read full message
 		msgBuf := make([]byte, msgLen)
 		_, err = io.ReadFull(clientConn, msgBuf)
 		if err != nil {
@@ -69,14 +69,14 @@ func handleTCPClient(clientConn net.Conn) {
 
 		if msg.Payload == nil {
 			log.Println("⚠️ FXPMessage has no payload")
+			continue
 		}
 
-		HandleFXPMessage(clientConn, msg)
+		// Auth-aware router: enforces Logon before any other message type.
+		HandleFXPMessageAuthenticated(clientConn, msg, &sessionID)
 	}
 }
 
-
-// EnsureConnection maintains a persistent TCP connection to FXP Core
 func EnsureConnection() error {
 	connLock.Lock()
 	defer connLock.Unlock()
@@ -93,7 +93,9 @@ func EnsureConnection() error {
 	return nil
 }
 
-// SendOrderToRust forwards an order to Rust and returns execution report to the client
+// SendOrderToRust forwards a framed order (4-byte prefix + body) to FXP Core
+// and registers the client connection for ExecutionReport delivery.
+// orderData must be the pre-framed bytes (prefix + protobuf body).
 func SendOrderToRust(clientConn net.Conn, orderData []byte) {
 	err := EnsureConnection()
 	if err != nil {
@@ -101,12 +103,17 @@ func SendOrderToRust(clientConn net.Conn, orderData []byte) {
 		return
 	}
 
-	msg := &protobuf.FXPMessage{}
-	if err := proto.Unmarshal(orderData, msg); err == nil {
-		if order, ok := msg.Payload.(*protobuf.FXPMessage_NewOrder); ok {
-			orderID := order.NewOrder.OrderId
-			orderClientMap.Store(orderID, clientConn)
-			log.Printf("🧠 Registered OrderID %s to clientConn", orderID)
+	// FIX: orderData includes the 4-byte length prefix — strip it before
+	// unmarshalling so we can extract the order ID for the client map.
+	if len(orderData) > 4 {
+		body := orderData[4:]
+		msg := &protobuf.FXPMessage{}
+		if err := proto.Unmarshal(body, msg); err == nil {
+			if order, ok := msg.Payload.(*protobuf.FXPMessage_NewOrder); ok {
+				orderID := order.NewOrder.OrderId
+				orderClientMap.Store(orderID, clientConn)
+				log.Printf("🧠 Registered OrderID %s to TCP clientConn", orderID)
+			}
 		}
 	}
 
@@ -124,10 +131,9 @@ func SendOrderToRust(clientConn net.Conn, orderData []byte) {
 }
 
 func ListenForMarketData() {
-	var header = make([]byte, 4)
+	header := make([]byte, 4)
 
 	for {
-		// Step 1: Read the 4-byte length prefix
 		_, err := io.ReadFull(conn, header)
 		if err != nil {
 			log.Printf("❌ Failed to read length prefix from FXP Core: %v", err)
@@ -135,14 +141,12 @@ func ListenForMarketData() {
 			return
 		}
 
-		// Step 2: Decode length prefix (big-endian uint32)
 		msgLen := int(binary.BigEndian.Uint32(header))
-		if msgLen <= 0 || msgLen > 4096 {
+		if msgLen <= 0 || msgLen > 1_048_576 {
 			log.Printf("⚠️ Invalid FXP message length: %d", msgLen)
 			continue
 		}
 
-		// Step 3: Read message body
 		body := make([]byte, msgLen)
 		_, err = io.ReadFull(conn, body)
 		if err != nil {
@@ -151,55 +155,66 @@ func ListenForMarketData() {
 			return
 		}
 
-		log.Printf("📥 Market data update received from FXP Core (%d bytes): %x", msgLen, body)
-
-		// Step 4: Unmarshal into FXPMessage
 		msg := &protobuf.FXPMessage{}
 		if err := proto.Unmarshal(body, msg); err != nil {
 			log.Println("❌ Failed to decode FXPMessage from FXP Core:", err)
 			continue
 		}
 
-		// Step 5: Route by payload type
 		switch payload := msg.Payload.(type) {
 		case *protobuf.FXPMessage_ExecutionReport:
 			orderID := payload.ExecutionReport.OrderId
-			log.Printf("📩 ExecutionReport received from FXP Core for OrderID %s", orderID)
+			log.Printf("📩 ExecutionReport for OrderID %s status=%s",
+				orderID, payload.ExecutionReport.OrderStatus)
 
 			if clientAny, ok := orderClientMap.Load(orderID); ok {
-				if client, ok := clientAny.(net.Conn); ok {
-					// Re-encode with length prefix
-					response, _ := proto.Marshal(msg)
+				response, _ := proto.Marshal(msg)
+
+				var sendErr error
+				switch client := clientAny.(type) {
+				case net.Conn:
 					frame := make([]byte, 4+len(response))
 					binary.BigEndian.PutUint32(frame[:4], uint32(len(response)))
 					copy(frame[4:], response)
+					_, sendErr = client.Write(frame)
+				case *websocket.Conn:
+					sendErr = client.WriteMessage(websocket.BinaryMessage, response)
+				default:
+					log.Printf("⚠️ Unknown client type in orderClientMap: %T", clientAny)
+				}
 
-					_, err := client.Write(frame)
-					if err != nil {
-						log.Printf("❌ Failed to send ExecutionReport to TCP client: %v", err)
-					} else {
-						log.Printf("📩 ExecutionReport routed to TCP client for OrderID %s", orderID)
-					}
+				if sendErr != nil {
+					log.Printf("❌ Failed to deliver ExecutionReport for OrderID %s: %v", orderID, sendErr)
+				} else {
+					log.Printf("✅ ExecutionReport delivered to client for OrderID %s", orderID)
+				}
+
+				// Only remove the client mapping on terminal statuses.
+				// Partial fills send multiple reports for the same order ID.
+				status := protobuf.OrderStatus(payload.ExecutionReport.OrderStatus)
+				terminal := status == protobuf.OrderStatus_ORDER_FILLED ||
+					status == protobuf.OrderStatus_ORDER_CANCELED ||
+					status == protobuf.OrderStatus_ORDER_REJECTED
+				if terminal {
 					orderClientMap.Delete(orderID)
+					log.Printf("🗑️ OrderID %s removed from client map (terminal status)", orderID)
 				}
 			} else {
-				log.Printf("⚠️ No registered client for OrderID %s — broadcast only", orderID)
+				log.Printf("⚠️ No registered client for OrderID %s", orderID)
 			}
+
+		case *protobuf.FXPMessage_MarketDataIncremental:
+			// FIX: call ForwardMarketData directly instead of HandleFXPMessage("market", ...)
+			// which passed an invalid connection type and silently dropped the update.
+			log.Printf("📡 MarketDataIncrementalUpdate for symbol: %s", payload.MarketDataIncremental.Symbol)
+			ForwardMarketData(payload.MarketDataIncremental)
+
+		case *protobuf.FXPMessage_TradeCaptureReport:
+			log.Printf("📡 TradeCaptureReport for symbol: %s", payload.TradeCaptureReport.Symbol)
+			ForwardMarketData(payload.TradeCaptureReport)
 
 		default:
-			log.Printf("🔍 FXP Payload Type Received: %T", msg.Payload)
-			
-
-			switch msg.Payload.(type) {
-			case *protobuf.FXPMessage_MarketDataIncremental, *protobuf.FXPMessage_TradeCaptureReport:
-				log.Println("📡 Routing market data update to HandleFXPMessage")
-				HandleFXPMessage("market", msg)
-			default:
-				log.Println("⚠️ Unknown or unhandled FXPMessage payload from FXP Core")
-			}
+			log.Printf("⚠️ Unhandled FXPMessage payload from FXP Core: %T", msg.Payload)
 		}
 	}
 }
-
-
-

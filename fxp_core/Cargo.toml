@@ -6,12 +6,15 @@ edition = "2024"
 [dependencies]
 rand = "0.8"
 prost = "0.13"
-# Only necessary if using Protobuf well-known types:
 prost-types = "0.13"
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "*"  # WebSocket library for Tokio
-futures-util = "0.3"        # For async stream handling
+tokio-tungstenite = "*"
+futures-util = "0.3"
 url = "2.4"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+hex = "0.4"
 
 [build-dependencies]
 prost-build = "0.13"
@@ -19,3 +22,9 @@ prost-build = "0.13"
 [lib]
 name = "fxp_core"
 path = "src/lib.rs"
+
+[[bench]]
+name = "encoding_benchmark"
+path = "src/benches/encoding_benchmark.rs"
+harness = false
+

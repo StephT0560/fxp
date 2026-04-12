@@ -19,7 +19,7 @@ fn test_full_order_lifecycle() {
         order_id: "B1".to_string(),
         trader_id: "TraderA".to_string(),
         symbol: "AAPL".to_string(),
-        price: 101_00, // $101.00 (fixed-point)
+        price: 101_00,
         quantity: 10,
         side: OrderSide::Buy,
         order_type: OrderType::Limit,
@@ -34,7 +34,7 @@ fn test_full_order_lifecycle() {
         order_id: "S1".to_string(),
         trader_id: "TraderB".to_string(),
         symbol: "AAPL".to_string(),
-        price: 101_00, // $101.00 (fixed-point)
+        price: 101_00,
         quantity: 10,
         side: OrderSide::Sell,
         order_type: OrderType::Limit,
@@ -45,15 +45,19 @@ fn test_full_order_lifecycle() {
     broadcaster.broadcast_incremental(&sell_update);
 
     // ✅ Step 4: Match orders and execute trade
-    let execution_reports = order_book.match_orders();
+    let (execution_reports, market_updates) = order_book.match_orders();
 
-    assert_eq!(execution_reports.len(), 1); // ✅ One trade should be executed
+    assert_eq!(execution_reports.len(), 1, "Expected exactly one fill");
     assert_eq!(execution_reports[0].trade_price, 101_00);
     assert_eq!(execution_reports[0].trade_quantity, 10);
+    assert!(execution_reports[0].buy_fully_filled, "Buy should be fully filled");
+    assert!(execution_reports[0].sell_fully_filled, "Sell should be fully filled");
+    assert_eq!(execution_reports[0].buy_order_id, "B1");
+    assert_eq!(execution_reports[0].sell_order_id, "S1");
+
+    assert_eq!(market_updates.len(), 1, "Expected one fill market update");
+    assert_eq!(market_updates[0].symbol, "AAPL");
 
     // ✅ Step 5: Broadcast market data updates after trade execution
     broadcaster.broadcast_snapshot(&order_book.get_market_snapshot());
 }
-
-
-

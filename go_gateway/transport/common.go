@@ -1,8 +1,8 @@
 package transport
 
 import (
+	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -16,7 +16,7 @@ import (
 // ===============================
 // ✅ Shared Client Subscriptions
 // ===============================
-var clientSubs sync.Map // symbol -> *sync.Map[clientConn -> true]
+var clientSubs sync.Map    // symbol -> *sync.Map[clientConn -> true]
 var orderClientMap sync.Map
 
 // ============================================
@@ -86,11 +86,19 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 			return
 		}
 
+		// Frame the message with a 4-byte length prefix
+		frame := make([]byte, 4+len(raw))
+		binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
+		copy(frame[4:], raw)
+
 		switch c := conn.(type) {
 		case net.Conn:
-			SendOrderToRust(c, raw)
+			SendOrderToRust(c, frame)
 		case *websocket.Conn:
-			ForwardToTCPServer(c, raw)
+			// FIX: Route WebSocket orders through the same persistent connection
+			// and orderClientMap as TCP clients, then register the WS conn so
+			// ListenForMarketData can route the ExecutionReport back correctly.
+			ForwardToTCPServer(c, msg, frame)
 		default:
 			log.Println("❌ Unknown connection type in HandleFXPMessage for NewOrder")
 		}
@@ -99,16 +107,14 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		log.Println("➡️ Processing MarketDataIncrementalUpdate")
 		log.Printf("📡 MarketDataIncrementalUpdate received for symbol: %s", payload.MarketDataIncremental.Symbol)
 		ForwardMarketData(payload.MarketDataIncremental)
-	
+
 	case *protobuf.FXPMessage_TradeCaptureReport:
 		log.Println("➡️ Processing TradeCaptureReport")
 		log.Printf("📡 TradeCaptureReport received for symbol: %s", payload.TradeCaptureReport.Symbol)
 		ForwardMarketData(payload.TradeCaptureReport)
-	
 
 	default:
 		log.Printf("❌ Unhandled FXP payload type: %T", payload)
-	
 	}
 }
 
@@ -132,20 +138,27 @@ func ForwardMarketData(update proto.Message) {
 		log.Printf("❌ Failed to encode market data for symbol %s: %v", symbol, err)
 		return
 	}
+
+	// Frame with length prefix for TCP clients
+	frame := make([]byte, 4+len(data))
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(data)))
+	copy(frame[4:], data)
+
 	log.Printf("🚀 ForwardMarketData called with symbol: %s", symbol)
 	log.Printf("📦 Forwarding market data for %s (%d bytes)", symbol, len(data))
-	
 
 	if clients, ok := clientSubs.Load(symbol); ok {
 		count := 0
 		clients.(*sync.Map).Range(func(key, _ interface{}) bool {
 			count++
 			var sendErr error
-			switch conn := key.(type) {
+			switch c := key.(type) {
 			case net.Conn:
-				_, sendErr = conn.Write(data)
+				// TCP clients expect length-prefixed frames
+				_, sendErr = c.Write(frame)
 			case *websocket.Conn:
-				sendErr = conn.WriteMessage(websocket.BinaryMessage, data)
+				// WebSocket clients get raw Protobuf bytes (WS has its own framing)
+				sendErr = c.WriteMessage(websocket.BinaryMessage, data)
 			default:
 				log.Println("❌ Unknown client type for market data forward")
 				return true
@@ -153,22 +166,21 @@ func ForwardMarketData(update proto.Message) {
 
 			if sendErr != nil {
 				log.Printf("❌ Failed to send market data to client (%T): %v", key, sendErr)
-				closeConn(conn)
-				clients.(*sync.Map).Delete(conn)
+				closeConn(key)
+				clients.(*sync.Map).Delete(key)
 			} else {
 				log.Printf("✅ Market data sent to client (%T) for symbol: %s", key, symbol)
 			}
 			return true
 		})
-
 		log.Printf("📊 Forwarding complete: %d clients attempted for %s", count, symbol)
 	} else {
 		log.Printf("🚫 No clients subscribed for symbol: %s", symbol)
 	}
 }
 
-
-// Registers a TCP client for market data updates
+// Registers a TCP client for market data updates and forwards the
+// subscription to Rust Core so it starts broadcasting on this symbol.
 func SubscribeToMarketDataTCP(clientConn net.Conn, request *protobuf.MarketDataRequest) {
 	for _, symbol := range request.Symbols {
 		clients, _ := clientSubs.LoadOrStore(symbol, &sync.Map{})
@@ -176,7 +188,6 @@ func SubscribeToMarketDataTCP(clientConn net.Conn, request *protobuf.MarketDataR
 	}
 	log.Printf("✅ TCP Client subscribed to market data: %v", request.Symbols)
 
-	// Debug log: how many clients are now subscribed to that symbol
 	for _, symbol := range request.Symbols {
 		if subs, ok := clientSubs.Load(symbol); ok {
 			count := 0
@@ -187,15 +198,53 @@ func SubscribeToMarketDataTCP(clientConn net.Conn, request *protobuf.MarketDataR
 			log.Printf("🔁 %d clients subscribed to %s", count, symbol)
 		}
 	}
+
+	// Forward subscription to Rust Core so it starts emitting incremental
+	// updates for this symbol on the persistent connection.
+	forwardSubscriptionToCore(request)
 }
 
-// Registers a WebSocket client for market data updates
+// Registers a WebSocket client for market data updates and forwards the
+// subscription to Rust Core.
 func SubscribeToMarketDataWS(clientConn *websocket.Conn, request *protobuf.MarketDataRequest) {
 	for _, symbol := range request.Symbols {
 		clients, _ := clientSubs.LoadOrStore(symbol, &sync.Map{})
 		clients.(*sync.Map).Store(clientConn, true)
 	}
 	log.Printf("✅ WebSocket Client subscribed to market data: %v", request.Symbols)
+
+	forwardSubscriptionToCore(request)
+}
+
+// forwardSubscriptionToCore sends a MarketDataRequest to FXP Core over the
+// persistent TCP connection so Rust starts broadcasting incremental updates.
+func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
+	msg := &protobuf.FXPMessage{
+		Payload: &protobuf.FXPMessage_MarketDataRequest{
+			MarketDataRequest: request,
+		},
+	}
+	raw, err := proto.Marshal(msg)
+	if err != nil {
+		log.Printf("❌ Failed to encode MarketDataRequest for Rust Core: %v", err)
+		return
+	}
+	frame := make([]byte, 4+len(raw))
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
+	copy(frame[4:], raw)
+
+	if err := EnsureConnection(); err != nil {
+		log.Printf("❌ Cannot forward subscription to Rust Core: %v", err)
+		return
+	}
+	connLock.Lock()
+	_, err = conn.Write(frame)
+	connLock.Unlock()
+	if err != nil {
+		log.Printf("❌ Failed to send MarketDataRequest to Rust Core: %v", err)
+	} else {
+		log.Printf("📡 MarketDataRequest forwarded to Rust Core for symbols: %v", request.Symbols)
+	}
 }
 
 // ====================================================
@@ -214,50 +263,39 @@ func closeConn(conn interface{}) {
 	}
 }
 
-
-// =================================================================
-// ✅ WebSocket-specific: forward order to FXP Core and relay reply
-// =================================================================
-func ForwardToTCPServer(clientConn *websocket.Conn, fxpData []byte) {
-	tcpConn, err := net.Dial("tcp", "127.0.0.1:8080")
-	if err != nil {
-		log.Printf("❌ Failed to connect to FXP Core: %v", err)
-		return
+// =======================================================================
+// ✅ WebSocket orders: route through the shared persistent FXP Core conn
+//    so ExecutionReports come back via ListenForMarketData, not a one-shot
+//    read that races and drops messages.
+// =======================================================================
+func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame []byte) {
+	// Register the WS client in orderClientMap so ListenForMarketData
+	// can route the ExecutionReport back to this specific connection.
+	if order, ok := msg.Payload.(*protobuf.FXPMessage_NewOrder); ok {
+		orderID := order.NewOrder.OrderId
+		orderClientMap.Store(orderID, wsConn)
+		log.Printf("🧠 Registered WS OrderID %s to wsConn", orderID)
 	}
-	defer tcpConn.Close()
 
-	_, err = tcpConn.Write(fxpData)
-	if err != nil {
-		log.Printf("❌ Failed to send FXPMessage to FXP Core: %v", err)
-		return
-	}
-	log.Println("📤 FXPMessage forwarded to FXP Core")
-
-	buffer := make([]byte, 1024)
-	n, err := tcpConn.Read(buffer)
-	if err != nil {
-		if err == io.EOF {
-			log.Println("⚠️ FXP Core closed the connection.")
-		} else {
-			log.Printf("❌ Failed to receive execution report from FXP Core: %v", err)
-		}
+	// Ensure the shared persistent connection to FXP Core is up.
+	if err := EnsureConnection(); err != nil {
+		log.Printf("❌ ForwardToTCPServer: failed to connect to FXP Core: %v", err)
 		return
 	}
 
-	// Relay execution report back to WebSocket client
-	err = clientConn.WriteMessage(websocket.BinaryMessage, buffer[:n])
-	if err != nil {
-		log.Printf("❌ Failed to forward execution report to WebSocket client: %v", err)
-	} else {
-		log.Println("📩 Execution report successfully forwarded to WebSocket client.")
-	}
-}
+	// Send via the shared conn — same path TCP clients use.
+	connLock.Lock()
+	_, err := conn.Write(frame)
+	connLock.Unlock()
 
-func encodeLengthPrefix(length int) []byte {
-	prefix := make([]byte, 4)
-	prefix[0] = byte(length >> 24)
-	prefix[1] = byte(length >> 16)
-	prefix[2] = byte(length >> 8)
-	prefix[3] = byte(length)
-	return prefix
+	if err != nil {
+		log.Printf("❌ ForwardToTCPServer: failed to write to FXP Core: %v", err)
+		connLock.Lock()
+		conn.Close()
+		conn = nil
+		connLock.Unlock()
+		return
+	}
+
+	log.Println("📤 WS order forwarded to FXP Core via persistent connection")
 }

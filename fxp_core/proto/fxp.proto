@@ -10,24 +10,35 @@ import "google/protobuf/timestamp.proto";
 // META & VERSIONING
 // ========================================
 message FXPHeader {
-  string protocol_version = 1;  
+  string protocol_version = 1;
   uint64 sequence_number = 2;
 }
 
 // ========================================
-// SESSION MANAGEMENT MESSAGES (FIX 4.2 Enhanced)
+// SESSION MANAGEMENT MESSAGES
 // ========================================
 message Heartbeat {
-  string status = 1;  
+  string status = 1;
   google.protobuf.Timestamp timestamp = 2;
 }
 
+// Logon: token-based authentication only.
+// The JWT must be signed with HS256 using the shared session secret.
+// Claims required: sub (trader ID), exp (expiry), iat (issued at).
+// Removed: username, password — never send plaintext credentials on the wire.
 message Logon {
-  string username = 1;
-  string password = 2;
-  string session_id = 3;
-  EncryptionType encryption_type = 4;
-  google.protobuf.Timestamp timestamp = 5;
+  string token      = 1; // HS256-signed JWT
+  string session_id = 2;
+  EncryptionType encryption_type = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// LogonAck: sent by server after validating the token.
+message LogonAck {
+  FXPHeader header    = 1;
+  bool accepted       = 2; // true = session open, false = rejected
+  string reject_reason = 3; // populated only when accepted = false
+  google.protobuf.Timestamp timestamp = 4;
 }
 
 message Logout {
@@ -37,27 +48,27 @@ message Logout {
 
 message GapFillRequest {
   uint64 start_sequence = 1;
-  uint64 end_sequence = 2;
+  uint64 end_sequence   = 2;
 }
 
 enum EncryptionType {
-  NONE = 0;
+  NONE    = 0;
   TLS_1_2 = 1;
   TLS_1_3 = 2;
 }
 
 // ========================================
-// ORDER ROUTING & EXECUTION MESSAGES (FIX 4.2 Enhanced)
+// ORDER ROUTING & EXECUTION MESSAGES
 // ========================================
 enum OrderType {
-  MARKET = 0;
-  LIMIT = 1;
-  STOP = 2;
+  MARKET     = 0;
+  LIMIT      = 1;
+  STOP       = 2;
   STOP_LIMIT = 3;
 }
 
 enum OrderSide {
-  BUY = 0;
+  BUY  = 0;
   SELL = 1;
 }
 
@@ -69,124 +80,125 @@ enum TimeInForce {
 }
 
 enum OrderStatus {
-  ORDER_NEW = 0;
-  ORDER_PENDING = 1;
-  ORDER_FILLED = 2;
+  ORDER_NEW              = 0;
+  ORDER_PENDING          = 1;
+  ORDER_FILLED           = 2;
   ORDER_PARTIALLY_FILLED = 3;
-  ORDER_CANCELED = 4;
-  ORDER_REJECTED = 5;
+  ORDER_CANCELED         = 4;
+  ORDER_REJECTED         = 5;
 }
 
 enum ExecutionType {
-  EXEC_FILLED = 0;
+  EXEC_FILLED           = 0;
   EXEC_PARTIALLY_FILLED = 1;
-  EXEC_CANCELED = 2;
+  EXEC_CANCELED         = 2;
 }
 
 message NewOrderSingle {
-  FXPHeader header = 1;
-  string order_id = 2;
-  string sender = 3;
-  string receiver = 4;
-  string symbol = 5;
-  int64 price = 6;  
-  OrderSide side = 7;
-  int32 quantity = 8;
+  FXPHeader header     = 1;
+  string order_id      = 2;
+  string sender        = 3;
+  string receiver      = 4;
+  string symbol        = 5;
+  int64  price         = 6;
+  OrderSide side       = 7;
+  int32  quantity      = 8;
   OrderType order_type = 9;
   TimeInForce time_in_force = 10;
   google.protobuf.Timestamp timestamp = 11;
 }
 
 message OrderAcknowledgment {
-  FXPHeader header = 1;
-  string order_id = 2;
+  FXPHeader header             = 1;
+  string order_id              = 2;
   string acknowledgment_status = 3;
   google.protobuf.Timestamp timestamp = 4;
 }
 
 message OrderCancelRequest {
-  FXPHeader header = 1;
-  string order_id = 2;
-  string sender = 3;
-  string receiver = 4;
-  string symbol = 5;
+  FXPHeader header  = 1;
+  string order_id   = 2;
+  string sender     = 3;
+  string receiver   = 4;
+  string symbol     = 5;
   google.protobuf.Timestamp timestamp = 6;
 }
 
 message ExecutionReport {
-  FXPHeader header = 1;
-  string execution_id = 2;
-  string order_id = 3;
-  string symbol = 4;
+  FXPHeader header          = 1;
+  string execution_id       = 2;
+  string order_id           = 3;
+  string symbol             = 4;
   ExecutionType execution_type = 5;
-  OrderStatus order_status = 6;
-  int64 execution_price = 7;
-  int32 executed_quantity = 8;
+  OrderStatus order_status  = 6;
+  int64  execution_price    = 7;
+  int32  executed_quantity  = 8;
   google.protobuf.Timestamp timestamp = 9;
 }
 
 // ========================================
-// MARKET DATA MESSAGES (FIX 5.0 Enhancements)
+// MARKET DATA MESSAGES
 // ========================================
-
 message MarketOrderBookEntry {
-  int64 price = 1;
-  int32 size = 2;
-  OrderSide side = 3;
+  int64     price = 1;
+  int32     size  = 2;
+  OrderSide side  = 3;
 }
 
 message MarketOrderUpdate {
   int32 update_type = 1; // 0 = NewOrder, 1 = ModifyOrder, 2 = CancelOrder
-  int64 price = 2;
-  int32 quantity = 3;
+  int64 price       = 2;
+  int32 quantity    = 3;
 }
 
 message MarketDataSnapshot {
-  FXPHeader header = 1;
-  string symbol = 2;
+  FXPHeader header                      = 1;
+  string symbol                         = 2;
   repeated MarketOrderBookEntry bid_levels = 3;
   repeated MarketOrderBookEntry ask_levels = 4;
-  int64 bid_ask_spread = 5;
-  int64 total_volume = 6;
-  google.protobuf.Timestamp timestamp = 7;
+  int64  bid_ask_spread                 = 5;
+  int64  total_volume                   = 6;
+  google.protobuf.Timestamp timestamp   = 7;
 }
 
 message MarketDataIncrementalUpdate {
-  FXPHeader header = 1;
-  string symbol = 2;
+  FXPHeader header                   = 1;
+  string symbol                      = 2;
   repeated MarketOrderUpdate changes = 3;
   google.protobuf.Timestamp timestamp = 4;
 }
 
 message MarketDataRequest {
-  FXPHeader header = 1;
+  FXPHeader header        = 1;
   repeated string symbols = 2;
 }
 
 message TradeCaptureReport {
-  FXPHeader header = 1;
-  string trade_id = 2;
-  string buy_order_id = 3;
+  FXPHeader header   = 1;
+  string trade_id    = 2;
+  string buy_order_id  = 3;
   string sell_order_id = 4;
-  string symbol = 5;
-  int64 trade_price = 6;
-  int32 trade_quantity = 7;
+  string symbol      = 5;
+  int64  trade_price = 6;
+  int32  trade_quantity = 7;
   google.protobuf.Timestamp timestamp = 8;
 }
 
 enum ErrorType {
-  SYSTEM_ERROR = 0;
-  INVALID_ORDER = 1;
-  SESSION_EXPIRED = 2;
+  SYSTEM_ERROR        = 0;
+  INVALID_ORDER       = 1;
+  SESSION_EXPIRED     = 2;
   RATE_LIMIT_EXCEEDED = 3;
-  ORDER_NOT_FOUND = 4;
+  ORDER_NOT_FOUND     = 4;
   SYMBOL_NOT_SUPPORTED = 5;
+  AUTH_FAILED         = 6; // new: token rejected
+  SESSION_NOT_LOGGED_ON = 7; // new: message sent before Logon
 }
 
 message ErrorMessage {
-  FXPHeader header = 1;
-  ErrorType error_type = 2;
-  string error_message = 3;
+  FXPHeader header       = 1;
+  ErrorType error_type   = 2;
+  string error_message   = 3;
   string related_order_id = 4;
   google.protobuf.Timestamp timestamp = 5;
 }
@@ -196,18 +208,19 @@ message ErrorMessage {
 // ========================================
 message FXPMessage {
   oneof payload {
-    Heartbeat heartbeat = 1;
-    Logon logon = 2;
-    Logout logout = 3;
-    GapFillRequest gap_fill = 4;
-    NewOrderSingle new_order = 5;
-    OrderAcknowledgment order_acknowledgment = 6;
-    OrderCancelRequest order_cancel = 7;
-    ExecutionReport execution_report = 8;
-    MarketDataSnapshot market_data_snapshot = 9;
+    Heartbeat                  heartbeat              = 1;
+    Logon                      logon                  = 2;
+    Logout                     logout                 = 3;
+    GapFillRequest             gap_fill               = 4;
+    NewOrderSingle             new_order              = 5;
+    OrderAcknowledgment        order_acknowledgment   = 6;
+    OrderCancelRequest         order_cancel           = 7;
+    ExecutionReport            execution_report       = 8;
+    MarketDataSnapshot         market_data_snapshot   = 9;
     MarketDataIncrementalUpdate market_data_incremental = 10;
-    MarketDataRequest market_data_request = 11;
-    TradeCaptureReport trade_capture_report = 12;
-    ErrorMessage error_message = 13;
+    MarketDataRequest          market_data_request    = 11;
+    TradeCaptureReport         trade_capture_report   = 12;
+    ErrorMessage               error_message          = 13;
+    LogonAck                   logon_ack              = 14; // new
   }
 }

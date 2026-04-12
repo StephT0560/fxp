@@ -7,11 +7,17 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// CheckOrigin should be tightened in production to an allowlist of known origins.
+// For local dev the wildcard is acceptable; remove it before any external deployment.
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		// TODO: replace with origin allowlist, e.g.:
+		// allowed := map[string]bool{"https://yourdomain.com": true}
+		// return allowed[r.Header.Get("Origin")]
+		return true
+	},
 }
 
-// StartWebSocketServer initializes the WebSocket server
 func StartWebSocketServer() {
 	http.HandleFunc("/ws", handleConnections)
 	log.Println("✅ WebSocket Server started on ws://localhost:8081")
@@ -21,7 +27,6 @@ func StartWebSocketServer() {
 	}
 }
 
-// handleConnections manages new WebSocket connections
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -30,6 +35,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Println("📡 New WebSocket client connected")
+
+	// sessionID is empty until a valid Logon is received for this connection.
+	sessionID := ""
 
 	for {
 		_, message, err := conn.ReadMessage()
@@ -44,6 +52,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		HandleFXPMessage(conn, msg)
+		// Auth-aware router: enforces Logon before any other message type.
+		HandleFXPMessageAuthenticated(conn, msg, &sessionID)
 	}
 }
