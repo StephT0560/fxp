@@ -1,98 +1,256 @@
+use crate::order_book::order::{Order, OrderSide, OrderType, TimeInForce};
 use crate::order_book::execution_report::ExecutionReport;
 use crate::order_book::market_data::{MarketDataIncrementalUpdate, MarketOrderUpdate, MarketUpdateType};
 use crate::order_book::order_book::OrderBook;
 
+// ── Result of processing an aggressive order ──────────────────────────────────
+
+pub struct AggressiveResult {
+    pub fills:        Vec<ExecutionReport>,
+    pub fill_updates: Vec<MarketDataIncrementalUpdate>,
+    pub unfilled_qty: u32,
+    /// Whether the unfilled remainder should be added to the resting book.
+    /// true  → Limit Day/GTC (rest unfilled qty)
+    /// false → Market, IOC, FOK (cancel remainder)
+    pub rest_on_book: bool,
+}
+
 impl OrderBook {
-    /// Match resting orders and return execution reports.
-    ///
-    /// Each report carries:
-    ///   - `buy_order_id` / `sell_order_id` — both sides of the trade
-    ///   - `trade_price`  — the resting ask price (price-time priority)
-    ///   - `trade_quantity` — qty filled in this match
-    ///   - `buy_fully_filled` / `sell_fully_filled` — lets the gateway know
-    ///     whether to keep or remove the client mapping for each side
-    ///
-    /// Also returns incremental market data updates for every fill so the
-    /// caller can broadcast them — previously these were built but discarded.
+    // ── Passive matching ──────────────────────────────────────────────────────
+    // Called after add_order() to cross newly-resting limit orders.
+
     pub fn match_orders(&mut self) -> (Vec<ExecutionReport>, Vec<MarketDataIncrementalUpdate>) {
-        let mut execution_reports = Vec::new();
-        let mut market_updates = Vec::new();
+        let mut fills        = Vec::new();
+        let mut fill_updates = Vec::new();
 
         loop {
-            // Best bid = highest buy price (last key in ascending BTreeMap)
-            // Best ask = lowest sell price (first key)
             let best_bid = self.buy_orders.keys().next_back().cloned();
             let best_ask = self.sell_orders.keys().next().cloned();
 
             match (best_bid, best_ask) {
                 (Some(bid_price), Some(ask_price)) if bid_price >= ask_price => {
                     let bid_orders = self.buy_orders.get_mut(&bid_price).unwrap();
-                    let mut bid_order = match bid_orders.pop() {
+                    let mut bid = match bid_orders.pop() {
                         Some(o) => o,
-                        None => break,
+                        None    => break,
                     };
-
                     let ask_orders = self.sell_orders.get_mut(&ask_price).unwrap();
-                    let mut ask_order = match ask_orders.pop() {
+                    let mut ask = match ask_orders.pop() {
                         Some(o) => o,
-                        None => {
-                            // Put the bid back and break — ask side is empty at this price
-                            self.buy_orders
-                                .get_mut(&bid_price)
-                                .unwrap()
-                                .push(bid_order);
+                        None    => {
+                            self.buy_orders.get_mut(&bid_price).unwrap().push(bid);
                             break;
                         }
                     };
 
-                    let trade_qty = bid_order.quantity.min(ask_order.quantity);
-                    bid_order.quantity -= trade_qty;
-                    ask_order.quantity -= trade_qty;
+                    let trade_qty = bid.quantity.min(ask.quantity);
+                    bid.quantity -= trade_qty;
+                    ask.quantity -= trade_qty;
 
-                    let buy_fully_filled = bid_order.quantity == 0;
-                    let sell_fully_filled = ask_order.quantity == 0;
+                    let buy_done  = bid.quantity == 0;
+                    let sell_done = ask.quantity == 0;
 
-                    execution_reports.push(ExecutionReport {
-                        buy_order_id: bid_order.order_id.clone(),
-                        sell_order_id: ask_order.order_id.clone(),
-                        trade_price: ask_price,
-                        trade_quantity: trade_qty,
-                        buy_fully_filled,
-                        sell_fully_filled,
+                    fills.push(ExecutionReport {
+                        buy_order_id:     bid.order_id.clone(),
+                        sell_order_id:    ask.order_id.clone(),
+                        trade_price:      ask_price,
+                        trade_quantity:   trade_qty,
+                        buy_fully_filled:  buy_done,
+                        sell_fully_filled: sell_done,
                     });
-
-                    // Market data update for this fill
-                    market_updates.push(MarketDataIncrementalUpdate {
-                        symbol: self.symbol.clone(),
+                    fill_updates.push(MarketDataIncrementalUpdate {
+                        symbol:  self.symbol.clone(),
                         changes: vec![MarketOrderUpdate {
                             update_type: MarketUpdateType::ModifyOrder,
-                            price: ask_price,
-                            quantity: trade_qty,
+                            price:       ask_price,
+                            quantity:    trade_qty,
                         }],
                     });
 
-                    // Return partially filled orders to the book,
-                    // remove fully filled price levels
-                    if buy_fully_filled {
-                        if bid_orders.is_empty() {
-                            self.buy_orders.remove(&bid_price);
-                        }
-                    } else {
-                        bid_orders.push(bid_order);
-                    }
-
-                    if sell_fully_filled {
-                        if ask_orders.is_empty() {
-                            self.sell_orders.remove(&ask_price);
-                        }
-                    } else {
-                        ask_orders.push(ask_order);
-                    }
+                    if buy_done  { if bid_orders.is_empty() { self.buy_orders.remove(&bid_price);  } }
+                    else         { bid_orders.push(bid); }
+                    if sell_done { if ask_orders.is_empty() { self.sell_orders.remove(&ask_price); } }
+                    else         { ask_orders.push(ask); }
                 }
                 _ => break,
             }
         }
 
-        (execution_reports, market_updates)
+        (fills, fill_updates)
+    }
+
+    // ── Aggressive order entry point ──────────────────────────────────────────
+    // Called by the symbol task BEFORE add_order() for any order type.
+    // Returns AggressiveResult which tells the caller whether to rest the order.
+
+    pub fn process_aggressive(&mut self, order: Order) -> AggressiveResult {
+        match (order.order_type, order.time_in_force) {
+            (OrderType::Market, _) =>
+                self.execute_market(order),
+
+            (OrderType::Limit, TimeInForce::IOC) =>
+                self.execute_ioc(order),
+
+            (OrderType::Limit, TimeInForce::FOK) =>
+                self.execute_fok(order),
+
+            (OrderType::Limit, TimeInForce::Day | TimeInForce::GTC) =>
+                // Rest on the book — caller calls add_order() + match_orders()
+                AggressiveResult {
+                    fills: Vec::new(), fill_updates: Vec::new(),
+                    unfilled_qty: order.quantity, rest_on_book: true,
+                },
+
+            // Stop / StopLimit require last-trade-price tracking — not yet
+            // implemented. Fall through to resting limit behaviour for now.
+            _ => AggressiveResult {
+                fills: Vec::new(), fill_updates: Vec::new(),
+                unfilled_qty: order.quantity, rest_on_book: true,
+            },
+        }
+    }
+
+    // ── Market order ──────────────────────────────────────────────────────────
+    // Fill at any available price. Cancel unfilled remainder — never rests.
+
+    fn execute_market(&mut self, order: Order) -> AggressiveResult {
+        let mut remaining    = order.quantity;
+        let mut fills        = Vec::new();
+        let mut fill_updates = Vec::new();
+
+        while remaining > 0 {
+            let price = match order.side {
+                OrderSide::Buy  => self.sell_orders.keys().next().cloned(),
+                OrderSide::Sell => self.buy_orders.keys().next_back().cloned(),
+            };
+            let price = match price { Some(p) => p, None => break };
+
+            let filled = self.fill_level(&order, price, remaining, &mut fills, &mut fill_updates);
+            remaining -= filled;
+        }
+
+        AggressiveResult { fills, fill_updates, unfilled_qty: remaining, rest_on_book: false }
+    }
+
+    // ── IOC ───────────────────────────────────────────────────────────────────
+    // Fill as much as possible at or better than limit price. Cancel remainder.
+
+    fn execute_ioc(&mut self, order: Order) -> AggressiveResult {
+        let mut remaining    = order.quantity;
+        let mut fills        = Vec::new();
+        let mut fill_updates = Vec::new();
+
+        while remaining > 0 {
+            let price = match order.side {
+                OrderSide::Buy  => self.sell_orders.keys().next().cloned(),
+                OrderSide::Sell => self.buy_orders.keys().next_back().cloned(),
+            };
+            let price = match price { Some(p) => p, None => break };
+
+            // Stop if best opposite price no longer crosses our limit
+            let crosses = match order.side {
+                OrderSide::Buy  => price <= order.price,
+                OrderSide::Sell => price >= order.price,
+            };
+            if !crosses { break; }
+
+            let filled = self.fill_level(&order, price, remaining, &mut fills, &mut fill_updates);
+            remaining -= filled;
+        }
+
+        AggressiveResult { fills, fill_updates, unfilled_qty: remaining, rest_on_book: false }
+    }
+
+    // ── FOK ───────────────────────────────────────────────────────────────────
+    // Fill entire quantity at limit price or cancel everything.
+
+    fn execute_fok(&mut self, order: Order) -> AggressiveResult {
+        let available: u32 = match order.side {
+            OrderSide::Buy => self.sell_orders.iter()
+                .filter(|(&p, _)| p <= order.price)
+                .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
+                .sum(),
+            OrderSide::Sell => self.buy_orders.iter()
+                .filter(|(&p, _)| p >= order.price)
+                .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
+                .sum(),
+        };
+
+        if available < order.quantity {
+            // Insufficient liquidity — kill the order
+            return AggressiveResult {
+                fills: Vec::new(), fill_updates: Vec::new(),
+                unfilled_qty: order.quantity, rest_on_book: false,
+            };
+        }
+
+        // Enough liquidity — execute as IOC (will fully fill)
+        let mut result = self.execute_ioc(order);
+        result.rest_on_book = false;
+        result
+    }
+
+    // ── fill_level: fill aggressor against one resting price level ────────────
+    // Returns qty filled at this level.
+
+    fn fill_level(
+        &mut self,
+        aggressor:    &Order,
+        price:        i64,
+        want:         u32,
+        fills:        &mut Vec<ExecutionReport>,
+        fill_updates: &mut Vec<MarketDataIncrementalUpdate>,
+    ) -> u32 {
+        let resting = match aggressor.side {
+            OrderSide::Buy  => self.sell_orders.get_mut(&price),
+            OrderSide::Sell => self.buy_orders.get_mut(&price),
+        };
+        let resting = match resting { Some(v) => v, None => return 0 };
+
+        let mut filled = 0u32;
+
+        while !resting.is_empty() && filled < want {
+            let top = resting.last_mut().unwrap();
+            let trade_qty = top.quantity.min(want - filled);
+            top.quantity -= trade_qty;
+            filled       += trade_qty;
+
+            let resting_done   = top.quantity == 0;
+            let aggressor_done = filled >= want;
+
+            let (buy_id, sell_id, buy_done, sell_done) = match aggressor.side {
+                OrderSide::Buy  => (aggressor.order_id.clone(), top.order_id.clone(), aggressor_done, resting_done),
+                OrderSide::Sell => (top.order_id.clone(), aggressor.order_id.clone(), resting_done,   aggressor_done),
+            };
+
+            fills.push(ExecutionReport {
+                buy_order_id:     buy_id,
+                sell_order_id:    sell_id,
+                trade_price:      price,
+                trade_quantity:   trade_qty,
+                buy_fully_filled:  buy_done,
+                sell_fully_filled: sell_done,
+            });
+            fill_updates.push(MarketDataIncrementalUpdate {
+                symbol:  aggressor.symbol.clone(),
+                changes: vec![MarketOrderUpdate {
+                    update_type: MarketUpdateType::ModifyOrder,
+                    price,
+                    quantity:    trade_qty,
+                }],
+            });
+
+            if resting_done { resting.pop(); }
+        }
+
+        // Remove empty price level
+        if resting.is_empty() {
+            match aggressor.side {
+                OrderSide::Buy  => { self.sell_orders.remove(&price); }
+                OrderSide::Sell => { self.buy_orders.remove(&price); }
+            }
+        }
+
+        filled
     }
 }

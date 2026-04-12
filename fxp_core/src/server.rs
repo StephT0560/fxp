@@ -37,6 +37,7 @@ use crate::order_book::order::{Order, OrderSide, OrderType, TimeInForce};
 use crate::order_book::order_book::OrderBook;
 use crate::order_book::broadcaster::MarketDataBroadcaster;
 use crate::order_book::market_data::MarketUpdateType;
+use crate::order_book::matcher::AggressiveResult;
 
 // ── Output channel ────────────────────────────────────────────────────────────
 // Each connection gets one output channel. All tasks that need to write to
@@ -128,13 +129,20 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         0 => OrderSide::Buy,
                         _ => OrderSide::Sell,
                     },
-                    order_type:    OrderType::Limit,
-                    time_in_force: TimeInForce::Day,
-                    timestamp:     now.as_millis() as u64,
+                    order_type: match order.order_type {
+                        1 => OrderType::Limit,
+                        2 => OrderType::Stop,
+                        3 => OrderType::StopLimit,
+                        _ => OrderType::Market, // 0 = Market, default
+                    },
+                    time_in_force: match order.time_in_force {
+                        1 => TimeInForce::GTC,
+                        2 => TimeInForce::IOC,
+                        3 => TimeInForce::FOK,
+                        _ => TimeInForce::Day, // 0 = Day, default
+                    },
+                    timestamp: now.as_millis() as u64,
                 };
-
-                let incremental = book.add_order(order_obj);
-                let (matches, fill_updates) = book.match_orders();
 
                 let seq = order.header.as_ref().map_or(0, |h| h.sequence_number + 1);
                 let ts  = Some(Timestamp {
@@ -142,8 +150,36 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     nanos:   now.subsec_nanos() as i32,
                 });
 
-                // Send ExecutionReports into the output channel — no lock needed.
-                for exec in &matches {
+                // Step 1: check if order is aggressive (Market/IOC/FOK)
+                // or resting (Limit Day/GTC). Aggressive orders are matched
+                // immediately without being added to the book.
+                let aggressive = book.process_aggressive(order_obj.clone());
+
+                // Collect all fills and market data updates
+                let mut all_fills        = aggressive.fills;
+                let mut all_fill_updates = aggressive.fill_updates;
+                let mut incremental_opt  = None;
+
+                if aggressive.rest_on_book && aggressive.unfilled_qty > 0 {
+                    // Resting order: add to book and run passive matching
+                    let mut resting = order_obj.clone();
+                    resting.quantity = aggressive.unfilled_qty;
+                    let inc = book.add_order(resting);
+                    incremental_opt = Some(inc);
+                    let (passive_fills, passive_updates) = book.match_orders();
+                    all_fills.extend(passive_fills);
+                    all_fill_updates.extend(passive_updates);
+                } else if !aggressive.rest_on_book && aggressive.unfilled_qty > 0 {
+                    // Aggressive order with unfilled remainder — send cancel report
+                    let cancel_report = make_cancel_report(
+                        &order.order_id, &symbol, seq, &ts,
+                        aggressive.unfilled_qty,
+                    );
+                    let _ = output_tx.send(cancel_report).await;
+                }
+
+                // Send ExecutionReports for all fills
+                for exec in &all_fills {
                     let make_report = |order_id: String, fully_filled: bool| -> Vec<u8> {
                         frame_message(&fxp::FxpMessage {
                             payload: Some(fxp::fxp_message::Payload::ExecutionReport(
@@ -168,39 +204,38 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             )),
                         })
                     };
-
-                    // Both reports go into the same output channel — the write_task
-                    // delivers them in order without any locking.
                     let _ = output_tx.send(make_report(exec.buy_order_id.clone(),  exec.buy_fully_filled)).await;
                     let _ = output_tx.send(make_report(exec.sell_order_id.clone(), exec.sell_fully_filled)).await;
                 }
 
-                // Broadcast add-order incremental update to market data subscribers
-                let md_add_frame = frame_message(&fxp::FxpMessage {
-                    payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
-                        fxp::MarketDataIncrementalUpdate {
-                            symbol:    symbol.clone(),
-                            header:    Some(fxp::FxpHeader {
-                                protocol_version: "1.0".to_string(),
-                                sequence_number:  1,
-                            }),
-                            timestamp: ts.clone(),
-                            changes:   incremental.changes.iter().map(|c| fxp::MarketOrderUpdate {
-                                update_type: match c.update_type {
-                                    MarketUpdateType::NewOrder    => 0,
-                                    MarketUpdateType::ModifyOrder => 1,
-                                    MarketUpdateType::CancelOrder => 2,
-                                },
-                                price:    c.price,
-                                quantity: c.quantity as i32,
-                            }).collect(),
-                        },
-                    )),
-                });
-                broadcast_md(&mut subscribers, md_add_frame).await;
+                // Broadcast add-order incremental (only for orders that rested on the book)
+                if let Some(incremental) = incremental_opt {
+                    let md_add_frame = frame_message(&fxp::FxpMessage {
+                        payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
+                            fxp::MarketDataIncrementalUpdate {
+                                symbol:    symbol.clone(),
+                                header:    Some(fxp::FxpHeader {
+                                    protocol_version: "1.0".to_string(),
+                                    sequence_number:  1,
+                                }),
+                                timestamp: ts.clone(),
+                                changes:   incremental.changes.iter().map(|c| fxp::MarketOrderUpdate {
+                                    update_type: match c.update_type {
+                                        MarketUpdateType::NewOrder    => 0,
+                                        MarketUpdateType::ModifyOrder => 1,
+                                        MarketUpdateType::CancelOrder => 2,
+                                    },
+                                    price:    c.price,
+                                    quantity: c.quantity as i32,
+                                }).collect(),
+                            },
+                        )),
+                    });
+                    broadcast_md(&mut subscribers, md_add_frame).await;
+                }
 
                 // Broadcast fill incremental updates
-                for fill in fill_updates {
+                for fill in all_fill_updates {
                     let md_fill_frame = frame_message(&fxp::FxpMessage {
                         payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
                             fxp::MarketDataIncrementalUpdate {
@@ -229,6 +264,36 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
     }
 
     println!("📚 Order book task for {} exiting", symbol);
+}
+
+// ── Cancel report helper ──────────────────────────────────────────────────────
+// Sent when an aggressive order (Market/IOC/FOK) has unfilled remainder.
+
+fn make_cancel_report(
+    order_id: &str,
+    symbol:   &str,
+    seq:      u64,
+    ts:       &Option<Timestamp>,
+    qty:      u32,
+) -> Vec<u8> {
+    frame_message(&fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::ExecutionReport(
+            fxp::ExecutionReport {
+                header: Some(fxp::FxpHeader {
+                    protocol_version: "1.0".to_string(),
+                    sequence_number:  seq,
+                }),
+                execution_id:      format!("CANCEL-{}", order_id),
+                order_id:          order_id.to_string(),
+                symbol:            symbol.to_string(),
+                execution_type:    fxp::ExecutionType::ExecCanceled.into(),
+                order_status:      fxp::OrderStatus::OrderCanceled.into(),
+                execution_price:   0,
+                executed_quantity: qty as i32,
+                timestamp:         ts.clone(),
+            },
+        )),
+    })
 }
 
 // ── Market data broadcast ─────────────────────────────────────────────────────
