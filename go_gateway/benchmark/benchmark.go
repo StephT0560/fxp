@@ -58,6 +58,8 @@ var (
 	numOrders   = flag.Int("orders", 200, "Orders per sender")
 	warmup      = flag.Int("warmup", 20, "Warmup orders to discard (per sender)")
 	symbolMode  = flag.String("symbols", "spread", "Symbol mode: 'single' (all ETH/USD) or 'spread' (unique per sender pair)")
+	timeoutSec  = flag.Int("timeout", 120, "Per-sender fill wait timeout in seconds")
+	ratePerSec  = flag.Int("rate", 0, "Max orders per second per sender (0 = unlimited)")
 )
 
 // symbolPool — 50 realistic symbols. In spread mode each sender pair gets
@@ -205,7 +207,8 @@ func runSender(senderID int, numOrd int, warmupCount int) *benchResult {
 	var mu sync.Mutex
 	done := make(chan struct{})
 
-	// Reader goroutine — receives ExecutionReports and records latency
+	// Reader goroutine — receives ExecutionReports and records latency.
+	// Counts any ExecutionReport as a fill. Latency only recorded for our own orders.
 	go func() {
 		defer close(done)
 		for result.totalFills < int64(numOrd-warmupCount) {
@@ -229,7 +232,9 @@ func runSender(senderID int, numOrd int, warmupCount int) *benchResult {
 						result.samples = append(result.samples, latency)
 					}
 				} else {
+					// Counterparty report — count as fill, no latency sample
 					mu.Unlock()
+					atomic.AddInt64(&result.totalFills, 1)
 				}
 			}
 		}
@@ -248,8 +253,23 @@ func runSender(senderID int, numOrd int, warmupCount int) *benchResult {
 		fixedSide = protobuf.OrderSide_SELL
 	}
 
+	// Send all orders, optionally rate-limited.
+	// Rate limiting keeps the in-flight queue shallow so latency samples
+	// reflect actual round-trip processing time, not queue wait time.
+	var ticker *time.Ticker
+	if *ratePerSec > 0 {
+		interval := time.Second / time.Duration(*ratePerSec)
+		ticker = time.NewTicker(interval)
+		defer ticker.Stop()
+	}
+
 	start := time.Now()
 	for i := 0; i < numOrd; i++ {
+		// Wait for rate limiter tick if rate is set
+		if ticker != nil {
+			<-ticker.C
+		}
+
 		orderID := fmt.Sprintf("BENCH-%d-%d", senderID, i)
 
 		order := &protobuf.FXPMessage{
@@ -273,9 +293,8 @@ func runSender(senderID int, numOrd int, warmupCount int) *benchResult {
 			},
 		}
 
-		sent := time.Now()
 		mu.Lock()
-		pending[orderID] = sent
+		pending[orderID] = time.Now()
 		mu.Unlock()
 
 		if err := sendFramed(conn, order); err != nil {
@@ -283,16 +302,13 @@ func runSender(senderID int, numOrd int, warmupCount int) *benchResult {
 			break
 		}
 		atomic.AddInt64(&result.totalOrders, 1)
-
-		// Small yield to avoid flooding the gateway buffer
-		time.Sleep(500 * time.Microsecond)
 	}
 
 	// Wait for all fills or timeout
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
-		log.Printf("Sender %d: timed out waiting for fills", senderID)
+	case <-time.After(time.Duration(*timeoutSec) * time.Second):
+		log.Printf("Sender %d: timed out after %ds waiting for fills", senderID, *timeoutSec)
 	}
 
 	result.elapsed = time.Since(start)
@@ -414,6 +430,12 @@ func printResults(result *benchResult, concurrency int) {
 	fmt.Println("╠══════════════════════════════════════════════════════╣")
 	fmt.Printf("║  Concurrency:    %-35d║\n", concurrency)
 	fmt.Printf("║  Symbol mode:    %-35s║\n", *symbolMode)
+	fmt.Printf("║  Timeout/sender: %-35s║\n", fmt.Sprintf("%ds", *timeoutSec))
+	rateStr := "unlimited"
+	if *ratePerSec > 0 {
+		rateStr = fmt.Sprintf("%d orders/sec", *ratePerSec)
+	}
+	fmt.Printf("║  Send rate:      %-35s║\n", rateStr)
 	fmt.Printf("║  Total orders:   %-35d║\n", result.totalOrders)
 	fmt.Printf("║  Total fills:    %-35d║\n", result.totalFills)
 	fmt.Printf("║  Errors:         %-35d║\n", result.errors)
@@ -444,8 +466,8 @@ func main() {
 		log.Fatal("FXP_JWT_SECRET not set")
 	}
 
-	fmt.Printf("\nFXP Benchmark — concurrency=%d orders=%d warmup=%d symbols=%s\n",
-		*concurrency, *numOrders, *warmup, *symbolMode)
+	fmt.Printf("\nFXP Benchmark — concurrency=%d orders=%d warmup=%d symbols=%s rate=%d/sec\n",
+		*concurrency, *numOrders, *warmup, *symbolMode, *ratePerSec)
 	fmt.Println("Connecting to gateway at", gatewayAddr, "...")
 
 	// Verify gateway is reachable
