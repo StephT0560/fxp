@@ -57,7 +57,30 @@ var (
 	concurrency = flag.Int("concurrency", 1, "Number of concurrent order senders")
 	numOrders   = flag.Int("orders", 200, "Orders per sender")
 	warmup      = flag.Int("warmup", 20, "Warmup orders to discard (per sender)")
+	symbolMode  = flag.String("symbols", "spread", "Symbol mode: 'single' (all ETH/USD) or 'spread' (unique per sender pair)")
 )
+
+// symbolPool — 50 realistic symbols. In spread mode each sender pair gets
+// a unique symbol so order books are independent (no shared mutex contention).
+var symbolPool = []string{
+	"ETH/USD", "BTC/USD", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA",
+	"META", "JPM", "GS", "BAC", "MS", "BRK.B", "V", "MA", "PYPL", "SQ",
+	"SOL/USD", "AVAX/USD", "DOT/USD", "LINK/USD", "UNI/USD", "AAVE/USD",
+	"ESH4", "NQH4", "CLH4", "GCH4", "SIH4", "ZBH4", "ZNH4", "ZFH4",
+	"EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF",
+	"SPY", "QQQ", "IWM", "GLD", "SLV", "USO", "TLT", "HYG", "EEM", "VXX",
+}
+
+// symbolForSender assigns a symbol to a sender. In spread mode, adjacent
+// sender pairs share a symbol so buys and sells can match each other.
+// Senders 0+1 → symbolPool[0], 2+3 → symbolPool[1], etc.
+func symbolForSender(senderID int) string {
+	if *symbolMode == "single" {
+		return "ETH/USD"
+	}
+	idx := (senderID / 2) % len(symbolPool)
+	return symbolPool[idx]
+}
 
 // ── JWT (copied from jwt_helpers.go — standalone binary) ─────────────────────
 
@@ -212,17 +235,22 @@ func runSender(senderID int, numOrd int, warmupCount int) *benchResult {
 		}
 	}()
 
-	// Ensure a matching sell exists for every buy so fills actually happen.
-	// We send alternating buy/sell at the same price to guarantee matches.
+	// Symbol assignment: in spread mode each sender pair gets a unique symbol
+	// so order books don't contend on a shared Rust-side mutex.
+	// Paired matching: even senderID → BUY only, odd senderID → SELL only.
+	// Each buy sender's orders will match against its paired sell sender.
+	symbol := symbolForSender(senderID)
 	basePrice := int64(3_000_000_000) // $3000.00 fixed-point
+
+	// Determine fixed side for this sender: even=BUY, odd=SELL
+	fixedSide := protobuf.OrderSide_BUY
+	if senderID%2 != 0 {
+		fixedSide = protobuf.OrderSide_SELL
+	}
 
 	start := time.Now()
 	for i := 0; i < numOrd; i++ {
 		orderID := fmt.Sprintf("BENCH-%d-%d", senderID, i)
-		side := protobuf.OrderSide_BUY
-		if i%2 != 0 {
-			side = protobuf.OrderSide_SELL
-		}
 
 		order := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
@@ -234,9 +262,9 @@ func runSender(senderID int, numOrd int, warmupCount int) *benchResult {
 					OrderId:     orderID,
 					Sender:      traderID,
 					Receiver:    "BenchExchange",
-					Symbol:      "ETH/USD",
+					Symbol:      symbol,
 					Price:       basePrice,
-					Side:        side,
+					Side:        fixedSide,
 					Quantity:    1,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_DAY,
@@ -288,7 +316,7 @@ func benchMarketDataLatency() {
 		Payload: &protobuf.FXPMessage_MarketDataRequest{
 			MarketDataRequest: &protobuf.MarketDataRequest{
 				Header:  &protobuf.FXPHeader{ProtocolVersion: "1.0"},
-				Symbols: []string{"ETH/USD"},
+				Symbols: []string{symbolForSender(0)},
 			},
 		},
 	}
@@ -314,7 +342,7 @@ func benchMarketDataLatency() {
 					OrderId:     fmt.Sprintf("MD-%d", i),
 					Sender:      "MDOrderer",
 					Receiver:    "BenchExchange",
-					Symbol:      "ETH/USD",
+					Symbol:      symbolForSender(0),
 					Price:       3_000_000_000,
 					Side:        protobuf.OrderSide_BUY,
 					Quantity:    1,
@@ -385,6 +413,7 @@ func printResults(result *benchResult, concurrency int) {
 	fmt.Println("║         FXP End-to-End Benchmark Results             ║")
 	fmt.Println("╠══════════════════════════════════════════════════════╣")
 	fmt.Printf("║  Concurrency:    %-35d║\n", concurrency)
+	fmt.Printf("║  Symbol mode:    %-35s║\n", *symbolMode)
 	fmt.Printf("║  Total orders:   %-35d║\n", result.totalOrders)
 	fmt.Printf("║  Total fills:    %-35d║\n", result.totalFills)
 	fmt.Printf("║  Errors:         %-35d║\n", result.errors)
@@ -415,8 +444,8 @@ func main() {
 		log.Fatal("FXP_JWT_SECRET not set")
 	}
 
-	fmt.Printf("\nFXP Benchmark — concurrency=%d orders=%d warmup=%d\n",
-		*concurrency, *numOrders, *warmup)
+	fmt.Printf("\nFXP Benchmark — concurrency=%d orders=%d warmup=%d symbols=%s\n",
+		*concurrency, *numOrders, *warmup, *symbolMode)
 	fmt.Println("Connecting to gateway at", gatewayAddr, "...")
 
 	// Verify gateway is reachable

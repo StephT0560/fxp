@@ -93,12 +93,9 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 
 		switch c := conn.(type) {
 		case net.Conn:
-			SendOrderToRust(c, frame)
+			SendOrderToRust(c, raw) // raw body only — SendOrderToRust frames internally
 		case *websocket.Conn:
-			// FIX: Route WebSocket orders through the same persistent connection
-			// and orderClientMap as TCP clients, then register the WS conn so
-			// ListenForMarketData can route the ExecutionReport back correctly.
-			ForwardToTCPServer(c, msg, frame)
+			ForwardToTCPServer(c, msg, frame) // pool-based, no throwaway connections
 		default:
 			log.Println("❌ Unknown connection type in HandleFXPMessage for NewOrder")
 		}
@@ -216,37 +213,6 @@ func SubscribeToMarketDataWS(clientConn *websocket.Conn, request *protobuf.Marke
 	forwardSubscriptionToCore(request)
 }
 
-// forwardSubscriptionToCore sends a MarketDataRequest to FXP Core over the
-// persistent TCP connection so Rust starts broadcasting incremental updates.
-func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
-	msg := &protobuf.FXPMessage{
-		Payload: &protobuf.FXPMessage_MarketDataRequest{
-			MarketDataRequest: request,
-		},
-	}
-	raw, err := proto.Marshal(msg)
-	if err != nil {
-		log.Printf("❌ Failed to encode MarketDataRequest for Rust Core: %v", err)
-		return
-	}
-	frame := make([]byte, 4+len(raw))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
-	copy(frame[4:], raw)
-
-	if err := EnsureConnection(); err != nil {
-		log.Printf("❌ Cannot forward subscription to Rust Core: %v", err)
-		return
-	}
-	connLock.Lock()
-	_, err = conn.Write(frame)
-	connLock.Unlock()
-	if err != nil {
-		log.Printf("❌ Failed to send MarketDataRequest to Rust Core: %v", err)
-	} else {
-		log.Printf("📡 MarketDataRequest forwarded to Rust Core for symbols: %v", request.Symbols)
-	}
-}
-
 // ====================================================
 // ✅ Graceful connection close for TCP or WebSocket
 // ====================================================
@@ -263,39 +229,5 @@ func closeConn(conn interface{}) {
 	}
 }
 
-// =======================================================================
-// ✅ WebSocket orders: route through the shared persistent FXP Core conn
-//    so ExecutionReports come back via ListenForMarketData, not a one-shot
-//    read that races and drops messages.
-// =======================================================================
-func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame []byte) {
-	// Register the WS client in orderClientMap so ListenForMarketData
-	// can route the ExecutionReport back to this specific connection.
-	if order, ok := msg.Payload.(*protobuf.FXPMessage_NewOrder); ok {
-		orderID := order.NewOrder.OrderId
-		orderClientMap.Store(orderID, wsConn)
-		log.Printf("🧠 Registered WS OrderID %s to wsConn", orderID)
-	}
-
-	// Ensure the shared persistent connection to FXP Core is up.
-	if err := EnsureConnection(); err != nil {
-		log.Printf("❌ ForwardToTCPServer: failed to connect to FXP Core: %v", err)
-		return
-	}
-
-	// Send via the shared conn — same path TCP clients use.
-	connLock.Lock()
-	_, err := conn.Write(frame)
-	connLock.Unlock()
-
-	if err != nil {
-		log.Printf("❌ ForwardToTCPServer: failed to write to FXP Core: %v", err)
-		connLock.Lock()
-		conn.Close()
-		conn = nil
-		connLock.Unlock()
-		return
-	}
-
-	log.Println("📤 WS order forwarded to FXP Core via persistent connection")
-}
+// ForwardToTCPServer are defined in tcp_server.go.
+// They use the connection pool (pool.go) instead of the old single conn.
