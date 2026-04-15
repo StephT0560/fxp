@@ -6,44 +6,60 @@ option go_package = "go_gateway/protobuf";
 
 import "google/protobuf/timestamp.proto";
 
-// ========================================
+// ============================================================
+// FXP Protocol — v1.1
+//
+// Design principles:
+//   - Field numbers are permanent wire identifiers. Never reuse
+//     a retired field number — doing so causes silent data corruption
+//     for clients that haven't upgraded.
+//   - Add new fields at the end of each message (higher numbers).
+//   - Add new enum values at the end of each enum.
+//   - Firms requiring custom fields should use field numbers
+//     1000–1999 (reserved for vendor/firm extensions).
+//   - Proto3 defaults are zero/empty — never use zero to mean
+//     "no value" for a field where zero is a valid state.
+// ============================================================
+
+// ============================================================
 // META & VERSIONING
-// ========================================
+// ============================================================
+
 message FXPHeader {
-  string protocol_version = 1;
-  uint64 sequence_number = 2;
+  string protocol_version = 1; // e.g. "1.1"
+  uint64 sequence_number  = 2; // monotonically increasing per session
 }
 
-// ========================================
-// SESSION MANAGEMENT MESSAGES
-// ========================================
+// ============================================================
+// SESSION MANAGEMENT
+// ============================================================
+
 message Heartbeat {
-  string status = 1;
+  string                    status    = 1;
   google.protobuf.Timestamp timestamp = 2;
 }
 
-// Logon: token-based authentication only.
-// The JWT must be signed with HS256 using the shared session secret.
-// Claims required: sub (trader ID), exp (expiry), iat (issued at).
-// Removed: username, password — never send plaintext credentials on the wire.
+// Logon: JWT-only authentication.
+// Token must be HS256-signed with the shared session secret.
+// Required claims: sub (trader ID), exp (expiry), iat (issued at).
 message Logon {
-  string token      = 1; // HS256-signed JWT
-  string session_id = 2;
-  EncryptionType encryption_type = 3;
-  google.protobuf.Timestamp timestamp = 4;
+  string                    token           = 1; // HS256-signed JWT
+  string                    session_id      = 2;
+  EncryptionType            encryption_type = 3;
+  google.protobuf.Timestamp timestamp       = 4;
 }
 
-// LogonAck: sent by server after validating the token.
+// LogonAck: sent by gateway after validating the Logon token.
 message LogonAck {
-  FXPHeader header    = 1;
-  bool accepted       = 2; // true = session open, false = rejected
-  string reject_reason = 3; // populated only when accepted = false
-  google.protobuf.Timestamp timestamp = 4;
+  FXPHeader                 header        = 1;
+  bool                      accepted      = 2; // true = session open
+  string                    reject_reason = 3; // set only when accepted = false
+  google.protobuf.Timestamp timestamp     = 4;
 }
 
 message Logout {
-  string session_id = 1;
-  google.protobuf.Timestamp timestamp = 2;
+  string                    session_id = 1;
+  google.protobuf.Timestamp timestamp  = 2;
 }
 
 message GapFillRequest {
@@ -57,88 +73,169 @@ enum EncryptionType {
   TLS_1_3 = 2;
 }
 
-// ========================================
-// ORDER ROUTING & EXECUTION MESSAGES
-// ========================================
+// ============================================================
+// ORDER ENUMERATIONS
+// ============================================================
+
 enum OrderType {
   MARKET     = 0;
   LIMIT      = 1;
-  STOP       = 2;
-  STOP_LIMIT = 3;
+  STOP       = 2; // triggers market order when stop_price is reached
+  STOP_LIMIT = 3; // triggers limit order when stop_price is reached
+  // Firms may define proprietary types (pegged, VWAP, TWAP) using
+  // values 100+ via the custom extension pattern.
 }
 
 enum OrderSide {
   BUY  = 0;
   SELL = 1;
+  // SHORT_SELL is a regulatory distinction (Reg SHO) handled at the
+  // OMS layer, not the matching layer. Firms needing it can use
+  // custom field 1000 on NewOrderSingle for a short-sale indicator.
 }
 
 enum TimeInForce {
-  DAY = 0;
-  GTC = 1;
-  IOC = 2;
-  FOK = 3;
+  DAY      = 0; // expires at end of regular trading session
+  GTC      = 1; // Good Till Cancelled — persists across sessions
+  IOC      = 2; // Immediate or Cancel — fill available, cancel rest
+  FOK      = 3; // Fill or Kill — fill all immediately or cancel all
+  AT_OPEN  = 4; // participate in opening auction only
+  AT_CLOSE = 5; // participate in closing auction only (e.g. MOC)
+  GTD      = 6; // Good Till Date — expires at end of expire_date
+  // AT_OPEN and AT_CLOSE require auction session support in the
+  // matching engine (opening/closing auction phases).
 }
 
 enum OrderStatus {
-  ORDER_NEW              = 0;
-  ORDER_PENDING          = 1;
-  ORDER_FILLED           = 2;
-  ORDER_PARTIALLY_FILLED = 3;
-  ORDER_CANCELED         = 4;
-  ORDER_REJECTED         = 5;
+  ORDER_NEW              = 0; // accepted, working
+  ORDER_PENDING          = 1; // received, pending validation
+  ORDER_FILLED           = 2; // completely filled
+  ORDER_PARTIALLY_FILLED = 3; // partially filled, remainder working
+  ORDER_CANCELED         = 4; // canceled
+  ORDER_REJECTED         = 5; // rejected at validation
+  ORDER_REPLACED         = 6; // successfully replaced via cancel/replace
+  ORDER_EXPIRED          = 7; // expired (DAY at session end, GTD past date)
+  ORDER_PENDING_CANCEL   = 8; // cancel request received, not yet processed
+  ORDER_PENDING_REPLACE  = 9; // replace request received, not yet processed
 }
 
 enum ExecutionType {
-  EXEC_FILLED           = 0;
-  EXEC_PARTIALLY_FILLED = 1;
-  EXEC_CANCELED         = 2;
+  EXEC_NEW             = 0; // order accepted — sent on NewOrderSingle ack
+  EXEC_FILLED          = 1; // full or partial fill (distinguish via order_status)
+  EXEC_CANCELED        = 2; // order canceled
+  EXEC_REPLACED        = 3; // order replaced (cancel/replace accepted)
+  EXEC_REJECTED        = 4; // order or cancel/replace rejected
+  EXEC_EXPIRED         = 5; // order expired at session end or GTD date
+  EXEC_PENDING_CANCEL  = 6; // cancel pending confirmation
+  EXEC_PENDING_REPLACE = 7; // replace pending confirmation
 }
+
+// ============================================================
+// ORDER MESSAGES
+// ============================================================
 
 message NewOrderSingle {
-  FXPHeader header     = 1;
-  string order_id      = 2;
-  string sender        = 3;
-  string receiver      = 4;
-  string symbol        = 5;
-  int64  price         = 6;
-  OrderSide side       = 7;
-  int32  quantity      = 8;
-  OrderType order_type = 9;
-  TimeInForce time_in_force = 10;
-  google.protobuf.Timestamp timestamp = 11;
+  FXPHeader                 header          = 1;
+  string                    order_id        = 2;  // client-assigned, unique per session
+  string                    sender          = 3;  // SenderCompID
+  string                    receiver        = 4;  // TargetCompID
+  string                    symbol          = 5;
+  int64                     price           = 6;  // fixed-point cents (10050 = $100.50)
+  OrderSide                 side            = 7;
+  int32                     quantity        = 8;
+  OrderType                 order_type      = 9;
+  TimeInForce               time_in_force   = 10;
+  google.protobuf.Timestamp timestamp       = 11;
+  int64                     stop_price      = 12; // required for STOP / STOP_LIMIT
+  string                    expire_date     = 13; // required for GTD (format: YYYY-MM-DD)
+  string                    account         = 14; // clearing account identifier
+  string                    client_order_id = 15; // optional secondary client reference
+
+  // Field numbers 1000–1999 reserved for firm-specific extensions.
+  // Example: int32 short_sale_indicator = 1000;
+  // Example: string algo_id = 1001;
 }
 
-message OrderAcknowledgment {
-  FXPHeader header             = 1;
-  string order_id              = 2;
-  string acknowledgment_status = 3;
-  google.protobuf.Timestamp timestamp = 4;
-}
-
+// OrderCancelRequest: request to cancel a working order.
+// Routed to the symbol's order book task for processing.
+// Response: ExecutionReport with exec_type = EXEC_CANCELED (success)
+//           or exec_type = EXEC_REJECTED (order not found / already filled).
 message OrderCancelRequest {
-  FXPHeader header  = 1;
-  string order_id   = 2;
-  string sender     = 3;
-  string receiver   = 4;
-  string symbol     = 5;
-  google.protobuf.Timestamp timestamp = 6;
+  FXPHeader                 header           = 1;
+  string                    order_id         = 2; // order to cancel
+  string                    client_cancel_id = 3; // unique ID for this cancel request
+  string                    sender           = 4;
+  string                    receiver         = 5;
+  string                    symbol           = 6;
+  google.protobuf.Timestamp timestamp        = 7;
 }
 
+// OrderCancelReplaceRequest: atomically cancel and replace a working order.
+// Used to amend price or quantity. Queue priority rules:
+//   - Price change: always loses time priority
+//   - Quantity reduction: retains priority at most exchanges
+//   - Quantity increase: loses priority (treated as new order)
+// Response: ExecutionReport with exec_type = EXEC_REPLACED (success)
+//           or exec_type = EXEC_REJECTED (too late, not found, invalid).
+message OrderCancelReplaceRequest {
+  FXPHeader                 header            = 1;
+  string                    order_id          = 2; // original order being replaced
+  string                    new_order_id      = 3; // new client order ID after replace
+  string                    client_replace_id = 4; // unique ID for this replace request
+  string                    sender            = 5;
+  string                    receiver          = 6;
+  string                    symbol            = 7;
+  int64                     new_price         = 8; // 0 = no change
+  int32                     new_quantity      = 9; // 0 = no change
+  TimeInForce               new_time_in_force = 10; // DAY (0) = no change
+  google.protobuf.Timestamp timestamp         = 11;
+}
+
+// OrderAcknowledgment: legacy. Prefer ExecutionReport with exec_type=EXEC_NEW.
+// Retained for backward compatibility with older clients.
+message OrderAcknowledgment {
+  FXPHeader                 header                = 1;
+  string                    order_id              = 2;
+  string                    acknowledgment_status = 3;
+  google.protobuf.Timestamp timestamp             = 4;
+}
+
+// ExecutionReport: the primary order lifecycle message.
+// Sent on every order state transition: NEW, FILL, PARTIAL FILL,
+// CANCEL, REPLACE, REJECT, EXPIRE.
+//
+// Reconciliation fields (leaves_quantity, avg_px, cum_quantity) are
+// essential for institutional order tracking and must be populated
+// on every report where they are meaningful.
 message ExecutionReport {
-  FXPHeader header          = 1;
-  string execution_id       = 2;
-  string order_id           = 3;
-  string symbol             = 4;
-  ExecutionType execution_type = 5;
-  OrderStatus order_status  = 6;
-  int64  execution_price    = 7;
-  int32  executed_quantity  = 8;
-  google.protobuf.Timestamp timestamp = 9;
+  FXPHeader                 header            = 1;
+  string                    execution_id      = 2;  // unique per fill event
+  string                    order_id          = 3;  // client order ID
+  string                    symbol            = 4;
+  ExecutionType             execution_type    = 5;
+  OrderStatus               order_status      = 6;
+  int64                     execution_price   = 7;  // price of this fill (0 on non-fill events)
+  int32                     executed_quantity = 8;  // qty filled in this event
+  google.protobuf.Timestamp timestamp         = 9;
+
+  // Reconciliation fields — populate on every report
+  int32                     leaves_quantity   = 10; // qty still open after this report
+  int64                     avg_px            = 11; // VWAP across all fills for this order
+  int32                     cum_quantity      = 12; // total qty filled across all reports
+
+  // Audit / routing fields
+  string                    account           = 13; // clearing account (echoed from NewOrder)
+  string                    client_order_id   = 14; // echoed from NewOrderSingle if set
+  string                    orig_order_id     = 15; // original order_id (on REPLACED reports)
+  string                    reject_reason     = 16; // human-readable (on EXEC_REJECTED)
+
+  // Field numbers 1000–1999 reserved for firm-specific extensions.
 }
 
-// ========================================
+// ============================================================
 // MARKET DATA MESSAGES
-// ========================================
+// ============================================================
+
 message MarketOrderBookEntry {
   int64     price = 1;
   int32     size  = 2;
@@ -152,75 +249,87 @@ message MarketOrderUpdate {
 }
 
 message MarketDataSnapshot {
-  FXPHeader header                      = 1;
-  string symbol                         = 2;
-  repeated MarketOrderBookEntry bid_levels = 3;
-  repeated MarketOrderBookEntry ask_levels = 4;
-  int64  bid_ask_spread                 = 5;
-  int64  total_volume                   = 6;
-  google.protobuf.Timestamp timestamp   = 7;
+  FXPHeader                     header         = 1;
+  string                        symbol         = 2;
+  repeated MarketOrderBookEntry bid_levels     = 3;
+  repeated MarketOrderBookEntry ask_levels     = 4;
+  int64                         bid_ask_spread = 5;
+  int64                         total_volume   = 6;
+  google.protobuf.Timestamp     timestamp      = 7;
 }
 
 message MarketDataIncrementalUpdate {
-  FXPHeader header                   = 1;
-  string symbol                      = 2;
-  repeated MarketOrderUpdate changes = 3;
-  google.protobuf.Timestamp timestamp = 4;
+  FXPHeader                  header    = 1;
+  string                     symbol    = 2;
+  repeated MarketOrderUpdate changes   = 3;
+  google.protobuf.Timestamp  timestamp = 4;
 }
 
 message MarketDataRequest {
-  FXPHeader header        = 1;
+  FXPHeader       header  = 1;
   repeated string symbols = 2;
 }
 
 message TradeCaptureReport {
-  FXPHeader header   = 1;
-  string trade_id    = 2;
-  string buy_order_id  = 3;
-  string sell_order_id = 4;
-  string symbol      = 5;
-  int64  trade_price = 6;
-  int32  trade_quantity = 7;
-  google.protobuf.Timestamp timestamp = 8;
+  FXPHeader                 header         = 1;
+  string                    trade_id       = 2;
+  string                    buy_order_id   = 3;
+  string                    sell_order_id  = 4;
+  string                    symbol         = 5;
+  int64                     trade_price    = 6;
+  int32                     trade_quantity = 7;
+  google.protobuf.Timestamp timestamp      = 8;
 }
 
+// ============================================================
+// ERROR HANDLING
+// ============================================================
+
 enum ErrorType {
-  SYSTEM_ERROR        = 0;
-  INVALID_ORDER       = 1;
-  SESSION_EXPIRED     = 2;
-  RATE_LIMIT_EXCEEDED = 3;
-  ORDER_NOT_FOUND     = 4;
-  SYMBOL_NOT_SUPPORTED = 5;
-  AUTH_FAILED         = 6; // new: token rejected
-  SESSION_NOT_LOGGED_ON = 7; // new: message sent before Logon
+  SYSTEM_ERROR          = 0;
+  INVALID_ORDER         = 1;
+  SESSION_EXPIRED       = 2;
+  RATE_LIMIT_EXCEEDED   = 3;
+  ORDER_NOT_FOUND       = 4;
+  SYMBOL_NOT_SUPPORTED  = 5;
+  AUTH_FAILED           = 6;
+  SESSION_NOT_LOGGED_ON = 7;
+  DUPLICATE_ORDER_ID    = 8; // order_id reused within the session
+  INVALID_PRICE         = 9; // outside tick size or price band
+  INVALID_QUANTITY      = 10; // zero, or exceeds position/lot-size limits
 }
 
 message ErrorMessage {
-  FXPHeader header       = 1;
-  ErrorType error_type   = 2;
-  string error_message   = 3;
-  string related_order_id = 4;
-  google.protobuf.Timestamp timestamp = 5;
+  FXPHeader                 header           = 1;
+  ErrorType                 error_type       = 2;
+  string                    error_message    = 3;
+  string                    related_order_id = 4;
+  google.protobuf.Timestamp timestamp        = 5;
 }
 
-// ========================================
-// WRAPPING MESSAGE FOR MULTIPLE TYPES
-// ========================================
+// ============================================================
+// TOP-LEVEL ENVELOPE
+//
+// oneof field numbers are permanent wire identifiers.
+// Never reuse a retired number. Add new types at the end.
+// ============================================================
+
 message FXPMessage {
   oneof payload {
-    Heartbeat                  heartbeat              = 1;
-    Logon                      logon                  = 2;
-    Logout                     logout                 = 3;
-    GapFillRequest             gap_fill               = 4;
-    NewOrderSingle             new_order              = 5;
-    OrderAcknowledgment        order_acknowledgment   = 6;
-    OrderCancelRequest         order_cancel           = 7;
-    ExecutionReport            execution_report       = 8;
-    MarketDataSnapshot         market_data_snapshot   = 9;
+    Heartbeat                   heartbeat              = 1;
+    Logon                       logon                  = 2;
+    Logout                      logout                 = 3;
+    GapFillRequest              gap_fill               = 4;
+    NewOrderSingle              new_order              = 5;
+    OrderAcknowledgment         order_acknowledgment   = 6;
+    OrderCancelRequest          order_cancel           = 7;
+    ExecutionReport             execution_report       = 8;
+    MarketDataSnapshot          market_data_snapshot   = 9;
     MarketDataIncrementalUpdate market_data_incremental = 10;
-    MarketDataRequest          market_data_request    = 11;
-    TradeCaptureReport         trade_capture_report   = 12;
-    ErrorMessage               error_message          = 13;
-    LogonAck                   logon_ack              = 14; // new
+    MarketDataRequest           market_data_request    = 11;
+    TradeCaptureReport          trade_capture_report   = 12;
+    ErrorMessage                error_message          = 13;
+    LogonAck                    logon_ack              = 14;
+    OrderCancelReplaceRequest   order_cancel_replace   = 15;
   }
 }

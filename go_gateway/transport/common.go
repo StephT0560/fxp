@@ -39,6 +39,14 @@ func EncodeFXPMessage(payload proto.Message) ([]byte, error) {
 		return proto.Marshal(&protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{NewOrder: v},
 		})
+	case *protobuf.OrderCancelRequest:
+		return proto.Marshal(&protobuf.FXPMessage{
+			Payload: &protobuf.FXPMessage_OrderCancel{OrderCancel: v},
+		})
+	case *protobuf.OrderCancelReplaceRequest:
+		return proto.Marshal(&protobuf.FXPMessage{
+			Payload: &protobuf.FXPMessage_OrderCancelReplace{OrderCancelReplace: v},
+		})
 	case *protobuf.MarketDataRequest:
 		return proto.Marshal(&protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: v},
@@ -98,6 +106,38 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 			ForwardToTCPServer(c, msg, frame) // pool-based, no throwaway connections
 		default:
 			log.Println("❌ Unknown connection type in HandleFXPMessage for NewOrder")
+		}
+
+	case *protobuf.FXPMessage_OrderCancel:
+		log.Printf("➡️ Processing OrderCancelRequest for OrderID %s", payload.OrderCancel.OrderId)
+		raw, err := proto.Marshal(msg)
+		if err != nil {
+			log.Println("❌ Failed to encode cancel request:", err)
+			return
+		}
+		switch c := conn.(type) {
+		case net.Conn:
+			SendCancelToRust(c, raw, payload.OrderCancel.OrderId)
+		case *websocket.Conn:
+			SendCancelWSToRust(c, raw, payload.OrderCancel.OrderId)
+		default:
+			log.Println("❌ Unknown connection type for OrderCancelRequest")
+		}
+
+	case *protobuf.FXPMessage_OrderCancelReplace:
+		log.Printf("➡️ Processing OrderCancelReplaceRequest for OrderID %s", payload.OrderCancelReplace.OrderId)
+		raw, err := proto.Marshal(msg)
+		if err != nil {
+			log.Println("❌ Failed to encode cancel/replace request:", err)
+			return
+		}
+		switch c := conn.(type) {
+		case net.Conn:
+			SendCancelToRust(c, raw, payload.OrderCancelReplace.OrderId)
+		case *websocket.Conn:
+			SendCancelWSToRust(c, raw, payload.OrderCancelReplace.OrderId)
+		default:
+			log.Println("❌ Unknown connection type for OrderCancelReplaceRequest")
 		}
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
@@ -229,5 +269,5 @@ func closeConn(conn interface{}) {
 	}
 }
 
-// ForwardToTCPServer are defined in tcp_server.go.
+// ForwardToTCPServer and ForwardToTCPServer are defined in tcp_server.go.
 // They use the connection pool (pool.go) instead of the old single conn.

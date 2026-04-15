@@ -116,3 +116,43 @@ func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
 	}
 	log.Printf("📡 MarketDataRequest forwarded to Rust Core for symbols: %v", request.Symbols)
 }
+
+// SendCancelToRust forwards an OrderCancelRequest or OrderCancelReplaceRequest
+// to Rust Core via the connection pool. The original order_id is registered in
+// orderClientMap so the resulting ExecutionReport is routed back correctly.
+func SendCancelToRust(clientConn net.Conn, rawMsg []byte, orderID string) {
+	msg := &protobuf.FXPMessage{}
+	if err := proto.Unmarshal(rawMsg, msg); err != nil {
+		log.Printf("❌ SendCancelToRust: decode failed: %v", err)
+		return
+	}
+	encoded, err := proto.Marshal(msg)
+	if err != nil {
+		log.Printf("❌ SendCancelToRust: re-encode failed: %v", err)
+		return
+	}
+	frame := make([]byte, 4+len(encoded))
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
+	copy(frame[4:], encoded)
+	log.Printf("🗑️ Sending cancel for OrderID %s to Rust Core", orderID)
+	SendFramedToCore(clientConn, frame, orderID)
+}
+
+// SendCancelWSToRust forwards a cancel/replace from a WebSocket client.
+func SendCancelWSToRust(wsConn *websocket.Conn, rawMsg []byte, orderID string) {
+	msg := &protobuf.FXPMessage{}
+	if err := proto.Unmarshal(rawMsg, msg); err != nil {
+		log.Printf("❌ SendCancelWSToRust: decode failed: %v", err)
+		return
+	}
+	encoded, err := proto.Marshal(msg)
+	if err != nil {
+		log.Printf("❌ SendCancelWSToRust: re-encode failed: %v", err)
+		return
+	}
+	frame := make([]byte, 4+len(encoded))
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
+	copy(frame[4:], encoded)
+	log.Printf("🗑️ Sending WS cancel for OrderID %s to Rust Core", orderID)
+	SendFramedToCore(wsConn, frame, orderID)
+}

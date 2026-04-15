@@ -94,19 +94,35 @@ impl OrderBook {
             (OrderType::Limit, TimeInForce::FOK) =>
                 self.execute_fok(order),
 
-            (OrderType::Limit, TimeInForce::Day | TimeInForce::GTC) =>
-                // Rest on the book — caller calls add_order() + match_orders()
+            (OrderType::Limit, TimeInForce::Day | TimeInForce::GTC | TimeInForce::Gtd) =>
+                // Resting limit orders — caller calls add_order() + match_orders()
                 AggressiveResult {
                     fills: Vec::new(), fill_updates: Vec::new(),
                     unfilled_qty: order.quantity, rest_on_book: true,
                 },
 
-            // Stop / StopLimit require last-trade-price tracking — not yet
-            // implemented. Fall through to resting limit behaviour for now.
-            _ => AggressiveResult {
-                fills: Vec::new(), fill_updates: Vec::new(),
-                unfilled_qty: order.quantity, rest_on_book: true,
-            },
+            // AT_OPEN / AT_CLOSE: participate in auction phases.
+            // Rest on book — auction session handling is a future milestone.
+            (OrderType::Limit, TimeInForce::AtOpen | TimeInForce::AtClose) =>
+                AggressiveResult {
+                    fills: Vec::new(), fill_updates: Vec::new(),
+                    unfilled_qty: order.quantity, rest_on_book: true,
+                },
+
+            // Stop: triggered externally when last_trade_price crosses stop_price.
+            // When triggered, becomes a market order.
+            // process_aggressive is only called AFTER the stop fires —
+            // before that the order sits in the stop_book in server.rs.
+            (OrderType::Stop, _) =>
+                self.execute_market(order),
+
+            // StopLimit: triggered externally when last_trade_price crosses stop_price.
+            // When triggered, becomes a resting limit order (Day/GTC behaviour).
+            (OrderType::StopLimit, _) =>
+                AggressiveResult {
+                    fills: Vec::new(), fill_updates: Vec::new(),
+                    unfilled_qty: order.quantity, rest_on_book: true,
+                },
         }
     }
 
@@ -167,11 +183,11 @@ impl OrderBook {
     fn execute_fok(&mut self, order: Order) -> AggressiveResult {
         let available: u32 = match order.side {
             OrderSide::Buy => self.sell_orders.iter()
-                .filter(|(&p, _)| p <= order.price)
+                .filter(|&(&p, _)| p <= order.price)
                 .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
                 .sum(),
             OrderSide::Sell => self.buy_orders.iter()
-                .filter(|(&p, _)| p >= order.price)
+                .filter(|&(&p, _)| p >= order.price)
                 .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
                 .sum(),
         };
@@ -252,5 +268,37 @@ impl OrderBook {
         }
 
         filled
+    }
+
+    // ── Stop order trigger check ──────────────────────────────────────────────
+    // Called after every fill with the new last_trade_price.
+    // Returns orders that have been triggered and should be processed.
+    // The caller (order_book_task in server.rs) processes them and calls
+    // check_stop_triggers again if those produce fills (cascade handling).
+
+    pub fn drain_triggered_stops(
+        stop_book: &mut Vec<Order>,
+        last_trade_price: i64,
+    ) -> Vec<Order> {
+        let mut triggered = Vec::new();
+        let mut remaining = Vec::new();
+
+        for order in stop_book.drain(..) {
+            let fires = match order.side {
+                // Buy stop: fires when price rises to or above stop_price
+                OrderSide::Buy  => last_trade_price >= order.stop_price,
+                // Sell stop: fires when price falls to or below stop_price
+                OrderSide::Sell => last_trade_price <= order.stop_price,
+            };
+
+            if fires {
+                triggered.push(order);
+            } else {
+                remaining.push(order);
+            }
+        }
+
+        *stop_book = remaining;
+        triggered
     }
 }

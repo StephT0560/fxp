@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExecutionReport {
     pub buy_order_id: String,
     pub sell_order_id: String,
