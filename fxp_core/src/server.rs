@@ -402,9 +402,9 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             0, 0, order_obj.quantity as i32, order_obj.quantity as i32, 0, &ts,
                         );
                         let _ = output_tx.send(ack).await;
+                        println!("🛑 Stop {} parked on {} (stop={} last_trade={})", 
+                            order.order_id, symbol, order_obj.stop_price, last_trade_price);
                         stop_book.push(order_obj);
-                        println!("🛑 Stop {} parked (stop_price={}, last_trade={})", 
-                            order.order_id, order.stop_price, last_trade_price);
                         continue;
                     }
                 }

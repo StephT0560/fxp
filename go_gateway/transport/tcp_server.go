@@ -97,8 +97,23 @@ func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame 
 }
 
 func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
+	// Filter out empty symbol strings — Rust would spawn a ghost order book task for them
+	filtered := make([]string, 0, len(request.Symbols))
+	for _, s := range request.Symbols {
+		if s != "" {
+			filtered = append(filtered, s)
+		}
+	}
+	if len(filtered) == 0 {
+		return
+	}
+
 	msg := &protobuf.FXPMessage{
-		Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: request},
+		Payload: &protobuf.FXPMessage_MarketDataRequest{
+			MarketDataRequest: &protobuf.MarketDataRequest{
+				Symbols: filtered,
+			},
+		},
 	}
 	raw, err := proto.Marshal(msg)
 	if err != nil {
@@ -114,7 +129,7 @@ func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
 		log.Printf("❌ Failed to send MarketDataRequest to Rust Core: %v", err)
 		return
 	}
-	log.Printf("📡 MarketDataRequest forwarded to Rust Core for symbols: %v", request.Symbols)
+	log.Printf("📡 MarketDataRequest forwarded to Rust Core for symbols: %v", filtered)
 }
 
 // SendCancelToRust forwards an OrderCancelRequest or OrderCancelReplaceRequest

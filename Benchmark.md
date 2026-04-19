@@ -12,11 +12,9 @@ is tested under its best realistic conditions.
 - CPU: 8 logical cores
 - Rust toolchain: cargo 1.85.0
 - Go: 1.24.1
-- Build: Rust debug build (`cargo run`), Go (`go run`)
+- Rust encoding benchmarks: release build (`cargo bench`)
+- End-to-end benchmarks: debug build (`cargo run` / `go run`)
 - Pool size: 8 connections (Go Gateway ↔ Rust Core)
-
-> Note: Results were obtained on a debug build. Release builds
-> (`cargo build --release`) will show significantly better Rust-side numbers.
 
 ---
 
@@ -76,7 +74,7 @@ optimising away the work being measured.
 ║  Message Type            ║ FIX 4.4 ║  FXP  ║  SBE  ║ FXP/FIX ║  SBE/FIX ║
 ╠══════════════════════════╬═════════╬═══════╬════════╬═════════╬══════════╣
 ║  NewOrderSingle          ║     164 ║    82 ║     82 ║   50.0% ║    50.0% ║
-║  ExecutionReport         ║     192 ║    75 ║     76 ║   60.9% ║    60.4% ║
+║  ExecutionReport         ║     192 ║    84 ║     76 ║   56.2% ║    60.4% ║
 ║  MarketSnapshot (5L)     ║     331 ║   123 ║    168 ║   62.8% ║    49.2% ║
 ║  MarketDataIncremental   ║     102 ║    30 ║     24 ║   70.6% ║    76.5% ║
 ╚══════════════════════════╩═════════╩═══════╩════════╩═════════╩══════════╝
@@ -84,6 +82,7 @@ optimising away the work being measured.
 
 **Key findings:**
 - FXP ties SBE on `NewOrderSingle` at 82 bytes each with realistic field lengths
+- `ExecutionReport` is 84 bytes (proto v1.1 with `leaves_qty`, `avg_px`, `cum_qty`) vs 192 FIX — 56% smaller
 - FXP beats SBE on `MarketSnapshot` by 27% — Protobuf `repeated` fields are
   more compact than SBE fixed arrays for variable-depth order books
 - FXP reduces `MarketDataIncremental` by 70.6% vs FIX — the highest-frequency
@@ -94,51 +93,57 @@ optimising away the work being measured.
 ### Encode Performance Results
 
 ```
-new_order/encode
-  FXP_preallocated    87.9 ns   (11.4M encodes/sec)
-  FXP_fresh_alloc    366.6 ns    (2.7M encodes/sec)
-  FIX_44_text        574.3 ns    (1.7M encodes/sec)
-  SBE_stack           39.4 ns   (25.4M encodes/sec)
-  SBE_heap            43.6 ns   (22.9M encodes/sec)
+new_order/encode  (release build, criterion, 100 samples)
+  FXP_preallocated    91.6 ns   (10.9M encodes/sec)
+  FXP_fresh_alloc    403.5 ns    (2.5M encodes/sec)
+  FIX_44_text        618.4 ns    (1.6M encodes/sec)   — 6.7x slower than FXP
+  SBE_stack           42.1 ns   (23.8M encodes/sec)
+  SBE_heap            44.5 ns   (22.5M encodes/sec)
 
 execution_report/encode
-  FXP_preallocated    80.5 ns
-  FIX_44_text        600.1 ns    (7.5x slower)
-  SBE_stack           34.6 ns
+  FXP_preallocated   107.2 ns   (9.3M encodes/sec)
+  FIX_44_text        639.7 ns   (1.6M encodes/sec)   — 6.0x slower
+  SBE_stack           37.0 ns   (27.1M encodes/sec)
 
 market_snapshot_5L/encode
-  FXP_preallocated   300.5 ns
-  FIX_44_text          2.36 µs   (7.9x slower)
+  FXP_preallocated   359.0 ns   (2.8M encodes/sec)
+  FIX_44_text          2.50 µs  (400K encodes/sec)   — 7.0x slower
 
 incremental_update/encode
-  FXP_preallocated    67.8 ns
-  FIX_44_text        499.4 ns    (7.4x slower)
+  FXP_preallocated    79.1 ns   (12.6M encodes/sec)
+  FIX_44_text        562.3 ns   (1.8M encodes/sec)   — 7.1x slower
 ```
 
 ### Decode Performance Results
 
 ```
-new_order/decode
-  SBE_binary         1.5 ns   (667M decodes/sec)  — 4 array reads, no validation
-  FXP_protobuf     430.0 ns     (2.3M decodes/sec)
-  FIX_44_text    2,681.0 ns     (373K decodes/sec)  — 6.2x slower than FXP
+new_order/decode  (release build)
+  SBE_binary         1.6 ns   (625M decodes/sec)  — 4 array reads, no validation
+  FXP_protobuf     435.0 ns     (2.3M decodes/sec)
+  FIX_44_text    2,988.0 ns     (335K decodes/sec)  — 6.9x slower than FXP
 ```
 
 ### Roundtrip (Encode + Decode)
 
 ```
-FXP_protobuf     834 ns
-FIX_44_text    3,828 ns    (4.6x slower than FXP)
+FXP_protobuf     527 ns   (encode 92ns + decode 435ns)
+FIX_44_text    3,606 ns   (encode 618ns + decode 2,988ns)  — 6.8x slower than FXP
 SBE_binary         2.9 ns
 ```
 
 ### Batch Throughput (10,000 orders)
 
 ```
-FXP_preallocated    915 µs   (10.9M orders/sec)
-FIX_44_text          5.7 ms   (1.75M orders/sec)   (6.2x slower)
-SBE_stack            101 µs   (99M orders/sec)
+FXP_preallocated    954 µs   (10.5M orders/sec)
+FIX_44_text        6,078 µs   (1.6M orders/sec)    — 6.4x slower
+SBE_stack           112 µs   (89.2M orders/sec)
 ```
+
+> **Note on release vs debug:** The encoding benchmarks run under `cargo bench`
+> which uses the release profile automatically. The numbers above are production
+> release build figures. The end-to-end benchmarks in Part 2 use debug builds
+> (`cargo run` / `go run`) — release build Rust Core would show lower latency
+> at the same throughput.
 
 ---
 
@@ -152,10 +157,10 @@ engineering tradeoff, not a deficiency:
 | Schema evolution | ✅ Add/remove fields without breaking parsers | ❌ Breaking change |
 | Optional fields | ✅ Native support | ❌ Requires workarounds |
 | Cross-language codegen | ✅ 10+ languages | ⚠️ Limited tooling |
-| Encode speed (pre-alloc) | 88ns | 39ns (2.2x faster) |
-| Decode speed | 430ns | 1.5ns (286x faster) |
+| Encode speed (pre-alloc) | 92ns (10.9M/sec) | 42ns (23.8M/sec) — 2.2x faster |
+| Decode speed | 435ns (2.3M/sec) | 1.6ns (625M/sec) — 272x faster |
 | Size: NewOrder | 82 bytes (ties) | 82 bytes |
-| Size: MarketSnapshot | **123 bytes** | 168 bytes (FXP wins) |
+| Size: MarketSnapshot | **123 bytes** | 168 bytes (FXP wins by 27%) |
 | Appropriate for | Open protocol ecosystem | Closed internal bus |
 
 SBE's decode speed advantage (286x) comes from the fact that "decoding" SBE

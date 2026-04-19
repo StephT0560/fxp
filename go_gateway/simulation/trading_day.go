@@ -382,13 +382,15 @@ func (p *Participant) sendMarketMakerOrder(sym *SymbolState, ph Phase) {
 	// Cancel a random old resting order first (re-quoting)
 	p.maybeCancelOldOrder()
 
-	// 15% chance: send an aggressive IOC to generate fills (cross the spread)
-	if p.rng.Float64() < 0.15 {
+	// 25% chance: send an aggressive IOC to generate fills (cross the spread).
+	// Use the current drifted mid so fill prices track the price model,
+	// which allows Rust's last_trade_price to move and trigger stop orders.
+	if p.rng.Float64() < 0.25 {
 		aggrSide := protobuf.OrderSide_BUY
-		aggrPrice := mid + sym.volatility*2 // cross the ask
+		aggrPrice := mid + sym.volatility*3 // cross the ask with headroom
 		if p.rng.Float64() < 0.5 {
 			aggrSide = protobuf.OrderSide_SELL
-			aggrPrice = mid - sym.volatility*2 // cross the bid
+			aggrPrice = mid - sym.volatility*3 // cross the bid with headroom
 		}
 		if aggrPrice < 1 { aggrPrice = 1 }
 		aggrID := p.nextOrderID()
@@ -626,13 +628,19 @@ func (p *Participant) sendHedgeFundOrder(sym *SymbolState, ph Phase) {
 
 	switch {
 	case r < 0.3:
-		// Stop order for risk management
-		stopOffset := sym.volatility * int64(2+p.rng.Intn(5)) // 2–6 vol units away
+		// Stop order for risk management.
+		// Place relative to lastPrice (actual fills) not simulated mid.
+		// Tight offset (1-2 vol units) so real fill price movement can reach the stop.
+		sym.mu.Lock()
+		basePrice := sym.lastPrice
+		if basePrice == 0 { basePrice = mid }
+		sym.mu.Unlock()
+		stopOffset := sym.volatility * int64(1+p.rng.Intn(2)) // 1–2 vol units
 		var stopPrice int64
 		if side == protobuf.OrderSide_SELL {
-			stopPrice = mid - stopOffset // sell stop: trigger if price falls
+			stopPrice = basePrice - stopOffset // sell stop: trigger if price falls
 		} else {
-			stopPrice = mid + stopOffset // buy stop: trigger if price rises (breakout)
+			stopPrice = basePrice + stopOffset // buy stop: trigger if price rises
 		}
 		if stopPrice < 1 { stopPrice = 1 }
 
@@ -711,26 +719,40 @@ func (p *Participant) recordAndSendWithSymbol(orderID string, msg *protobuf.FXPM
 
 func (p *Participant) maybeCancelOldOrder() {
 	p.pendingMu.Lock()
+	// Prune activeOrders to only those still in pending (not yet filled/cancelled)
+	live := p.activeOrders[:0]
+	for _, id := range p.activeOrders {
+		if _, ok := p.pending[id]; ok {
+			live = append(live, id)
+		}
+	}
+	p.activeOrders = live
+
 	if len(p.activeOrders) == 0 {
 		p.pendingMu.Unlock()
 		return
 	}
-	// Cancel the oldest resting order
 	idx := p.rng.Intn(len(p.activeOrders))
 	orderID := p.activeOrders[idx]
 	p.activeOrders = append(p.activeOrders[:idx], p.activeOrders[idx+1:]...)
+	sym := p.symbolByOrder[orderID]
 	p.pendingMu.Unlock()
+
+	if sym == nil {
+		return // resolved between prune and here, skip
+	}
 
 	cancelID := p.nextOrderID()
 	msg := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_OrderCancel{
 			OrderCancel: &protobuf.OrderCancelRequest{
-				Header:          &protobuf.FXPHeader{ProtocolVersion: "1.1"},
-				OrderId:         orderID,
-				ClientCancelId:  cancelID,
-				Sender:          p.traderID,
-				Receiver:        "FXPExchange",
-				Timestamp:       timestamppb.Now(),
+				Header:         &protobuf.FXPHeader{ProtocolVersion: "1.1"},
+				OrderId:        orderID,
+				ClientCancelId: cancelID,
+				Symbol:         sym.symbol,
+				Sender:         p.traderID,
+				Receiver:       "FXPExchange",
+				Timestamp:      timestamppb.Now(),
 			},
 		},
 	}
@@ -801,13 +823,7 @@ func (p *Participant) readLoop() {
 				execType == protobuf.ExecutionType_EXEC_EXPIRED ||
 				execType == protobuf.ExecutionType_EXEC_NEW // ack latency recorded; stop triggers get their own fill report
 
-			// Check if this is a stop trigger: EXEC_NEW for an order no longer in pending
-			// means the stop was already ack'd (first EXEC_NEW cleared pending) and now fired.
 			isStopOrder := p.stopOrderIDs[orderID]
-			if !hasPending && execType == protobuf.ExecutionType_EXEC_NEW && isStopOrder {
-				atomic.AddInt64(&p.stats.stopsFired, 1)
-				if *verbose { log.Printf("[%s] STOP TRIGGERED %s", p.traderID, orderID) }
-			}
 
 			if hasPending {
 				if execType == protobuf.ExecutionType_EXEC_FILLED || execType == protobuf.ExecutionType_EXEC_NEW {
@@ -817,12 +833,9 @@ func (p *Participant) readLoop() {
 				if terminal {
 					delete(p.pending, orderID)
 					delete(p.symbolByOrder, orderID)
-					// Keep stopOrderIDs until the order is truly done (not just ack'd)
-					// EXEC_NEW for a stop just means it's parked — it may still trigger.
-					// Only remove on fill/cancel/reject/replace/expire.
-					if execType != protobuf.ExecutionType_EXEC_NEW {
-						delete(p.stopOrderIDs, orderID)
-					}
+					// stopOrderIDs is cleaned up per-case below, not here,
+					// because EXEC_NEW=0 is the proto3 default and we can't
+					// reliably use it to detect the park ack vs other events.
 					// Remove from activeOrders
 					for i, id := range p.activeOrders {
 						if id == orderID {
@@ -836,27 +849,31 @@ func (p *Participant) readLoop() {
 
 			switch execType {
 			case protobuf.ExecutionType_EXEC_FILLED:
-				if hasPending { // only count our own fills once
-					atomic.AddInt64(&p.stats.ordersFilled, 1)
+				// Count fill for our own orders (hasPending) OR for triggered stop fills
+				// (stop orderID is still in stopOrderIDs even after EXEC_NEW cleared pending)
+				if hasPending || isStopOrder {
+					if hasPending {
+						atomic.AddInt64(&p.stats.ordersFilled, 1)
+					}
+					if isStopOrder {
+						atomic.AddInt64(&p.stats.stopsFired, 1)
+						delete(p.stopOrderIDs, orderID) // stop is done
+						if *verbose { log.Printf("[%s] STOP FILLED %s @%d", p.traderID, orderID, rep.ExecutionPrice) }
+					}
 					if sym != nil {
 						sym.recordFill(rep.ExecutionPrice, int64(rep.ExecutedQuantity))
 					}
-					if *verbose { log.Printf("[%s] FILLED %s @%d qty=%d", p.traderID, orderID, rep.ExecutionPrice, rep.ExecutedQuantity) }
+					if *verbose && hasPending { log.Printf("[%s] FILLED %s @%d qty=%d", p.traderID, orderID, rep.ExecutionPrice, rep.ExecutedQuantity) }
 				}
 			case protobuf.ExecutionType_EXEC_CANCELED:
-				// cancel confirmed — already cleaned from pending above
+				delete(p.stopOrderIDs, orderID)
 			case protobuf.ExecutionType_EXEC_REJECTED:
-				// Only count as a rejection if this was a NewOrder (not a cancel of an already-filled order).
-				// Cancel requests for filled orders return EXEC_REJECTED normally — not an error.
+				delete(p.stopOrderIDs, orderID)
 				if hasPending {
-					// Check if this was a cancel request by seeing if we have a symbol mapping.
-					// NewOrders always have a symbol; cancel requests use the original orderID
-					// which may no longer have a symbol entry after the fill cleaned it up.
 					sym2 := p.symbolByOrder[orderID]
 					if sym2 != nil {
 						atomic.AddInt64(&p.stats.ordersRejected, 1)
 					}
-					// else: rejection of an already-filled order cancel — expected, don't count
 				}
 			}
 		}

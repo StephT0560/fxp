@@ -70,19 +70,23 @@ fn make_fxp_new_order() -> fxp::FxpMessage {
     fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::NewOrder(fxp::NewOrderSingle {
             header: Some(fxp::FxpHeader {
-                protocol_version: "1.0".to_string(),
+                protocol_version: "1.1".to_string(),
                 sequence_number: SEQ_NUM,
             }),
-            order_id:     ORDER_ID.to_string(),
-            sender:       SENDER.to_string(),
-            receiver:     RECEIVER.to_string(),
-            symbol:       SYMBOL.to_string(),
-            price:        PRICE_FIXED,
-            side:         0,
-            quantity:     QUANTITY,
-            order_type:   fxp::OrderType::Limit as i32,
-            time_in_force: fxp::TimeInForce::Day as i32,
-            timestamp:    None,
+            order_id:        ORDER_ID.to_string(),
+            sender:          SENDER.to_string(),
+            receiver:        RECEIVER.to_string(),
+            symbol:          SYMBOL.to_string(),
+            price:           PRICE_FIXED,
+            side:            0,
+            quantity:        QUANTITY,
+            order_type:      fxp::OrderType::Limit as i32,
+            time_in_force:   fxp::TimeInForce::Day as i32,
+            timestamp:       None,
+            stop_price:      0,
+            expire_date:     String::new(),
+            account:         String::new(),
+            client_order_id: String::new(),
         })),
     }
 }
@@ -91,7 +95,7 @@ fn make_fxp_execution_report() -> fxp::FxpMessage {
     fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::ExecutionReport(fxp::ExecutionReport {
             header: Some(fxp::FxpHeader {
-                protocol_version: "1.0".to_string(),
+                protocol_version: "1.1".to_string(),
                 sequence_number: SEQ_NUM + 1,
             }),
             execution_id:      "EXEC-2024-01-15-000099".to_string(),
@@ -102,6 +106,13 @@ fn make_fxp_execution_report() -> fxp::FxpMessage {
             execution_price:   PRICE_FIXED,
             executed_quantity: QUANTITY,
             timestamp:         None,
+            leaves_quantity:   0,
+            avg_px:            PRICE_FIXED,
+            cum_quantity:      QUANTITY,
+            account:           String::new(),
+            client_order_id:   String::new(),
+            orig_order_id:     String::new(),
+            reject_reason:     String::new(),
         })),
     }
 }
