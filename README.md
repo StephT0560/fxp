@@ -25,7 +25,7 @@ FXP addresses all three:
 | Decode throughput | 2.3M msg/sec | 373K msg/sec | **6.2x faster** |
 | Round-trip (encode+decode) | 834 ns | 3,828 ns | **4.6x faster** |
 
-End-to-end (order → ExecutionReport): **p50 17ms** at 50 concurrent senders through two process hops, debug build.
+End-to-end (order → ExecutionReport): **p50 21.8ms** at 50 concurrent senders, release build, both sides compiled.
 
 ---
 
@@ -270,7 +270,7 @@ Throughput (unlimited rate):
   Concurrency=50:  1,449 orders/sec   0 errors  (98% fill rate)
 
 Latency (rate=25/sec, concurrency=50, symbols=spread):
-  p50:   17ms     p95:  237ms     p99:  330ms
+  p50:   21.8ms   p95:  313ms     p99:  409ms    Max: 803ms
   Market data fan-out: p95 < 1ms
 ```
 
