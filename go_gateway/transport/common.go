@@ -125,7 +125,8 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		}
 
 	case *protobuf.FXPMessage_OrderCancelReplace:
-		log.Printf("➡️ Processing OrderCancelReplaceRequest for OrderID %s", payload.OrderCancelReplace.OrderId)
+		cr := payload.OrderCancelReplace
+		log.Printf("➡️ Processing OrderCancelReplaceRequest for OrderID %s → %s", cr.OrderId, cr.NewOrderId)
 		raw, err := proto.Marshal(msg)
 		if err != nil {
 			log.Println("❌ Failed to encode cancel/replace request:", err)
@@ -133,9 +134,20 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		}
 		switch c := conn.(type) {
 		case net.Conn:
-			SendCancelToRust(c, raw, payload.OrderCancelReplace.OrderId)
+			// Register both the original order ID and the new order ID so that
+			// EXEC_REPLACED (for original) and EXEC_NEW (for replacement) are
+			// both routed back to this client.
+			SendCancelToRust(c, raw, cr.OrderId)
+			if cr.NewOrderId != "" {
+				orderClientMap.Store(cr.NewOrderId, c)
+				log.Printf("🧠 Registered replacement OrderID %s to TCP clientConn", cr.NewOrderId)
+			}
 		case *websocket.Conn:
-			SendCancelWSToRust(c, raw, payload.OrderCancelReplace.OrderId)
+			SendCancelWSToRust(c, raw, cr.OrderId)
+			if cr.NewOrderId != "" {
+				orderClientMap.Store(cr.NewOrderId, c)
+				log.Printf("🧠 Registered replacement OrderID %s to WS conn", cr.NewOrderId)
+			}
 		default:
 			log.Println("❌ Unknown connection type for OrderCancelReplaceRequest")
 		}

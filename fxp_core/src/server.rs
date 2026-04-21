@@ -653,7 +653,10 @@ fn make_cancel_report(
                 execution_price:   0,
                 executed_quantity: qty as i32,
                 timestamp:         ts.clone(),
-                leaves_quantity:   0,
+                // leaves_quantity = qty: the cancelled quantity is what was left unfilled.
+                // A non-zero leaves_quantity signals the gateway that this cancel
+                // may be followed by a partial fill report (IOC/FOK remainder).
+                leaves_quantity:   qty as i32,
                 avg_px:            0,
                 cum_quantity:      0,
                 account:           String::new(),

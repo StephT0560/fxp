@@ -213,8 +213,9 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 	switch payload := msg.Payload.(type) {
 
 	case *protobuf.FXPMessage_ExecutionReport:
-		orderID := payload.ExecutionReport.OrderId
-		status := protobuf.OrderStatus(payload.ExecutionReport.OrderStatus)
+		rep := payload.ExecutionReport
+		orderID := rep.OrderId
+		status := protobuf.OrderStatus(rep.OrderStatus)
 		log.Printf("📩 ExecutionReport for OrderID %s status=%s", orderID, status)
 
 		clientAny, ok := orderClientMap.Load(orderID)
@@ -245,13 +246,28 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 			log.Printf("✅ ExecutionReport delivered for OrderID %s", orderID)
 		}
 
-		// Only remove on terminal status — partial fills keep the mapping alive
+		// Remove from orderClientMap only when the order is truly done.
+		//
+		// ORDER_CANCELED with leaves_quantity > 0 means an IOC/FOK remainder
+		// cancel — more reports (the partial fill) will follow on the same
+		// orderID. Keep the map entry alive so they can be delivered.
+		//
+		// ORDER_CANCELED with leaves_quantity == 0 means a full cancel (resting
+		// limit cancelled, or no fill at all) — safe to remove.
+		isCanceled := status == protobuf.OrderStatus_ORDER_CANCELED
+		fullCancel := isCanceled && rep.LeavesQuantity == 0
+
 		terminal := status == protobuf.OrderStatus_ORDER_FILLED ||
-			status == protobuf.OrderStatus_ORDER_CANCELED ||
-			status == protobuf.OrderStatus_ORDER_REJECTED
+			status == protobuf.OrderStatus_ORDER_REJECTED ||
+			status == protobuf.OrderStatus_ORDER_REPLACED ||
+			status == protobuf.OrderStatus_ORDER_EXPIRED ||
+			fullCancel
+
 		if terminal {
 			orderClientMap.Delete(orderID)
 			log.Printf("🗑️ OrderID %s removed from client map (terminal)", orderID)
+		} else if isCanceled {
+			log.Printf("📬 OrderID %s cancel with leaves>0 — keeping in map for partial fill", orderID)
 		}
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
