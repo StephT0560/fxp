@@ -31,6 +31,8 @@ const (
 	MsgTypeTestRequest = "1"
 	MsgTypeResendRequest = "2"
 	MsgTypeReject      = "3"
+	MsgTypeSequenceReset = "4"
+	MsgTypeBusinessMessageReject = "j"
 )
 
 // ── Application message types (tag 35 values) ────────────────────────────────
@@ -57,6 +59,26 @@ const (
 	TagRefSeqNum     = 45  // reference sequence number (in Reject)
 	TagRefTagID      = 371 // tag number that caused a Reject
 	TagSessionRejectReason = 373 // coded reject reason
+	TagBeginSeqNo    = 7   // first seqnum requested (ResendRequest)
+	TagEndSeqNo      = 16  // last seqnum requested, 0 = infinity (ResendRequest)
+	TagPossDupFlag   = 43  // "Y" on retransmitted messages
+	TagOrigSendingTime = 122 // original SendingTime of a retransmitted message
+	TagGapFillFlag   = 123 // "Y" = SequenceReset in GapFill mode
+	TagNewSeqNo      = 36  // next seqnum (SequenceReset)
+	TagPassword      = 554 // Logon password
+	TagRefMsgType    = 372 // MsgType being rejected (BusinessMessageReject)
+	TagBusinessRejectReason = 380 // coded reason (BusinessMessageReject)
+)
+
+// ── SessionRejectReason values (tag 373) ──────────────────────────────────────
+
+const (
+	RejectRequiredTagMissing = "1"
+	RejectValueIncorrect     = "5"
+	RejectIncorrectDataFormat = "6"
+	RejectCompIDProblem      = "9"
+	RejectSendingTimeAccuracy = "10"
+	RejectInvalidMsgType     = "11"
 )
 
 // ── Order entry tags ──────────────────────────────────────────────────────────

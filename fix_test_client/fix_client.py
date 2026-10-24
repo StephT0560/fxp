@@ -22,12 +22,16 @@ Usage:
   python3 fix_client.py --test all --verbose
 """
 
+import os
 import socket
 import time
 import argparse
 import threading
 import queue
 from datetime import datetime, timezone
+
+# Password(554) sent on Logon; must match the bridge's FXP_FIX_CREDENTIALS.
+FIX_PASSWORD = os.environ.get('FXP_FIX_PASSWORD', '')
 
 SOH = '\x01'
 PASS = '✅'
@@ -159,7 +163,7 @@ class FIXSession:
         self._thread.start()
 
     def logon(self):
-        self.send('A', [(98, '0'), (108, '30'), (141, 'Y')], 'Logon')
+        self.send('A', [(98, '0'), (108, '30'), (141, 'Y'), (554, FIX_PASSWORD)], 'Logon')
         time.sleep(0.6)  # wait for logon ack + gateway connect
 
     def logout(self):
@@ -662,6 +666,7 @@ TESTS = {
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    global FIX_PASSWORD
     ap = argparse.ArgumentParser(description='FIX 4.4 test client for FXP bridge')
     ap.add_argument('--host',    default='127.0.0.1')
     ap.add_argument('--port',    type=int, default=8083)
@@ -671,7 +676,10 @@ def main():
                     help=f'Test to run: all | {" | ".join(TESTS)}')
     ap.add_argument('--verbose', action='store_true',
                     help='Print all sent/received messages')
+    ap.add_argument('--password', default=FIX_PASSWORD,
+                    help='Logon Password(554) (default: $FXP_FIX_PASSWORD)')
     args = ap.parse_args()
+    FIX_PASSWORD = args.password
 
     if args.test != 'all' and args.test not in TESTS:
         print(f'Unknown test: {args.test}')

@@ -17,6 +17,8 @@
 package gateway
 
 import (
+	"sync/atomic"
+	"errors"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -62,6 +64,10 @@ type Client struct {
 
 	done       chan struct{}
 	once       sync.Once
+	userClosed atomic.Bool
+
+	inflightMu sync.Mutex
+	inflight   []byte // frame whose write failed; returned by DrainPending
 	connected  bool
 }
 
@@ -105,16 +111,26 @@ func (c *Client) Connect() error {
 
 	log.Printf("[gateway:%s] authenticated as %s", c.traderID, c.traderID)
 
-	// Start writer goroutine
-	go c.writeLoop()
+	writerDone := make(chan struct{})
+	go func() {
+		c.writeLoop()
+		close(writerDone)
+	}()
 
 	// Read loop blocks until disconnect
 	c.readLoop()
-	return nil
+	<-writerDone
+	if c.userClosed.Load() {
+		return nil
+	}
+	return errGatewayDisconnected
 }
 
+var errGatewayDisconnected = errors.New("gateway disconnected")
+
 // Send enqueues an FXP proto message for delivery to the gateway.
-// Safe to call from any goroutine. Non-blocking.
+// Safe to call from any goroutine. Non-blocking: messages queue until the
+// connection is up; an error means the message was not queued.
 func (c *Client) Send(msg *protobuf.FXPMessage) error {
 	raw, err := proto.Marshal(msg)
 	if err != nil {
@@ -122,15 +138,58 @@ func (c *Client) Send(msg *protobuf.FXPMessage) error {
 	}
 	frame := makeFrame(raw)
 	select {
+	case <-c.done:
+		return errClientClosed
+	default:
+	}
+	select {
 	case c.sendCh <- frame:
 		return nil
+	case <-c.done:
+		return errClientClosed
 	default:
-		return fmt.Errorf("gateway send buffer full — dropping message")
+		return fmt.Errorf("gateway send buffer full")
+	}
+}
+
+var errClientClosed = errors.New("gateway connection closed")
+
+// DrainPending removes and returns messages queued but not yet written.
+func (c *Client) DrainPending() []*protobuf.FXPMessage {
+	var out []*protobuf.FXPMessage
+	c.inflightMu.Lock()
+	frames := [][]byte{}
+	if c.inflight != nil {
+		frames = append(frames, c.inflight)
+		c.inflight = nil
+	}
+	c.inflightMu.Unlock()
+	for _, frame := range frames {
+		m := &protobuf.FXPMessage{}
+		if proto.Unmarshal(frame[4:], m) == nil {
+			out = append(out, m)
+		}
+	}
+	for {
+		select {
+		case frame := <-c.sendCh:
+			m := &protobuf.FXPMessage{}
+			if proto.Unmarshal(frame[4:], m) == nil {
+				out = append(out, m)
+			}
+		default:
+			return out
+		}
 	}
 }
 
 // Close gracefully shuts down the gateway connection.
 func (c *Client) Close() {
+	c.userClosed.Store(true)
+	c.shutdown()
+}
+
+func (c *Client) shutdown() {
 	c.once.Do(func() {
 		close(c.done)
 		if c.conn != nil {
@@ -181,7 +240,7 @@ func (c *Client) readLogonAck() error {
 // ── Read / write loops ────────────────────────────────────────────────────────
 
 func (c *Client) readLoop() {
-	defer c.Close()
+	defer c.shutdown()
 	for {
 		msg, err := readFramed(c.conn)
 		if err != nil {
@@ -209,7 +268,10 @@ func (c *Client) writeLoop() {
 		case frame := <-c.sendCh:
 			if _, err := c.conn.Write(frame); err != nil {
 				log.Printf("[gateway:%s] write error: %v", c.traderID, err)
-				c.Close()
+				c.inflightMu.Lock()
+				c.inflight = frame
+				c.inflightMu.Unlock()
+				c.shutdown()
 				return
 			}
 		}
