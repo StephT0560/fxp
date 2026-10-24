@@ -81,6 +81,10 @@ func translateExecutionReport(
 	b.Set(codec.TagExecType, execType)
 	b.Set(codec.TagOrdStatus, ordStatus)
 	b.Set(codec.TagSymbol,   rep.Symbol)
+	b.Set(codec.TagSide,     mapSideToFIX(rep.Side))
+	if rep.OrderQuantity > 0 {
+		b.SetInt(codec.TagOrderQty, int(rep.OrderQuantity))
+	}
 
 	// ClOrdID — use client_order_id if set, fall back to order_id
 	clOrdID := rep.ClientOrderId
@@ -109,10 +113,8 @@ func translateExecutionReport(
 		b.Set(codec.TagLastPx,    formatFixedPoint(rep.ExecutionPrice))
 	}
 
-	// Average price
-	if rep.AvgPx > 0 {
-		b.Set(codec.TagAvgPx, formatFixedPoint(rep.AvgPx))
-	}
+	// Average price (required on every ExecutionReport)
+	b.Set(codec.TagAvgPx, formatFixedPoint(rep.AvgPx))
 
 	// Reject reason
 	if rep.RejectReason != "" {
@@ -200,7 +202,7 @@ func mapExecType(et protobuf.ExecutionType) string {
 	case protobuf.ExecutionType_EXEC_NEW:
 		return codec.ExecTypeNew
 	case protobuf.ExecutionType_EXEC_FILLED:
-		return codec.ExecTypeFill
+		return codec.ExecTypeTrade
 	case protobuf.ExecutionType_EXEC_CANCELED:
 		return codec.ExecTypeCanceled
 	case protobuf.ExecutionType_EXEC_REPLACED:
@@ -212,6 +214,13 @@ func mapExecType(et protobuf.ExecutionType) string {
 	default:
 		return codec.ExecTypeNew // safe default — EXEC_NEW = 0 = proto3 default
 	}
+}
+
+func mapSideToFIX(side protobuf.OrderSide) string {
+	if side == protobuf.OrderSide_SELL {
+		return codec.SideSell
+	}
+	return codec.SideBuy
 }
 
 func mapOrdStatus(os protobuf.OrderStatus) string {
