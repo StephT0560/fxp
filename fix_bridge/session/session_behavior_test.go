@@ -749,3 +749,28 @@ func rawSessionWire(body string) []byte {
 	}
 	return []byte(fmt.Sprintf("%s10=%03d\x01", prefix, sum%256))
 }
+
+func TestSequenceResetModeIgnoresZeroMsgSeqNum(t *testing.T) {
+	p := newPeer(t)
+	p.logon()
+	p.sendSeq("4", 0, "36", "25")
+	p.sendSeq("1", 25, "112", "after-reset")
+	if m := p.expect(codec.MsgTypeHeartbeat); m.Get(112) != "after-reset" {
+		t.Fatal(m.Fields)
+	}
+}
+
+func TestResetModeStillUsesDictionaryAndRefMsgType(t *testing.T) {
+	p := newPeer(t)
+	p.logon()
+	p.sendSeq("4", 0, "36", "not-a-sequence")
+	r := p.expect(codec.MsgTypeReject)
+	if r.Get(373) != "6" || r.Get(371) != "36" || r.Get(372) != "4" {
+		t.Fatalf("invalid reset: %+v", r.Fields)
+	}
+	p.sendSeq("4", 0, "36", "1")
+	r = p.expect(codec.MsgTypeReject)
+	if r.Get(373) != "5" || r.Get(372) != "4" {
+		t.Fatalf("backward reset: %+v", r.Fields)
+	}
+}

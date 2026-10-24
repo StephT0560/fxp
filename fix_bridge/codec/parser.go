@@ -203,6 +203,9 @@ func (p *Parser) readMessage() (*Message, error) {
 	if err != nil {
 		return nil, garbled("parsing body: %v", err)
 	}
+	if len(fields) == 0 || fields[0].Tag != TagMsgType {
+		return nil, garbled("MsgType must be third field")
+	}
 	for _, f := range fields {
 		if f.Tag == TagCheckSum {
 			return nil, garbled("incorrect BodyLength %d: CheckSum inside body", bodyLen)

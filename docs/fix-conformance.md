@@ -88,3 +88,9 @@ Acceptance probes also cover empty/missing CompIDs (dictionary reasons 4/1,
 before identity mismatch), optional header placement, and FIX decimal lexical
 syntax (no leading plus, exponent, NaN or infinity). Session test fixtures now
 place PossDupFlag/OrigSendingTime in StandardHeader, before body fields.
+
+The first three fields must be BeginString, BodyLength and MsgType; malformed
+header prefixes are ignored without consuming sequencing state. SequenceReset
+in Reset mode ignores the MsgSeqNum value (including 0) but still validates
+its dictionary fields; GapFill and ordinary messages require positive sequence
+numbers. Rejects retain RefMsgType for the affected administrative message.

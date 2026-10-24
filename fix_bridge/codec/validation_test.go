@@ -4,6 +4,7 @@ package codec
 
 import (
 	"bytes"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -139,5 +140,14 @@ func TestDictionaryHeaderOrderAndFIXDecimalSyntax(t *testing.T) {
 	v := DefaultDictionary.Validate(m, false)
 	if v == nil || v.Reason != "14" || v.Tag != 34 {
 		t.Fatalf("header after body: %+v", v)
+	}
+}
+
+func TestParserRequiresMsgTypeThird(t *testing.T) {
+	body := strings.Replace(bodyFromWire(goldenVectors[1].wire), "35=D\x01", "", 1)
+	body = "34=2\x0135=D\x01" + strings.Replace(body, "34=2\x01", "", 1)
+	_, err := NewParser(strings.NewReader(rawWire("FIX.4.4", strconv.Itoa(len(body)), body))).ReadMessage()
+	if !errors.Is(err, ErrGarbled) {
+		t.Fatalf("got %v want garbled third-field error", err)
 	}
 }

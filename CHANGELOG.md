@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Enforce MsgType as the third wire field and validate Reset-mode dictionary fields while ignoring its sequence number (#2).
+
 - Complete header/trailer ordering and FIX decimal lexical checks; distinguish missing/empty CompIDs from authenticated identity mismatches (#2).
 
 - Additive protocol v2.3 owner-scoped order status (FIX H/AF), terminal-history snapshots and independent batched query routing (#2).

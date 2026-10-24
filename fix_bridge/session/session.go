@@ -343,7 +343,8 @@ func (s *Session) dispatch(msg *codec.Message) error {
 	msgType := msg.MsgType()
 	state := s.State()
 	seq, err := strconv.Atoi(msg.Get(codec.TagMsgSeqNum))
-	if err != nil || seq <= 0 {
+	ignoreResetSeq := (state == StateLoggedOn || state == StateLoggingOut) && msgType == codec.MsgTypeSequenceReset && msg.Get(codec.TagGapFillFlag) != "Y" && err == nil && seq == 0
+	if err != nil || seq <= 0 && !ignoreResetSeq {
 		if state != StateLoggedOn && state != StateLoggingOut {
 			return s.rejectLogon(msg, "missing or invalid MsgSeqNum (34)")
 		}
@@ -374,6 +375,10 @@ func (s *Session) dispatch(msg *codec.Message) error {
 
 	// SequenceReset-Reset and Logon(141=Y) ignore MsgSeqNum.
 	if msgType == codec.MsgTypeSequenceReset && msg.Get(codec.TagGapFillFlag) != "Y" {
+		if v := codec.DefaultDictionary.Validate(msg, s.StrictDictionary); v != nil {
+			s.sendRejectRef(seq, v.Tag, msgType, v.Reason, v.Text)
+			return nil
+		}
 		s.applyNewSeqNo(msg, seq)
 		return nil
 	}
@@ -421,7 +426,7 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		return nil
 	}
 	if reason, text := s.validateSendingTime(msg); reason != "" {
-		s.sendReject(seq, reason, text)
+		s.sendRejectRef(seq, 0, msgType, reason, text)
 		if reason == codec.RejectSendingTimeAccuracy {
 			s.sendLogout(text)
 			return io.EOF
@@ -807,7 +812,7 @@ func (s *Session) applyNewSeqNo(msg *codec.Message, seq int) {
 		return
 	}
 	if newSeq < s.inSeqNum {
-		s.sendReject(seq, codec.RejectValueIncorrect,
+		s.sendRejectRef(seq, 0, codec.MsgTypeSequenceReset, codec.RejectValueIncorrect,
 			fmt.Sprintf("NewSeqNo %d lower than expected %d", newSeq, s.inSeqNum))
 		return
 	}
