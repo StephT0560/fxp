@@ -101,3 +101,25 @@ fields: the validator still returns reasons 4 and 13 in the current scope.
 Reusing a terminal order ID at the trusted core boundary binds its new status
 record to the newly accepted owner. A rejected duplicate cannot change that
 ownership. Gateway namespacing continues to prevent cross-owner ID collisions.
+
+## QuickFIX acceptance baseline
+
+The normal PR job `quickfix-acceptance` runs all 59 pinned QuickFIX C++ FIX44
+server definitions using the official POSIX Ruby runner. Observed full local
+baseline: **28 passed, 31 allow-listed failures, 0 unexpected failures and
+0 runner errors**. See [runner, adapter, and result details](../tests/quickfix/README.md)
+and the [per-definition allow-list](../tests/quickfix/expected-failures.json).
+
+Remaining unsupported compatibility policies include the QuickFIX test echo
+application, silent Logon rejection, reversed third-party routing headers,
+buffering high-sequence administrative messages, exact heartbeat/TestReqID
+conventions, and waiting for the peer's Logout after fatal protocol errors.
+The last policy can produce a TCP reset when the peer sends its Logout after
+FXP has closed. These cases are explicit limitations, not passing conformance
+claims. Header order, enums, datatypes, repeating groups, resets and status have
+separate focused regressions that do not depend on an application echo.
+
+TradeCaptureReport, SecurityDefinition, initiator mode and TLS are unchanged
+and remain out of scope. No production certification rating is asserted by
+this change. In particular, a green acceptance gate means no regressions
+against its explicit baseline, not that every upstream definition passes.

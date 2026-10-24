@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Gate PRs on all 59 pinned QuickFIX FIX44 server definitions, with a documented per-case expected-failure baseline and explicit runner/result validation (#2).
+
 - Bind recycled terminal status IDs to their newly accepted owner, preserving owner isolation at the trusted core boundary (#2).
 
 - Keep empty-value and duplicate checks enabled for permitted user-defined FIX fields (#2).

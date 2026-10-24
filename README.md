@@ -517,3 +517,11 @@ and original cumulative/leaves quantities. Queries do not redirect fills.
 Single status echoes OrdStatusReqID(790); mass status echoes 584 and includes
 911/912 count/final markers. Unknown/foreign IDs and empty mass results get
 BusinessMessageReject (`380=1`). See [status retention and consistency](docs/fix-conformance.md#order-status).
+
+The CI `quickfix-acceptance` job runs 59 pinned QuickFIX v1.15.1 FIX44 server
+definitions with its official POSIX runner. Observed local result: **28 passed,
+31 failed and explicitly allow-listed, 0 unexpected failures / runner errors**.
+The [per-case reasons](tests/quickfix/expected-failures.json) preserve unsupported
+features and policy differences; this is a regression gate, not certification.
+See [runner/adapter details](tests/quickfix/README.md) and the command in
+[CONTRIBUTING.md](CONTRIBUTING.md#quickfix-fix44-acceptance).
