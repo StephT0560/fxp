@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"sync"
 
@@ -78,11 +79,11 @@ func EncodeFXPMessage(payload proto.Message) ([]byte, error) {
 // ✅ Unified FXP Message Router (TCP or WebSocket, based on conn type)
 // ===================================================================
 func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
-	log.Printf("🔎 HandleFXPMessage called with type: %T", msg.Payload)
+	slog.Debug("HandleFXPMessage", "type", fmt.Sprintf("%T", msg.Payload))
 
 	switch payload := msg.Payload.(type) {
 	case *protobuf.FXPMessage_MarketDataRequest:
-		log.Println("➡️ Processing MarketDataRequest")
+		slog.Debug("processing MarketDataRequest")
 		switch c := conn.(type) {
 		case net.Conn:
 			SubscribeToMarketDataTCP(c, payload.MarketDataRequest)
@@ -93,7 +94,7 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		}
 
 	case *protobuf.FXPMessage_NewOrder:
-		log.Println("➡️ Processing NewOrder")
+		slog.Debug("processing NewOrder")
 		if reason := validateOrderEnums(msg); reason != "" {
 			sendOrderReject(conn, msg, reason)
 			return
@@ -119,7 +120,7 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		}
 
 	case *protobuf.FXPMessage_OrderCancel:
-		log.Printf("➡️ Processing OrderCancelRequest for OrderID %s", payload.OrderCancel.OrderId)
+		slog.Debug("processing OrderCancelRequest", "order_id", payload.OrderCancel.OrderId)
 		raw, err := proto.Marshal(msg)
 		if err != nil {
 			log.Println("❌ Failed to encode cancel request:", err)
@@ -136,7 +137,7 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 
 	case *protobuf.FXPMessage_OrderCancelReplace:
 		cr := payload.OrderCancelReplace
-		log.Printf("➡️ Processing OrderCancelReplaceRequest for OrderID %s → %s", cr.OrderId, cr.NewOrderId)
+		slog.Debug("processing OrderCancelReplaceRequest", "order_id", cr.OrderId, "new_order_id", cr.NewOrderId)
 		if reason := validateOrderEnums(msg); reason != "" {
 			sendOrderReject(conn, msg, reason)
 			return
@@ -162,16 +163,14 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		}
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
-		log.Println("➡️ Processing MarketDataIncrementalUpdate")
-		log.Printf("📡 MarketDataIncrementalUpdate received for symbol: %s", payload.MarketDataIncremental.Symbol)
+		slog.Debug("processing MarketDataIncrementalUpdate", "symbol", payload.MarketDataIncremental.Symbol)
 		ForwardMarketData(payload.MarketDataIncremental)
 
 	case *protobuf.FXPMessage_MarketDataSnapshot:
 		ForwardMarketData(payload.MarketDataSnapshot)
 
 	case *protobuf.FXPMessage_TradeCaptureReport:
-		log.Println("➡️ Processing TradeCaptureReport")
-		log.Printf("📡 TradeCaptureReport received for symbol: %s", payload.TradeCaptureReport.Symbol)
+		slog.Debug("processing TradeCaptureReport", "symbol", payload.TradeCaptureReport.Symbol)
 		ForwardMarketData(payload.TradeCaptureReport)
 
 	default:
@@ -300,8 +299,7 @@ func ForwardMarketData(update proto.Message) {
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(data)))
 	copy(frame[4:], data)
 
-	log.Printf("🚀 ForwardMarketData called with symbol: %s", symbol)
-	log.Printf("📦 Forwarding market data for %s (%d bytes)", symbol, len(data))
+	slog.Debug("forwarding market data", "symbol", symbol, "bytes", len(data))
 
 	if clients, ok := clientSubs.Load(symbol); ok {
 		count := 0
@@ -325,13 +323,13 @@ func ForwardMarketData(update proto.Message) {
 				closeConn(key)
 				clients.(*sync.Map).Delete(key)
 			} else {
-				log.Printf("✅ Market data sent to client (%T) for symbol: %s", key, symbol)
+				slog.Debug("market data sent", "client", fmt.Sprintf("%T", key), "symbol", symbol)
 			}
 			return true
 		})
-		log.Printf("📊 Forwarding complete: %d clients attempted for %s", count, symbol)
+		slog.Debug("market data forwarding complete", "clients", count, "symbol", symbol)
 	} else {
-		log.Printf("🚫 No clients subscribed for symbol: %s", symbol)
+		slog.Debug("no clients subscribed", "symbol", symbol)
 	}
 }
 
@@ -351,7 +349,7 @@ func SubscribeToMarketDataTCP(clientConn net.Conn, request *protobuf.MarketDataR
 				count++
 				return true
 			})
-			log.Printf("🔁 %d clients subscribed to %s", count, symbol)
+			slog.Debug("clients subscribed", "count", count, "symbol", symbol)
 		}
 	}
 

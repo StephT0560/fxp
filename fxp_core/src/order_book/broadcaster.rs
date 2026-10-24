@@ -55,8 +55,8 @@ impl MarketDataBroadcaster {
     pub fn broadcast_snapshot(&self, snapshot: &MarketDataSnapshot) {
         let clients = self.get_subscribers(&snapshot.symbol);
         for client_id in clients {
-            println!(
-                "📡 Sending snapshot to client {}: {:?}",
+            tracing::trace!(
+                "Sending snapshot to client {}: {:?}",
                 client_id, snapshot
             );
         }
@@ -66,8 +66,8 @@ impl MarketDataBroadcaster {
     pub fn broadcast_incremental(&self, update: &MarketDataIncrementalUpdate) {
         let clients = self.get_subscribers(&update.symbol);
         for client_id in clients {
-            println!(
-                "📡 Sending incremental update to client {}: {:?}",
+            tracing::trace!(
+                "Sending incremental update to client {}: {:?}",
                 client_id, update
             );
         }

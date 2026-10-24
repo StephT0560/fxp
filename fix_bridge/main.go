@@ -42,6 +42,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -52,6 +53,7 @@ import (
 	"fix_bridge/session"
 	"fix_bridge/translator"
 
+	"go_gateway/logging"
 	"go_gateway/protobuf"
 )
 
@@ -65,6 +67,7 @@ var (
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 func main() {
+	logging.Setup()
 	flag.Parse()
 
 	jwtSecret := os.Getenv("FXP_JWT_SECRET")
@@ -295,7 +298,7 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 
 	fxpMsg, err := translator.TranslateFIXtoFXP(msg)
 	if err != nil {
-		log.Printf("[%s] translation error for %s: %v", sess.TargetCompID, msg.MsgType(), err)
+		slog.Warn("translation error", "session", sess.TargetCompID, "msg_type", msg.MsgType(), "err", err)
 		h.sendBusinessReject(msg, sess, err.Error())
 		return
 	}
@@ -319,7 +322,7 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		if undoMD != nil {
 			undoMD()
 		}
-		log.Printf("[%s] gateway send error: %v", sess.TargetCompID, err)
+		slog.Warn("gateway send error", "session", sess.TargetCompID, "err", err)
 		h.sendBusinessReject(msg, sess, "gateway unavailable: "+err.Error())
 	}
 }

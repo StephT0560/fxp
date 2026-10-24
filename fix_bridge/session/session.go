@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -282,7 +283,7 @@ func (s *Session) readLoop() {
 		}
 		if err != nil {
 			if errors.Is(err, codec.ErrGarbled) {
-				log.Printf("[%s] ignoring garbled message: %v", s.target(), err)
+				slog.Warn("ignoring garbled message", "session", s.target(), "err", err)
 				continue
 			}
 			if err != io.EOF {
@@ -405,8 +406,8 @@ func (s *Session) dispatch(msg *codec.Message) error {
 	case codec.MsgTypeResendRequest:
 		s.handleResendRequest(msg)
 	case codec.MsgTypeReject:
-		log.Printf("[%s] Reject received for seq %s: 373=%s %q", s.target(),
-			msg.Get(codec.TagRefSeqNum), msg.Get(codec.TagSessionRejectReason), msg.Get(codec.TagText))
+		slog.Warn("Reject received", "session", s.target(), "ref_seq", msg.Get(codec.TagRefSeqNum),
+			"reason", msg.Get(codec.TagSessionRejectReason), "text", msg.Get(codec.TagText))
 	case codec.MsgTypeSequenceReset:
 		s.applyNewSeqNo(msg, seq) // GapFill
 	default:
@@ -676,7 +677,7 @@ func (s *Session) sendReject(refSeq int, reason, text string) {
 }
 
 func (s *Session) sendRejectRef(refSeq, refTagID int, refMsgType, reason, text string) {
-	log.Printf("[%s] rejecting seq %d: 373=%s %s", s.target(), refSeq, reason, text)
+	slog.Warn("rejecting message", "session", s.target(), "ref_seq", refSeq, "reason", reason, "text", text)
 	s.SendWithSeq(func(n int) []byte {
 		return codec.NewRejectRef(s.SenderCompID, s.target(), n, refSeq, refTagID, refMsgType, reason, text)
 	})

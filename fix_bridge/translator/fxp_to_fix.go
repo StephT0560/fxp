@@ -27,7 +27,7 @@ package translator
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 
 	"fix_bridge/codec"
@@ -73,7 +73,7 @@ func TranslateFXPtoFIX(
 		return nil
 
 	default:
-		log.Printf("[translator] unhandled FXP payload type: %T", msg.Payload)
+		slog.Warn("unhandled FXP payload type", "type", fmt.Sprintf("%T", msg.Payload))
 		return nil
 	}
 }
@@ -97,17 +97,17 @@ func translateExecutionReport(
 ) []byte {
 	execType, err := mapExecType(protobuf.ExecutionType(rep.ExecutionType))
 	if err != nil {
-		log.Printf("[translator] dropping ExecutionReport %q: %v", rep.OrderId, err)
+		slog.Warn("dropping ExecutionReport", "order_id", rep.OrderId, "err", err)
 		return nil
 	}
 	ordStatus, err := mapOrdStatus(protobuf.OrderStatus(rep.OrderStatus))
 	if err != nil {
-		log.Printf("[translator] dropping ExecutionReport %q: %v", rep.OrderId, err)
+		slog.Warn("dropping ExecutionReport", "order_id", rep.OrderId, "err", err)
 		return nil
 	}
 	side, err := mapSideToFIX(rep.Side)
 	if err != nil {
-		log.Printf("[translator] dropping ExecutionReport %q: %v", rep.OrderId, err)
+		slog.Warn("dropping ExecutionReport", "order_id", rep.OrderId, "err", err)
 		return nil
 	}
 
@@ -222,7 +222,7 @@ func translateMarketDataIncremental(
 	for _, change := range inc.Changes {
 		entryType, ok := mapMDEntryType(change.Side)
 		if !ok {
-			log.Printf("[translator] dropping %s MD entry with side %v", inc.Symbol, change.Side)
+			slog.Debug("dropping MD entry with unknown side", "symbol", inc.Symbol, "side", change.Side)
 			continue
 		}
 		entries = append(entries, entry{change, entryType})

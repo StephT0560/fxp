@@ -3,12 +3,14 @@
 package main
 
 import (
+	"go_gateway/logging"
 	"go_gateway/transport"
 	"log"
 	"sync"
 )
 
 func main() {
+	logging.Setup()
 	var wg sync.WaitGroup
 
 	wg.Add(2)

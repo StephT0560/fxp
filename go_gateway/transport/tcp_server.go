@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"log"
+	"log/slog"
 	"net"
 	"time"
 
@@ -115,7 +116,7 @@ func SendOrderToRust(clientConn net.Conn, orderData []byte) {
 	frame := make([]byte, 4+len(encoded))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
 	copy(frame[4:], encoded)
-	log.Printf("🧠 Registered OrderID %s to TCP clientConn", orderID)
+	slog.Debug("registered order to TCP client", "order_id", orderID)
 	SendFramedToCore(clientConn, frame, orderID, order.NewOrder.Sender, false)
 }
 
@@ -126,9 +127,9 @@ func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame 
 		return
 	}
 	orderID := order.NewOrder.OrderId
-	log.Printf("🧠 Registered WS OrderID %s to wsConn", orderID)
+	slog.Debug("registered order to WebSocket client", "order_id", orderID)
 	SendFramedToCore(wsConn, frame, orderID, order.NewOrder.Sender, false)
-	log.Println("📤 WS order forwarded to FXP Core via pool connection")
+	slog.Debug("WebSocket order forwarded to FXP Core")
 }
 
 func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
@@ -164,7 +165,7 @@ func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
 		log.Printf("❌ Failed to send MarketDataRequest to Rust Core: %v", err)
 		return
 	}
-	log.Printf("📡 MarketDataRequest forwarded to Rust Core for symbols: %v", filtered)
+	slog.Debug("MarketDataRequest forwarded to FXP Core", "symbols", filtered)
 }
 
 // SendCancelToRust forwards an OrderCancelRequest or OrderCancelReplaceRequest
@@ -184,7 +185,7 @@ func SendCancelToRust(clientConn net.Conn, rawMsg []byte, orderID string) {
 	frame := make([]byte, 4+len(encoded))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
 	copy(frame[4:], encoded)
-	log.Printf("🗑️ Sending cancel for OrderID %s to Rust Core", orderID)
+	slog.Debug("sending cancel to FXP Core", "order_id", orderID)
 	SendFramedToCore(clientConn, frame, orderID, orderOwner(msg), true)
 }
 
@@ -203,6 +204,6 @@ func SendCancelWSToRust(wsConn *websocket.Conn, rawMsg []byte, orderID string) {
 	frame := make([]byte, 4+len(encoded))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
 	copy(frame[4:], encoded)
-	log.Printf("🗑️ Sending WS cancel for OrderID %s to Rust Core", orderID)
+	slog.Debug("sending WebSocket cancel to FXP Core", "order_id", orderID)
 	SendFramedToCore(wsConn, frame, orderID, orderOwner(msg), true)
 }

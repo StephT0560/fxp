@@ -184,7 +184,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
     // Report state of every live order (resting, parked stop or in-flight)
     let mut states: HashMap<String, OrderState> = HashMap::new();
 
-    println!("📚 Order book task started for {}", symbol);
+    tracing::debug!("Order book task started for {}", symbol);
 
     while let Some(msg) = rx.recv().await {
         match msg {
@@ -194,7 +194,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                 if !subscribers.iter().any(|tx| tx.same_channel(&sub.tx)) {
                     subscribers.push(sub.tx);
                 }
-                println!("✅ Client subscribed to {}", symbol);
+                tracing::debug!("Client subscribed to {}", symbol);
             }
 
             SymbolMsg::Cancel(cancel_msg) => {
@@ -231,7 +231,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         if let Some(md_update) = md_update {
                             broadcast_md(&mut subscribers, md_frame(&md_update, &ts)).await;
                         }
-                        println!("🗑️ Cancelled order {} on {}", cancel_msg.order_id, symbol);
+                        tracing::debug!("Cancelled order {} on {}", cancel_msg.order_id, symbol);
                     }
                     Err(reject) => {
                         // Not live (filled, cancelled, unknown) or not owned by the requester
@@ -243,8 +243,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             &ts,
                         );
                         let _ = cancel_msg.output_tx.send(report).await;
-                        println!(
-                            "⚠️ Cancel rejected: order {} on {}: {:?}",
+                        tracing::debug!(
+                            "Cancel rejected: order {} on {}: {:?}",
                             cancel_msg.order_id, symbol, reject
                         );
                     }
@@ -270,7 +270,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             &ts,
                         );
                         let _ = cr_msg.output_tx.send(report).await;
-                        println!("⚠️ CancelReplace rejected: {}", reason);
+                        tracing::debug!("CancelReplace rejected: {}", reason);
                         continue;
                     }
                 };
@@ -332,8 +332,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                 report_execution(exec, &mut states, &mut subscribers, &symbol, &ts)
                                     .await;
                             }
-                            println!(
-                                "🔄 CancelReplaced parked stop {} → {} on {}",
+                            tracing::debug!(
+                                "CancelReplaced parked stop {} → {} on {}",
                                 cr_msg.order_id, cr_msg.new_order_id, symbol
                             );
                         }
@@ -364,8 +364,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             &ts,
                         );
                         let _ = cr_msg.output_tx.send(report).await;
-                        println!(
-                            "⚠️ CancelReplace rejected: order {} on {}: {:?}",
+                        tracing::debug!(
+                            "CancelReplace rejected: order {} on {}: {:?}",
                             cr_msg.order_id, symbol, reject
                         );
                     }
@@ -402,8 +402,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         broadcast_md(&mut subscribers, md_frame(&inc, &ts)).await;
                         report_execution(exec, &mut states, &mut subscribers, &symbol, &ts).await;
 
-                        println!(
-                            "🔄 CancelReplaced {} → {} on {}",
+                        tracing::debug!(
+                            "CancelReplaced {} → {} on {}",
                             cr_msg.order_id, cr_msg.new_order_id, symbol
                         );
                     }
@@ -453,7 +453,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             &ts,
                         ))
                         .await;
-                    println!("⚠️ Order {} rejected: {}", order.order_id, reason);
+                    tracing::debug!("Order {} rejected: {}", order.order_id, reason);
                     continue;
                 }
 
@@ -497,8 +497,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         let report =
                             build_report(&order_obj.order_id, &symbol, Some(&state), ev, &ts);
                         let _ = output_tx.send(report).await;
-                        println!(
-                            "⚠️ Stop order {} rejected: stop_price is required",
+                        tracing::debug!(
+                            "Stop order {} rejected: stop_price is required",
                             order_obj.order_id
                         );
                         continue;
@@ -508,8 +508,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         last_trade_price.is_some_and(|p| stop_fires(&order_obj, p));
 
                     if fires_immediately {
-                        println!(
-                            "⚡ Stop {} triggered immediately at last_trade={:?}",
+                        tracing::debug!(
+                            "Stop {} triggered immediately at last_trade={:?}",
                             order_obj.order_id, last_trade_price
                         );
                     } else {
@@ -523,8 +523,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         };
                         let ack = build_report(&order_obj.order_id, &symbol, Some(&state), ev, &ts);
                         let _ = output_tx.send(ack).await;
-                        println!(
-                            "🛑 Stop {} parked on {} (stop={} last_trade={:?})",
+                        tracing::debug!(
+                            "Stop {} parked on {} (stop={} last_trade={:?})",
                             order.order_id, symbol, order_obj.stop_price, last_trade_price
                         );
                         states.insert(order_obj.order_id.clone(), state);
@@ -553,7 +553,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
         }
     }
 
-    println!("📚 Order book task for {} exiting", symbol);
+    tracing::debug!("Order book task for {} exiting", symbol);
 }
 
 // ── ExecutionReport builder ───────────────────────────────────────────────────
@@ -917,7 +917,7 @@ impl Drop for AbortOnDrop {
 }
 
 async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) {
-    println!("🧩 New TCP client connected.");
+    tracing::info!("New TCP client connected.");
 
     let (mut read_half, write_half) = stream.into_split();
 
@@ -934,7 +934,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                 break;
             }
         }
-        println!("🔌 Write task exiting for connection");
+        tracing::debug!("Write task exiting for connection");
     });
     // When the client leaves, drop its receiver so reports for its resting
     // orders fail fast instead of filling a channel nobody drains.
@@ -948,11 +948,11 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
         let body = match read_framed_message(&mut read_half).await {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                println!("🔌 Client disconnected.");
+                tracing::info!("Client disconnected.");
                 return;
             }
             Err(e) => {
-                println!("❌ Read error: {:?}", e);
+                tracing::warn!("Read error: {:?}", e);
                 return;
             }
         };
@@ -970,7 +970,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                         .await
                         .is_err()
                     {
-                        println!("❌ Symbol task for {} dropped — channel closed", symbol);
+                        tracing::error!("Symbol task for {} dropped — channel closed", symbol);
                     }
                 }
 
@@ -987,7 +987,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                         .await
                         .is_err()
                     {
-                        println!("❌ Symbol task for {} dropped on cancel", symbol);
+                        tracing::error!("Symbol task for {} dropped on cancel", symbol);
                     }
                 }
 
@@ -1009,12 +1009,12 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                         .await
                         .is_err()
                     {
-                        println!("❌ Symbol task for {} dropped on cancel/replace", symbol);
+                        tracing::error!("Symbol task for {} dropped on cancel/replace", symbol);
                     }
                 }
 
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
-                    println!("📡 MarketDataRequest for {:?}", request.symbols);
+                    tracing::debug!("MarketDataRequest for {:?}", request.symbols);
                     for symbol in &request.symbols {
                         let md_tx = match md_channels.get(symbol) {
                             Some(tx) if !tx.is_closed() => tx.clone(),
@@ -1039,13 +1039,13 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                             .send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx }))
                             .await;
                     }
-                    println!("🧼 Subscription setup complete — continuing to accept orders.");
+                    tracing::debug!("Subscription setup complete — continuing to accept orders.");
                 }
 
-                Some(other) => println!("⚠️ Unhandled payload: {:?}", other),
-                None => println!("❌ FXPMessage had no payload"),
+                Some(other) => tracing::warn!("Unhandled payload: {:?}", other),
+                None => tracing::warn!("FXPMessage had no payload"),
             },
-            Err(e) => println!("❌ Decode failed: {:?}", e),
+            Err(e) => tracing::warn!("Decode failed: {:?}", e),
         }
     }
 }
@@ -1063,7 +1063,7 @@ async fn accept_client(listener: &TcpListener) -> std::io::Result<tokio::net::Tc
     // Reports are small frames written back-to-back; with Nagle on, the second
     // one waits for the peer's delayed ACK (~40 ms on Linux).
     if let Err(e) = stream.set_nodelay(true) {
-        eprintln!("⚠️ set_nodelay failed for {peer}: {e}");
+        tracing::warn!("set_nodelay failed for {peer}: {e}");
     }
     Ok(stream)
 }
@@ -1074,8 +1074,8 @@ pub async fn start_server() {
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
     let router = SymbolRouter::new();
 
-    println!("🚀 FXP Core running on 127.0.0.1:8080");
-    println!("   Architecture: per-symbol tasks + lock-free output channels");
+    tracing::info!("FXP Core running on 127.0.0.1:8080");
+    tracing::info!("Architecture: per-symbol tasks + lock-free output channels");
 
     let mut backoff = ACCEPT_BACKOFF_MIN;
     loop {
@@ -1089,7 +1089,7 @@ pub async fn start_server() {
             }
             // Transient errors (EMFILE, ECONNABORTED, ...) must not kill the server.
             Err(e) => {
-                eprintln!("❌ accept failed: {e}; retrying in {backoff:?}");
+                tracing::error!("accept failed: {e}; retrying in {backoff:?}");
                 tokio::time::sleep(backoff).await;
                 backoff = next_accept_backoff(backoff);
             }
