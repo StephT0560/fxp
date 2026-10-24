@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 
 use crate::order_book::execution_report::ExecutionReport;
 use crate::order_book::market_data::MarketDataIncrementalUpdate;
+use crate::order_book::matcher::StpEvent;
 use crate::order_book::order::{Order, OrderSide, OrderType, TimeInForce};
 use crate::order_book::order_book::{OrderBook, OrderReject};
 
@@ -135,6 +136,21 @@ pub struct Execution {
     pub cancels: Vec<String>,
     /// Stops triggered while processing, in firing order.
     pub triggered: Vec<String>,
+    /// Self-matches prevented instead of printed; `before_fill` indexes `fills`.
+    pub stp: Vec<StpEvent>,
+    /// Book incrementals for resting orders canceled or reduced by STP.
+    pub stp_updates: Vec<MarketDataIncrementalUpdate>,
+}
+
+impl Execution {
+    fn absorb_stp(&mut self, book: &mut OrderBook, base: usize) {
+        let outcome = std::mem::take(&mut book.stp);
+        self.stp.extend(outcome.events.into_iter().map(|mut e| {
+            e.before_fill += base;
+            e
+        }));
+        self.stp_updates.extend(outcome.updates);
+    }
 }
 
 impl OrderBook {
@@ -150,10 +166,12 @@ impl OrderBook {
             },
             ..order
         };
+        let base = out.fills.len();
         let result = self.process_aggressive(order.clone());
+        out.absorb_stp(self, base);
         out.fills.extend(result.fills);
         out.fill_updates.extend(result.fill_updates);
-        if result.unfilled_qty == 0 {
+        if result.stp_canceled || result.unfilled_qty == 0 {
             return false;
         }
         if !result.rest_on_book {
@@ -164,10 +182,17 @@ impl OrderBook {
             quantity: result.unfilled_qty,
             ..order
         }));
+        self.match_into(out);
+        true
+    }
+
+    /// Cross the book (after an order was added) and record the result.
+    pub fn match_into(&mut self, out: &mut Execution) {
+        let base = out.fills.len();
         let (fills, updates) = self.match_orders();
+        out.absorb_stp(self, base);
         out.fills.extend(fills);
         out.fill_updates.extend(updates);
-        true
     }
 }
 
@@ -475,6 +500,7 @@ mod property_tests {
             expire_date: String::new(),
             account: String::new(),
             client_order_id: String::new(),
+            stp: Default::default(),
         }
     }
 
@@ -539,5 +565,117 @@ mod property_tests {
                 assert_eq!(got, want, "seed {seed} step {step}: parked stops");
             }
         }
+    }
+
+    /// STP enabled on every order across three owners and an optional
+    /// shared group: no fill may pair the same STP key on both sides, the
+    /// book never stays crossed, and the lookup mirrors the price levels.
+    #[test]
+    fn stp_never_prints_a_self_trade() {
+        use crate::order_book::order::{Stp, StpMode};
+        let modes = [
+            StpMode::CancelNewest,
+            StpMode::CancelOldest,
+            StpMode::CancelBoth,
+            StpMode::DecrementAndCancel,
+        ];
+        let mut prevented = 0usize;
+        for seed in 1..=300u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let mut book = OrderBook::new("P", Arc::new(MarketDataBroadcaster::new()));
+            let mut stops = StopBook::default();
+            let mut last = None;
+            let mut keys: std::collections::HashMap<String, (String, String)> = Default::default();
+            let mut ids: Vec<String> = Vec::new();
+            for step in 0..150 {
+                let new_id = format!("O{step}");
+                let mut ex = Execution::default();
+                match rng.range(0, 9) {
+                    0..=6 => {
+                        let mut o = random_order(&mut rng, new_id.clone());
+                        o.trader_id = ["T", "U", "V"][rng.range(0, 2) as usize].into();
+                        o.stp = Stp {
+                            mode: modes[rng.range(0, 3) as usize],
+                            group: if rng.range(0, 3) == 0 {
+                                "G".into()
+                            } else {
+                                String::new()
+                            },
+                        };
+                        keys.insert(
+                            new_id.clone(),
+                            (o.stp_key().to_string(), o.trader_id.clone()),
+                        );
+                        ids.push(new_id);
+                        let is_stop =
+                            matches!(o.order_type, OrderType::Stop | OrderType::StopLimit);
+                        if is_stop && !last.is_some_and(|p| stop_fires(&o, p)) {
+                            stops.park(o);
+                        } else {
+                            book.execute_into(o, &mut ex);
+                        }
+                    }
+                    7 if !ids.is_empty() => {
+                        let id = &ids[rng.range(0, ids.len() as u64 - 1) as usize];
+                        let owner = &keys[id].1;
+                        if book.cancel_order_for(id, owner).is_err() {
+                            let _ = stops.cancel_for(id, owner);
+                        }
+                    }
+                    8 | 9 if !ids.is_empty() => {
+                        let id = ids[rng.range(0, ids.len() as u64 - 1) as usize].clone();
+                        let px = rng.range(95, 105) as i64 * 100;
+                        let changes = OrderReplace {
+                            new_price: px,
+                            new_total_qty: 0,
+                            new_time_in_force: None,
+                            client_order_id: "",
+                            timestamp: 0,
+                        };
+                        let owner = keys[&id].1.clone();
+                        if book.replace_order(&id, &new_id, changes, &owner).is_ok() {
+                            keys.insert(new_id.clone(), keys[&id].clone());
+                            ids.push(new_id);
+                            book.match_into(&mut ex);
+                        }
+                    }
+                    _ => {}
+                }
+                run_stop_cascade(&mut book, &mut stops, &mut last, &mut ex);
+                prevented += ex.stp.len();
+                for f in &ex.fills {
+                    assert_ne!(
+                        keys[&f.buy_order_id].0, keys[&f.sell_order_id].0,
+                        "seed {seed} step {step}: self-trade {f:?}"
+                    );
+                }
+                let bid = book.buy_orders.keys().next_back();
+                let ask = book.sell_orders.keys().next();
+                if let (Some(b), Some(a)) = (bid, ask) {
+                    assert!(b < a, "seed {seed} step {step}: crossed book {b} >= {a}");
+                }
+                let mut levels: Vec<_> = book
+                    .buy_orders
+                    .values()
+                    .chain(book.sell_orders.values())
+                    .inspect(|l| assert!(!l.is_empty(), "seed {seed} step {step}: empty level"))
+                    .flatten()
+                    .map(|o| (o.order_id.clone(), o.quantity))
+                    .collect();
+                let mut lookup: Vec<_> = book
+                    .order_lookup
+                    .values()
+                    .map(|o| (o.order_id.clone(), o.quantity))
+                    .collect();
+                levels.sort();
+                lookup.sort();
+                assert_eq!(levels, lookup, "seed {seed} step {step}: lookup");
+                assert!(levels.iter().all(|&(_, q)| q > 0));
+            }
+        }
+        assert!(
+            prevented > 1000,
+            "property test barely exercised STP: {prevented}"
+        );
     }
 }

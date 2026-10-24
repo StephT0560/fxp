@@ -4,8 +4,76 @@ use crate::order_book::execution_report::ExecutionReport;
 use crate::order_book::market_data::{
     MarketDataIncrementalUpdate, MarketOrderUpdate, MarketUpdateType,
 };
-use crate::order_book::order::{Order, OrderSide, OrderType, TimeInForce};
+use crate::order_book::order::{Order, OrderSide, OrderType, StpMode, TimeInForce};
 use crate::order_book::order_book::OrderBook;
+
+// ── Self-trade prevention ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StpAction {
+    /// The order (or its unfilled remainder) is canceled.
+    Canceled,
+    /// The order's quantity is reduced by this much; it stays live.
+    Restated(u32),
+}
+
+/// A self-match prevented instead of printed. `before_fill` is the index of
+/// the first fill that happened after it, so reports can be interleaved in
+/// the order the book changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StpEvent {
+    pub order_id: String,
+    pub action: StpAction,
+    pub mode: StpMode,
+    pub before_fill: usize,
+}
+
+/// STP events and book incrementals (cancels / reductions) produced by the
+/// last matching call; drained by the caller.
+#[derive(Debug, Default)]
+pub struct StpOutcome {
+    pub events: Vec<StpEvent>,
+    pub updates: Vec<MarketDataIncrementalUpdate>,
+}
+
+/// Whether `newer` arriving against `older` is a self-match to prevent.
+fn self_match(newer: &Order, older: &Order) -> bool {
+    newer.stp.mode != StpMode::None && newer.stp_key() == older.stp_key()
+}
+
+/// Progress of an aggressive order sweeping the book.
+struct Sweep {
+    remaining: u32,
+    fills: Vec<ExecutionReport>,
+    fill_updates: Vec<MarketDataIncrementalUpdate>,
+    /// STP canceled the aggressor; stop matching.
+    stopped: bool,
+}
+
+impl Sweep {
+    fn new(order: &Order) -> Self {
+        Self {
+            remaining: order.quantity,
+            fills: Vec::new(),
+            fill_updates: Vec::new(),
+            stopped: false,
+        }
+    }
+
+    fn live(&self) -> bool {
+        self.remaining > 0 && !self.stopped
+    }
+
+    fn finish(self) -> AggressiveResult {
+        AggressiveResult {
+            fills: self.fills,
+            fill_updates: self.fill_updates,
+            unfilled_qty: if self.stopped { 0 } else { self.remaining },
+            rest_on_book: false,
+            stp_canceled: self.stopped,
+        }
+    }
+}
 
 // ── Result of processing an aggressive order ──────────────────────────────────
 
@@ -17,6 +85,9 @@ pub struct AggressiveResult {
     /// true  → Limit Day/GTC (rest unfilled qty)
     /// false → Market, IOC, FOK (cancel remainder)
     pub rest_on_book: bool,
+    /// Self-trade prevention canceled the order; it neither rests nor gets
+    /// a plain remainder cancel (its report comes from the STP event).
+    pub stp_canceled: bool,
 }
 
 impl OrderBook {
@@ -50,6 +121,75 @@ impl OrderBook {
                     // Trades execute at the price of the order that was resting first.
                     let bid_seq = self.arrival.get(&bid.order_id).copied().unwrap_or(u64::MAX);
                     let ask_seq = self.arrival.get(&ask.order_id).copied().unwrap_or(u64::MAX);
+
+                    let bid_newer = bid_seq > ask_seq;
+                    let (newer, older) = if bid_newer {
+                        (&bid, &ask)
+                    } else {
+                        (&ask, &bid)
+                    };
+                    if self_match(newer, older) {
+                        let mode = newer.stp.mode;
+                        let (newer, older) = if bid_newer {
+                            (&mut bid, &mut ask)
+                        } else {
+                            (&mut ask, &mut bid)
+                        };
+                        let (newer_qty, older_qty) = match mode {
+                            StpMode::CancelNewest => (0, older.quantity),
+                            StpMode::CancelOldest => (newer.quantity, 0),
+                            StpMode::CancelBoth => (0, 0),
+                            _ => {
+                                let q = newer.quantity.min(older.quantity);
+                                (newer.quantity - q, older.quantity - q)
+                            }
+                        };
+                        let before_fill = fills.len();
+                        for (o, left) in [(&mut *older, older_qty), (&mut *newer, newer_qty)] {
+                            let cut = o.quantity - left;
+                            if cut == 0 {
+                                continue;
+                            }
+                            let md = self.generate_incremental_update(
+                                MarketUpdateType::CancelOrder,
+                                o.price,
+                                cut,
+                                o.side,
+                            );
+                            self.stp.updates.push(md);
+                            o.quantity = left;
+                            Self::sync_fill(
+                                &mut self.order_lookup,
+                                &mut self.cum_filled,
+                                &mut self.arrival,
+                                &o.order_id,
+                                left,
+                                0,
+                            );
+                            self.stp.events.push(StpEvent {
+                                order_id: o.order_id.clone(),
+                                action: if left == 0 {
+                                    StpAction::Canceled
+                                } else {
+                                    StpAction::Restated(cut)
+                                },
+                                mode,
+                                before_fill,
+                            });
+                        }
+                        for (levels, price, o) in [
+                            (&mut self.buy_orders, bid_price, bid),
+                            (&mut self.sell_orders, ask_price, ask),
+                        ] {
+                            let level = levels.get_mut(&price).expect("level popped from");
+                            if o.quantity > 0 {
+                                level.push_front(o);
+                            } else if level.is_empty() {
+                                levels.remove(&price);
+                            }
+                        }
+                        continue;
+                    }
                     let trade_price = if bid_seq < ask_seq {
                         bid_price
                     } else {
@@ -143,6 +283,7 @@ impl OrderBook {
                     fill_updates: Vec::new(),
                     unfilled_qty: order.quantity,
                     rest_on_book: true,
+                    stp_canceled: false,
                 }
             }
 
@@ -153,6 +294,7 @@ impl OrderBook {
                 fill_updates: Vec::new(),
                 unfilled_qty: order.quantity,
                 rest_on_book: true,
+                stp_canceled: false,
             },
 
             // Stop: triggered externally when last_trade_price crosses stop_price.
@@ -174,49 +316,29 @@ impl OrderBook {
     // Fill at any available price. Cancel unfilled remainder — never rests.
 
     fn execute_market(&mut self, order: Order) -> AggressiveResult {
-        let mut remaining = order.quantity;
-        let mut fills = Vec::new();
-        let mut fill_updates = Vec::new();
-
-        while remaining > 0 {
+        let mut sweep = Sweep::new(&order);
+        while sweep.live() {
             let price = match order.side {
                 OrderSide::Buy => self.sell_orders.keys().next().cloned(),
                 OrderSide::Sell => self.buy_orders.keys().next_back().cloned(),
             };
-            let price = match price {
-                Some(p) => p,
-                None => break,
-            };
-
-            let filled = self.fill_level(&order, price, remaining, &mut fills, &mut fill_updates);
-            remaining -= filled;
+            let Some(price) = price else { break };
+            self.fill_level(&order, price, &mut sweep);
         }
-
-        AggressiveResult {
-            fills,
-            fill_updates,
-            unfilled_qty: remaining,
-            rest_on_book: false,
-        }
+        sweep.finish()
     }
 
     // ── IOC ───────────────────────────────────────────────────────────────────
     // Fill as much as possible at or better than limit price. Cancel remainder.
 
     fn execute_ioc(&mut self, order: Order) -> AggressiveResult {
-        let mut remaining = order.quantity;
-        let mut fills = Vec::new();
-        let mut fill_updates = Vec::new();
-
-        while remaining > 0 {
+        let mut sweep = Sweep::new(&order);
+        while sweep.live() {
             let price = match order.side {
                 OrderSide::Buy => self.sell_orders.keys().next().cloned(),
                 OrderSide::Sell => self.buy_orders.keys().next_back().cloned(),
             };
-            let price = match price {
-                Some(p) => p,
-                None => break,
-            };
+            let Some(price) = price else { break };
 
             // Stop if best opposite price no longer crosses our limit
             let crosses = match order.side {
@@ -226,45 +348,67 @@ impl OrderBook {
             if !crosses {
                 break;
             }
-
-            let filled = self.fill_level(&order, price, remaining, &mut fills, &mut fill_updates);
-            remaining -= filled;
+            self.fill_level(&order, price, &mut sweep);
         }
-
-        AggressiveResult {
-            fills,
-            fill_updates,
-            unfilled_qty: remaining,
-            rest_on_book: false,
-        }
+        sweep.finish()
     }
 
     // ── FOK ───────────────────────────────────────────────────────────────────
-    // Fill entire quantity at limit price or cancel everything.
+    // Fill entire quantity at limit price or cancel everything. With STP, a
+    // self-match before the quantity is covered kills the whole order
+    // without touching the book (no partial fills, no resting cancels).
 
     fn execute_fok(&mut self, order: Order) -> AggressiveResult {
-        let available: u64 = match order.side {
-            OrderSide::Buy => self
-                .sell_orders
-                .iter()
-                .filter(|&(&p, _)| p <= order.price)
-                .flat_map(|(_, v)| v.iter().map(|o| u64::from(o.quantity)))
-                .sum(),
-            OrderSide::Sell => self
-                .buy_orders
-                .iter()
-                .filter(|&(&p, _)| p >= order.price)
-                .flat_map(|(_, v)| v.iter().map(|o| u64::from(o.quantity)))
-                .sum(),
+        let crossing: Box<dyn Iterator<Item = &Order>> = match order.side {
+            OrderSide::Buy => Box::new(
+                self.sell_orders
+                    .range(..=order.price)
+                    .flat_map(|(_, v)| v.iter()),
+            ),
+            OrderSide::Sell => Box::new(
+                self.buy_orders
+                    .range(order.price..)
+                    .rev()
+                    .flat_map(|(_, v)| v.iter()),
+            ),
         };
+        let want = u64::from(order.quantity);
+        let mut available = 0u64;
+        let mut self_matched = false;
+        for resting in crossing {
+            if self_match(&order, resting) {
+                self_matched = true;
+                break;
+            }
+            available += u64::from(resting.quantity);
+            if available >= want {
+                break;
+            }
+        }
 
-        if available < u64::from(order.quantity) {
+        if self_matched {
+            self.stp.events.push(StpEvent {
+                order_id: order.order_id.clone(),
+                action: StpAction::Canceled,
+                mode: order.stp.mode,
+                before_fill: 0,
+            });
+            return AggressiveResult {
+                fills: Vec::new(),
+                fill_updates: Vec::new(),
+                unfilled_qty: 0,
+                rest_on_book: false,
+                stp_canceled: true,
+            };
+        }
+        if available < want {
             // Insufficient liquidity — kill the order
             return AggressiveResult {
                 fills: Vec::new(),
                 fill_updates: Vec::new(),
                 unfilled_qty: order.quantity,
                 rest_on_book: false,
+                stp_canceled: false,
             };
         }
 
@@ -275,32 +419,87 @@ impl OrderBook {
     }
 
     // ── fill_level: fill aggressor against one resting price level ────────────
-    // Returns qty filled at this level.
 
-    fn fill_level(
-        &mut self,
-        aggressor: &Order,
-        price: i64,
-        want: u32,
-        fills: &mut Vec<ExecutionReport>,
-        fill_updates: &mut Vec<MarketDataIncrementalUpdate>,
-    ) -> u32 {
+    fn fill_level(&mut self, aggressor: &Order, price: i64, sweep: &mut Sweep) {
         let resting = match aggressor.side {
             OrderSide::Buy => self.sell_orders.get_mut(&price),
             OrderSide::Sell => self.buy_orders.get_mut(&price),
         };
-        let resting = match resting {
-            Some(v) => v,
-            None => return 0,
-        };
+        let Some(resting) = resting else { return };
 
-        let mut filled = 0u32;
-
-        while !resting.is_empty() && filled < want {
+        while sweep.live() && !resting.is_empty() {
             let top = resting.front_mut().unwrap();
-            let trade_qty = top.quantity.min(want - filled);
+
+            if self_match(aggressor, top) {
+                let mode = aggressor.stp.mode;
+                let before_fill = sweep.fills.len();
+                let (aggr_left, top_left) = match mode {
+                    StpMode::CancelNewest => (0, top.quantity),
+                    StpMode::CancelOldest => (sweep.remaining, 0),
+                    StpMode::CancelBoth => (0, 0),
+                    _ => {
+                        let q = sweep.remaining.min(top.quantity);
+                        (sweep.remaining - q, top.quantity - q)
+                    }
+                };
+                let cut = top.quantity - top_left;
+                if cut > 0 {
+                    self.stp.updates.push(MarketDataIncrementalUpdate {
+                        symbol: self.symbol.clone(),
+                        changes: vec![MarketOrderUpdate {
+                            update_type: MarketUpdateType::CancelOrder,
+                            price,
+                            quantity: cut,
+                            side: top.side,
+                        }],
+                    });
+                    top.quantity = top_left;
+                    Self::sync_fill(
+                        &mut self.order_lookup,
+                        &mut self.cum_filled,
+                        &mut self.arrival,
+                        &top.order_id,
+                        top_left,
+                        0,
+                    );
+                    self.stp.events.push(StpEvent {
+                        order_id: top.order_id.clone(),
+                        action: if top_left == 0 {
+                            StpAction::Canceled
+                        } else {
+                            StpAction::Restated(cut)
+                        },
+                        mode,
+                        before_fill,
+                    });
+                }
+                let aggr_cut = sweep.remaining - aggr_left;
+                if aggr_left == 0 {
+                    sweep.stopped = true;
+                    self.stp.events.push(StpEvent {
+                        order_id: aggressor.order_id.clone(),
+                        action: StpAction::Canceled,
+                        mode,
+                        before_fill,
+                    });
+                } else if aggr_cut > 0 {
+                    sweep.remaining = aggr_left;
+                    self.stp.events.push(StpEvent {
+                        order_id: aggressor.order_id.clone(),
+                        action: StpAction::Restated(aggr_cut),
+                        mode,
+                        before_fill,
+                    });
+                }
+                if top_left == 0 {
+                    resting.pop_front();
+                }
+                continue;
+            }
+
+            let trade_qty = top.quantity.min(sweep.remaining);
             top.quantity -= trade_qty;
-            filled += trade_qty;
+            sweep.remaining -= trade_qty;
 
             let resting_done = top.quantity == 0;
             Self::sync_fill(
@@ -311,7 +510,7 @@ impl OrderBook {
                 top.quantity,
                 trade_qty,
             );
-            let aggressor_done = filled >= want;
+            let aggressor_done = sweep.remaining == 0;
 
             let (buy_id, sell_id, buy_done, sell_done) = match aggressor.side {
                 OrderSide::Buy => (
@@ -328,7 +527,7 @@ impl OrderBook {
                 ),
             };
 
-            fills.push(ExecutionReport {
+            sweep.fills.push(ExecutionReport {
                 buy_order_id: buy_id,
                 sell_order_id: sell_id,
                 trade_price: price,
@@ -336,7 +535,7 @@ impl OrderBook {
                 buy_fully_filled: buy_done,
                 sell_fully_filled: sell_done,
             });
-            fill_updates.push(MarketDataIncrementalUpdate {
+            sweep.fill_updates.push(MarketDataIncrementalUpdate {
                 symbol: aggressor.symbol.clone(),
                 changes: vec![MarketOrderUpdate {
                     update_type: MarketUpdateType::ModifyOrder,
@@ -365,8 +564,6 @@ impl OrderBook {
                 }
             }
         }
-
-        filled
     }
 
     // ── Stop order trigger check ──────────────────────────────────────────────

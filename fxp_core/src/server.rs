@@ -34,6 +34,7 @@ use tokio::sync::mpsc;
 use crate::engine::SessionSchedule;
 use crate::event_log::{Input, Journal};
 use crate::fxp;
+use crate::order_book::order::StpMode;
 
 type Persistence = Arc<std::sync::Mutex<Journal<OutputTx>>>;
 
@@ -144,6 +145,7 @@ enum SymbolMsg {
 struct SymbolRouter {
     channels: Arc<Mutex<HashMap<String, mpsc::Sender<SymbolMsg>>>>,
     schedule: Option<SessionSchedule>,
+    stp_default: StpMode,
     persistence: Option<Persistence>,
 }
 
@@ -152,6 +154,7 @@ impl SymbolRouter {
         Self {
             channels: Arc::new(Mutex::new(HashMap::new())),
             schedule,
+            stp_default: StpMode::None,
             persistence: None,
         }
     }
@@ -179,6 +182,7 @@ impl SymbolRouter {
             sym,
             rx,
             self.schedule,
+            self.stp_default,
             self.persistence.clone(),
         ));
         tx // return cloned sender directly — no need to re-acquire
@@ -203,21 +207,22 @@ impl crate::engine::ExecIds for GlobalExecIds {
 }
 #[cfg(test)]
 async fn order_book_task(symbol: String, rx: mpsc::Receiver<SymbolMsg>) {
-    scheduled_order_book_task(symbol, rx, None, None).await;
+    scheduled_order_book_task(symbol, rx, None, StpMode::None, None).await;
 }
 
 async fn scheduled_order_book_task(
     symbol: String,
     mut rx: mpsc::Receiver<SymbolMsg>,
     schedule: Option<SessionSchedule>,
+    stp_default: StpMode,
     persistence: Option<Persistence>,
 ) {
     use crate::engine::{
         CancelMsg as EngineCancel, CancelReplaceMsg as EngineReplace, Engine, Output,
     };
-    let mut engine = persistence
-        .is_none()
-        .then(|| Engine::new(&symbol, WallClock, GlobalExecIds, schedule));
+    let mut engine = persistence.is_none().then(|| {
+        Engine::new(&symbol, WallClock, GlobalExecIds, schedule).with_stp_default(stp_default)
+    });
     let mut subscribers: Vec<OutputTx> = Vec::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     loop {
@@ -538,7 +543,13 @@ pub async fn start_server() {
         tracing::error!("invalid FXP_SESSION_SCHEDULE: {error}");
         std::process::exit(1);
     });
+    let stp_default = StpMode::parse(&std::env::var("FXP_STP_DEFAULT").unwrap_or_default())
+        .unwrap_or_else(|error| {
+            tracing::error!("invalid FXP_STP_DEFAULT: {error}");
+            std::process::exit(1);
+        });
     let mut router = SymbolRouter::new(schedule);
+    router.stp_default = stp_default;
     if let Some(path) = std::env::var_os("FXP_EVENT_LOG") {
         use crate::engine::Clock;
         if path.is_empty() {
@@ -546,8 +557,9 @@ pub async fn start_server() {
         }
         let (detached, receiver) = mpsc::channel(1);
         drop(receiver);
-        let mut journal = Journal::open(std::path::Path::new(&path), schedule, detached)
-            .unwrap_or_else(|error| persistence_failure(error));
+        let mut journal =
+            Journal::open(std::path::Path::new(&path), schedule, stp_default, detached)
+                .unwrap_or_else(|error| persistence_failure(error));
         let symbols = journal.symbols();
         let at = WallClock.now();
         for symbol in &symbols {
@@ -1508,6 +1520,7 @@ mod snapshot_tests {
                 expire_date: String::new(),
                 account: String::new(),
                 client_order_id: String::new(),
+                stp: Default::default(),
             });
         }
         let frame = snapshot_frame(&book);

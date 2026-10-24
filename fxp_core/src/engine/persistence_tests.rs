@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use crate::event_log::{Input, Journal, RecordedClock, ReplayIds, tests::TestDir};
+use crate::order_book::order::StpMode;
 use std::collections::BTreeMap;
 
 type PersistentEngine = Engine<u32, RecordedClock, ReplayIds>;
@@ -90,7 +91,7 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
             .parse()
             .unwrap(),
     );
-    let mut live = Journal::open(&dir.log(), schedule, 0).unwrap();
+    let mut live = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
     let mut seed = 0xd18f_6ab3_1c24_7890;
     let mut ids: HashMap<&str, Vec<String>> = HashMap::new();
     let mut executed = 0;
@@ -193,7 +194,7 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
         }
     }
     std::fs::copy(dir.log(), &copied).unwrap();
-    let mut replayed = Journal::open(&copied, schedule, 0).unwrap();
+    let mut replayed = Journal::open(&copied, schedule, StpMode::None, 0).unwrap();
     assert_eq!(live.symbols(), replayed.symbols());
     for symbol in live.symbols() {
         assert_eq!(
@@ -214,7 +215,7 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
 fn restart_restores_gtc_gtd_partial_fills_and_expires_day_on_first_tick() {
     let dir = TestDir::new();
     let schedule = Some("close=00:00:40".parse().unwrap());
-    let mut journal = Journal::open(&dir.log(), schedule, 0).unwrap();
+    let mut journal = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
     for (id, tif) in [
         ("GTC", fxp::TimeInForce::Gtc),
         ("GTD", fxp::TimeInForce::Gtd),
@@ -238,7 +239,7 @@ fn restart_restores_gtc_gtd_partial_fills_and_expires_day_on_first_tick() {
         .unwrap();
     let before = fingerprint(journal.engines.get_mut("TEST").unwrap());
     drop(journal);
-    let mut restarted = Journal::open(&dir.log(), schedule, 0).unwrap();
+    let mut restarted = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
     assert_eq!(
         before,
         fingerprint(restarted.engines.get_mut("TEST").unwrap())
@@ -253,7 +254,7 @@ fn restart_restores_gtc_gtd_partial_fills_and_expires_day_on_first_tick() {
     assert!(engine.book.order_lookup.contains_key("GTD"));
     assert!(!engine.states.contains_key("DAY"));
     drop(restarted);
-    let mut restarted = Journal::open(&dir.log(), schedule, 0).unwrap();
+    let mut restarted = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
     assert!(restarted.tick("TEST", at(41)).unwrap().is_empty());
     let out = restarted
         .tick("TEST", at(session::expiry_instant("1970-02-01").unwrap()))
@@ -271,7 +272,7 @@ fn downtime_runs_auction_without_clients_and_catch_up_itself_replays() {
             .parse()
             .unwrap(),
     );
-    let mut journal = Journal::open(&dir.log(), schedule, 0).unwrap();
+    let mut journal = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
     journal
         .apply(
             "TEST",
@@ -293,7 +294,7 @@ fn downtime_runs_auction_without_clients_and_catch_up_itself_replays() {
         )
         .unwrap();
     drop(journal);
-    let mut restarted = Journal::open(&dir.log(), schedule, 0).unwrap();
+    let mut restarted = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
     let out = restarted.tick("TEST", at(41)).unwrap();
     assert_eq!(
         out.iter()
@@ -308,7 +309,7 @@ fn downtime_runs_auction_without_clients_and_catch_up_itself_replays() {
     );
     let expected = fingerprint(restarted.engines.get_mut("TEST").unwrap());
     drop(restarted);
-    let mut restarted = Journal::open(&dir.log(), schedule, 0).unwrap();
+    let mut restarted = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
     assert_eq!(
         expected,
         fingerprint(restarted.engines.get_mut("TEST").unwrap())

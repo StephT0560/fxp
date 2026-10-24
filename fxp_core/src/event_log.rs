@@ -4,6 +4,7 @@ use crate::engine::{
     CancelMsg, CancelReplaceMsg, Clock, Engine, ExecIds, Output, SessionSchedule, Time,
 };
 use crate::fxp;
+use crate::order_book::order::StpMode;
 use prost::Message;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -146,7 +147,17 @@ struct EventLog {
 }
 
 impl EventLog {
-    fn open(path: &Path, schedule: Option<SessionSchedule>) -> io::Result<(Self, Vec<Record>)> {
+    fn open(
+        path: &Path,
+        schedule: Option<SessionSchedule>,
+        stp_default: StpMode,
+    ) -> io::Result<(Self, Vec<Record>)> {
+        // Replay must resolve STP_UNSPECIFIED the same way; logs written
+        // without an STP default keep their original header.
+        let stp = match stp_default {
+            StpMode::None => String::new(),
+            mode => format!(";stp_default={}", mode.as_str()),
+        };
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -162,7 +173,7 @@ impl EventLog {
             nanos: 0,
             symbol: String::new(),
             kind: 0,
-            payload: format!("{REPLAY_VERSION};schedule={schedule:?}").into_bytes(),
+            payload: format!("{REPLAY_VERSION};schedule={schedule:?}{stp}").into_bytes(),
         };
         if file.metadata()?.len() == 0 {
             file.write_all(MAGIC)?;
@@ -270,6 +281,7 @@ pub(crate) struct Journal<R> {
     clock: RecordedClock,
     ids: ReplayIds,
     schedule: Option<SessionSchedule>,
+    stp_default: StpMode,
     detached: R,
 }
 
@@ -277,9 +289,10 @@ impl<R: Clone> Journal<R> {
     pub(crate) fn open(
         path: &Path,
         schedule: Option<SessionSchedule>,
+        stp_default: StpMode,
         detached: R,
     ) -> io::Result<Self> {
-        let (log, records) = EventLog::open(path, schedule)?;
+        let (log, records) = EventLog::open(path, schedule, stp_default)?;
         let mut journal = Self {
             log,
             engines: HashMap::new(),
@@ -289,6 +302,7 @@ impl<R: Clone> Journal<R> {
             }))),
             ids: ReplayIds(Arc::new(AtomicU64::new(1))),
             schedule,
+            stp_default,
             detached,
         };
         for record in records {
@@ -336,6 +350,7 @@ impl<R: Clone> Journal<R> {
         *self.clock.0.lock().expect("recorded clock lock") = at;
         let engine = self.engines.entry(symbol.to_string()).or_insert_with(|| {
             Engine::new(symbol, self.clock.clone(), self.ids.clone(), self.schedule)
+                .with_stp_default(self.stp_default)
         });
         match input {
             Input::New(order) => engine.new_order(order, owner),
