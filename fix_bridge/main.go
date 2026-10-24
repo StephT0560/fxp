@@ -120,22 +120,29 @@ func main() {
 	case <-acceptDone:
 		log.Printf("FIX accept loop stopped; draining remaining sessions")
 	}
-	sessions.beginShutdown()
 	timeout := time.Duration(positiveIntEnv("FXP_SHUTDOWN_TIMEOUT_SEC", 5)) * time.Second
-	timer := time.NewTimer(timeout)
-	select {
-	case <-acceptDone:
-		timer.Stop()
-	case <-timer.C:
-		log.Printf("FIX session shutdown exceeded %v; closing remaining sessions", timeout)
-		sessions.closeAll()
-		<-acceptDone
+	if err := shutdownSessions(sessions, acceptDone, timeout); err != nil {
+		log.Printf("%v", err)
 	}
 	if err := registry.Close(); err != nil {
 		log.Printf("FIX session store shutdown failed: %v", err)
 		os.Exit(1)
 	}
 	log.Printf("FIX bridge shutdown completed")
+}
+
+func shutdownSessions(tracker *sessionTracker, acceptDone <-chan struct{}, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	tracker.beginShutdown()
+	select {
+	case <-acceptDone:
+		return nil
+	case <-timer.C:
+		tracker.closeAll()
+		<-acceptDone
+		return fmt.Errorf("FIX session shutdown exceeded %v; remaining sessions closed", timeout)
+	}
 }
 
 // newSessionRegistry keeps FIX session state (sequence numbers, sent messages)
@@ -259,7 +266,7 @@ func (t *sessionTracker) track(sess *session.Session) {
 	stopping := t.stopping
 	t.mu.Unlock()
 	if stopping {
-		t.requestShutdown(sess)
+		go t.requestShutdown(sess)
 	}
 }
 
@@ -278,7 +285,7 @@ func (t *sessionTracker) beginShutdown() {
 	}
 	t.mu.Unlock()
 	for _, sess := range sessions {
-		t.requestShutdown(sess)
+		go t.requestShutdown(sess)
 	}
 }
 

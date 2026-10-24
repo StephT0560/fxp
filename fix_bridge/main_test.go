@@ -129,6 +129,88 @@ func TestSessionTrackerInitiatesLogout(t *testing.T) {
 	tracker.untrack(sess)
 }
 
+func TestShutdownSessionsBoundsConcurrentLogouts(t *testing.T) {
+	tracker := newSessionTracker()
+	peers := make([]net.Conn, 2)
+	sessionDone := make([]<-chan struct{}, 2)
+	fillersReady := make([]chan struct{}, 2)
+	fillersDone := make([]chan struct{}, 2)
+	for i := range peers {
+		server, peer := net.Pipe()
+		peers[i] = peer
+		compID := fmt.Sprintf("STALL%02d", i)
+		sess := session.NewSession(server, "FXPBRIDGE", shutdownTestHandler{})
+		sess.Auth = session.NewCredentialAuth(map[string]string{compID: "test"})
+		sess.LogoutTimeout = 5 * time.Second
+		done := make(chan struct{})
+		go func() {
+			sess.Run()
+			close(done)
+		}()
+		_ = peer.SetDeadline(time.Now().Add(time.Second))
+		if _, err := peer.Write(codec.NewBuilder(codec.MsgTypeLogon, compID, "FXPBRIDGE", 1).
+			SetInt(codec.TagEncryptMethod, 0).
+			SetInt(codec.TagHeartBtInt, 30).
+			Set(codec.TagPassword, "test").
+			Build()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := codec.NewParser(peer).ReadMessage(); err != nil {
+			t.Fatalf("read Logon acknowledgement: %v", err)
+		}
+		_ = peer.SetDeadline(time.Time{})
+		tracker.track(sess)
+		fillersReady[i] = make(chan struct{})
+		fillersDone[i] = make(chan struct{})
+		go func() {
+			defer close(fillersDone[i])
+			for n := 0; n < 513; n++ {
+				sess.SendMsg(codec.NewBuilder(codec.MsgTypeHeartbeat, "FXPBRIDGE", compID, 0))
+			}
+			close(fillersReady[i])
+			sess.SendMsg(codec.NewBuilder(codec.MsgTypeHeartbeat, "FXPBRIDGE", compID, 0))
+		}()
+		sessionDone[i] = done
+	}
+	for _, ready := range fillersReady {
+		select {
+		case <-ready:
+		case <-time.After(time.Second):
+			t.Fatal("send queue did not fill")
+		}
+	}
+	acceptDone := make(chan struct{})
+	go func() {
+		for _, done := range sessionDone {
+			<-done
+		}
+		close(acceptDone)
+	}()
+
+	started := time.Now()
+	err := shutdownSessions(tracker, acceptDone, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected shutdown deadline to close stalled sessions")
+	}
+	if elapsed := time.Since(started); elapsed >= 1500*time.Millisecond {
+		t.Fatalf("shutdown took %v, want under 1.5s", elapsed)
+	}
+	for i, peer := range peers {
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := peer.Read(make([]byte, 1)); err != io.EOF {
+			t.Fatalf("peer %d read error = %v, want EOF", i, err)
+		}
+		_ = peer.Close()
+	}
+	for _, done := range fillersDone {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("session send queue filler did not stop")
+		}
+	}
+}
+
 type shutdownTestHandler struct{}
 
 func (shutdownTestHandler) Handle(*codec.Message, *session.Session) {}

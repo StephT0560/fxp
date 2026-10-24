@@ -47,10 +47,18 @@ non-zero.
 
 The gateway stops accepting TCP and WebSocket clients, interrupts client
 reads, drains queued writers within the deadline, and closes its core
-connection pool. The bridge stops accepting FIX clients, sends Logout to
-logged-on sessions, waits for sessions to end, then closes the session
-registry. A session that does not complete Logout is closed at the shutdown
-deadline so its store can be flushed and closed.
+connection pool. Terminal authentication responses are flushed before the
+gateway closes a client connection. The bridge starts one shutdown deadline
+before requesting Logout concurrently from logged-on sessions. A session that
+does not complete Logout is closed when that deadline expires; the bridge
+waits for its handler to finish before closing the session registry.
+
+Core drains each connected client's critical frames before market data and
+half-closes the TCP write side. This drain is independent of journal-held
+senders, so resting-order owners do not keep writers alive past shutdown.
+When an ExecutionReport has no execution ID, the FIX bridge supplies a
+process-unique FIX ExecID (tag 17); existing core execution IDs are preserved
+and core journal ID allocation is unchanged.
 
 Core rejects a non-positive or non-integer timeout and exits during startup.
 The Go services log invalid timeout values and use the five-second default.
