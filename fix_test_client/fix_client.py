@@ -580,7 +580,7 @@ def test_cross_session_cancel(s, r):
     try:
         victim.new_order(vic_id, sym, '1', 100, '2', price=30.00,
                          description=f'VICTIM BUY 100 {sym} @30.00')
-        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+        r.assert_exec('victim order acknowledged', victim.wait_for(order_id=vic_id, exec_type='0', timeout=3.0), '0', '0')
 
         # Attacker guesses the victim's ClOrdID and tries to cancel it
         attacker.cancel_order(order_id('XAC'), vic_id, sym, '1')
@@ -631,7 +631,7 @@ def test_outbound_sequence(s, r):
     sess.connect(); sess.logon()
     try:
         sess.new_order(ord_id, sym, '1', 10, '2', price=5.00, description=f'BUY 10 {sym} @5.00')
-        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+        r.assert_exec('order acknowledged', sess.wait_for(order_id=ord_id, exec_type='0', timeout=3.0), '0', '0')
         sess.cancel_order(order_id('SEQC'), ord_id, sym, '1')
         r.assert_exec('order cancelled', sess.wait_for(order_id=ord_id, exec_type='4', timeout=3.0), '4')
     finally:
