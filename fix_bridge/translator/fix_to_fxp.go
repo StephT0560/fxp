@@ -227,6 +227,15 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		newQty = int32(qty)
 	}
 
+	var newTimeInForce protobuf.TimeInForce
+	if tifStr := msg.Get(codec.TagTimeInForce); tifStr != "" {
+		var err error
+		newTimeInForce, err = mapTimeInForce(tifStr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	cr := &protobuf.OrderCancelReplaceRequest{
 		Header: &protobuf.FXPHeader{
 			ProtocolVersion: "1.1",
@@ -239,6 +248,7 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		Receiver:        "FXPExchange",
 		NewPrice:        newPrice,
 		NewQuantity:     newQty,
+		NewTimeInForce:  newTimeInForce,
 		Timestamp:       timestamppb.Now(),
 	}
 

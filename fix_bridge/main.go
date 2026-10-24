@@ -130,6 +130,7 @@ type bridgeHandler struct {
 	jwtSecret    string
 	sess         *session.Session
 	gwClient     *gateway.Client
+	pending      pendingRequests
 }
 
 // OnLogon is called by the session after Logon is accepted.
@@ -187,7 +188,15 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		return
 	}
 
+	req := fixRequestFor(fxpMsg)
+	tracked := req != nil && isCancelOrReplace(req)
+	if tracked {
+		h.pending.add(req)
+	}
 	if err := h.gwClient.Send(fxpMsg); err != nil {
+		if tracked {
+			h.pending.take(req.Get(codec.TagClOrdID))
+		}
 		log.Printf("[%s] gateway send error: %v", sess.TargetCompID, err)
 		h.sendBusinessReject(msg, sess, "gateway unavailable: "+err.Error())
 	}
@@ -196,6 +205,14 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 // onFXPMessage is called by the gateway client for every inbound FXP frame.
 // Translates the FXP message to FIX and delivers to the FIX client.
 func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
+	if rep := msg.GetExecutionReport(); rep != nil {
+		if req := h.pending.cancelRequestReject(rep); req != nil {
+			h.sess.SendWithSeq(func(seq int) []byte {
+				return buildCancelReject(req, rep.OrderId, h.bridgeCompID, h.sess.TargetCompID, seq, rep.RejectReason)
+			})
+			return
+		}
+	}
 	// Sequence numbers come from the session; untranslated types (nil) consume none.
 	h.sess.SendWithSeq(func(seq int) []byte {
 		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq)
@@ -228,19 +245,7 @@ func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, 
 		return b.Build()
 
 	case codec.MsgTypeOrderCancelRequest, codec.MsgTypeOrderCancelReplaceRequest:
-		b := codec.NewBuilder(codec.MsgTypeOrderCancelReject, bridgeCompID, targetCompID, seq)
-		b.Set(codec.TagOrderID,     "NONE")
-		b.Set(codec.TagClOrdID,     msg.Get(codec.TagClOrdID))
-		b.Set(codec.TagOrigClOrdID, msg.Get(codec.TagOrigClOrdID))
-		b.Set(codec.TagOrdStatus,   codec.OrdStatusRejected)
-		b.Set(codec.TagCxlRejReason, "0") // Too late to cancel
-		if msg.MsgType() == codec.MsgTypeOrderCancelReplaceRequest {
-			b.Set(codec.TagCxlRejResponseTo, "2")
-		} else {
-			b.Set(codec.TagCxlRejResponseTo, "1")
-		}
-		b.Set(codec.TagText, reason)
-		return b.Build()
+		return buildCancelReject(msg, "NONE", bridgeCompID, targetCompID, seq, reason)
 
 	default:
 		b := codec.NewBuilder(codec.MsgTypeBusinessMessageReject, bridgeCompID, targetCompID, seq)

@@ -198,21 +198,8 @@ func sendSessionError(conn any, errType protobuf.ErrorType, msg string) {
 		},
 	}
 
-	raw, err := proto.Marshal(errMsg)
-	if err != nil {
-		log.Printf("❌ Failed to encode ErrorMessage: %v", err)
-		return
-	}
-
-	frame := make([]byte, 4+len(raw))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
-	copy(frame[4:], raw)
-
-	switch c := conn.(type) {
-	case net.Conn:
-		_, _ = c.Write(frame)
-	case *websocket.Conn:
-		_ = c.WriteMessage(websocket.BinaryMessage, raw)
+	if err := writeFXPMessage(conn, errMsg); err != nil {
+		log.Printf("❌ Failed to send ErrorMessage: %v", err)
 	}
 }
 

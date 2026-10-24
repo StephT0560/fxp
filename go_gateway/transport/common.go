@@ -88,6 +88,10 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 
 	case *protobuf.FXPMessage_NewOrder:
 		log.Println("➡️ Processing NewOrder")
+		if reason := validateOrderEnums(msg); reason != "" {
+			sendOrderReject(conn, msg, reason)
+			return
+		}
 		raw, err := proto.Marshal(msg)
 		if err != nil {
 			log.Println("❌ Failed to encode order:", err)
@@ -127,6 +131,10 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 	case *protobuf.FXPMessage_OrderCancelReplace:
 		cr := payload.OrderCancelReplace
 		log.Printf("➡️ Processing OrderCancelReplaceRequest for OrderID %s → %s", cr.OrderId, cr.NewOrderId)
+		if reason := validateOrderEnums(msg); reason != "" {
+			sendOrderReject(conn, msg, reason)
+			return
+		}
 		raw, err := proto.Marshal(msg)
 		if err != nil {
 			log.Println("❌ Failed to encode cancel/replace request:", err)
@@ -160,6 +168,99 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 	default:
 		log.Printf("❌ Unhandled FXP payload type: %T", payload)
 	}
+}
+
+func validateOrderEnums(msg *protobuf.FXPMessage) string {
+	switch payload := msg.Payload.(type) {
+	case *protobuf.FXPMessage_NewOrder:
+		if payload.NewOrder == nil {
+			return "order is required"
+		}
+		order := payload.NewOrder
+		if reason := validateEnum(int32(order.Side), "side", protobuf.OrderSide_name); reason != "" {
+			return reason
+		}
+		if reason := validateEnum(int32(order.OrderType), "order_type", protobuf.OrderType_name); reason != "" {
+			return reason
+		}
+		return validateEnum(int32(order.TimeInForce), "time_in_force", protobuf.TimeInForce_name)
+	case *protobuf.FXPMessage_OrderCancelReplace:
+		if payload.OrderCancelReplace == nil {
+			return "order_cancel_replace is required"
+		}
+		value := int32(payload.OrderCancelReplace.NewTimeInForce)
+		if value == 0 {
+			return ""
+		}
+		if _, ok := protobuf.TimeInForce_name[value]; !ok {
+			return fmt.Sprintf("unknown new_time_in_force %d", value)
+		}
+	}
+	return ""
+}
+
+func validateEnum(value int32, name string, known map[int32]string) string {
+	if value == 0 {
+		return name + " is required"
+	}
+	if _, ok := known[value]; !ok {
+		return fmt.Sprintf("unknown %s %d", name, value)
+	}
+	return ""
+}
+
+func sendOrderReject(conn any, msg *protobuf.FXPMessage, reason string) {
+	var orderID, symbol string
+	var side protobuf.OrderSide
+	switch payload := msg.Payload.(type) {
+	case *protobuf.FXPMessage_NewOrder:
+		if payload.NewOrder == nil {
+			return
+		}
+		orderID = payload.NewOrder.OrderId
+		symbol = payload.NewOrder.Symbol
+		side = payload.NewOrder.Side
+	case *protobuf.FXPMessage_OrderCancelReplace:
+		if payload.OrderCancelReplace == nil {
+			return
+		}
+		orderID = payload.OrderCancelReplace.NewOrderId
+		symbol = payload.OrderCancelReplace.Symbol
+	default:
+		return
+	}
+	reject := &protobuf.FXPMessage{
+		Payload: &protobuf.FXPMessage_ExecutionReport{
+			ExecutionReport: &protobuf.ExecutionReport{
+				OrderId: orderID, Symbol: symbol, Side: side,
+				ExecutionType: protobuf.ExecutionType_EXEC_REJECTED,
+				OrderStatus: protobuf.OrderStatus_ORDER_REJECTED,
+				RejectReason: reason,
+			},
+		},
+	}
+	if err := writeFXPMessage(conn, reject); err != nil {
+		log.Printf("❌ Failed to send invalid-order reject: %v", err)
+	}
+}
+
+func writeFXPMessage(conn any, msg *protobuf.FXPMessage) error {
+	raw, err := proto.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	frame := make([]byte, 4+len(raw))
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
+	copy(frame[4:], raw)
+	switch c := conn.(type) {
+	case net.Conn:
+		_, err = c.Write(frame)
+	case *websocket.Conn:
+		err = c.WriteMessage(websocket.BinaryMessage, raw)
+	default:
+		return fmt.Errorf("unsupported connection type: %T", conn)
+	}
+	return err
 }
 
 // ==================================================================

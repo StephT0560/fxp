@@ -61,3 +61,22 @@ func TestExecutionReportFieldMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestUnspecifiedExecutionReportEnumsAreDropped(t *testing.T) {
+	tests := []struct {
+		name string
+		rep  *protobuf.ExecutionReport
+	}{
+		{"execution type", &protobuf.ExecutionReport{ExecutionType: 0, OrderStatus: protobuf.OrderStatus_ORDER_NEW, Side: protobuf.OrderSide_BUY}},
+		{"order status", &protobuf.ExecutionReport{ExecutionType: protobuf.ExecutionType_EXEC_NEW, OrderStatus: 0, Side: protobuf.OrderSide_BUY}},
+		{"side", &protobuf.ExecutionReport{ExecutionType: protobuf.ExecutionType_EXEC_NEW, OrderStatus: protobuf.OrderStatus_ORDER_NEW, Side: 0}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_ExecutionReport{ExecutionReport: tc.rep}}
+			if got := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 2); got != nil {
+				t.Fatalf("unspecified %s produced FIX output: %q", tc.name, got)
+			}
+		})
+	}
+}

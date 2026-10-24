@@ -113,8 +113,13 @@ Custom firm extensions: field numbers 1000–1999 reserved per message.
 ### 1. Generate protobuf bindings
 
 ```bash
-cd fxp_core/proto
-protoc --go_out=../../go_gateway --go_opt=paths=source_relative fxp.proto
+./scripts/gen_proto.sh
+```
+
+Equivalent raw command:
+
+```bash
+cd fxp_core/proto && mkdir -p ../../go_gateway/protobuf && protoc --go_out=../../go_gateway/protobuf --go_opt=paths=source_relative fxp.proto
 ```
 
 ### 2. Start Rust Core

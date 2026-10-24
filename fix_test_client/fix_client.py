@@ -417,6 +417,31 @@ def test_cancel_resting(s, r):
     s.drain()
 
 
+def test_missing_side(s, r):
+    """Reject NewOrderSingle messages with absent or invalid Side."""
+    print('\n─── test_missing_side ───────────────────────────────────────')
+    for description, side_fields in (
+        ('missing Side', []),
+        ('unknown Side Z', [(54, 'Z')]),
+    ):
+        clordid = order_id('NOSIDE')
+        fields = [(11, clordid), (55, 'MSFT')] + side_fields + [
+            (38, '1'), (40, '2'), (44, '1.00'), (59, '0'),
+        ]
+        s.send('D', fields, description)
+        msg = s.wait_for(order_id=clordid, timeout=3.0)
+        rejected = msg is not None and (
+            msg.get(35) == 'j' or (msg.get(35) == '8' and msg.get(150) == '8')
+        )
+        if rejected and msg.get(58):
+            print(f'  {PASS} {description}: reject with Text={msg[58]}')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} {description}: missing reject or Text')
+            r.failed += 1
+    s.drain()
+
+
 def test_stop_order(s, r):
     """
     Stop sell triggered by a fill:
@@ -652,6 +677,7 @@ def test_outbound_sequence(s, r):
 
 TESTS = {
     'limit_cross':         test_limit_cross,
+    'missing_side':        test_missing_side,
     'market_empty_book':   test_market_empty_book,
     'cancel_replace':      test_cancel_replace,
     'cancel_resting':      test_cancel_resting,

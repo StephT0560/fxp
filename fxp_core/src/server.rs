@@ -69,6 +69,7 @@ struct CancelReplaceMsg {
     client_replace_id: String,
     new_price:         i64,   // 0 = no change
     new_quantity:      i32,   // 0 = no change
+    new_time_in_force: i32,
     output_tx:         OutputTx,
 }
 
@@ -112,6 +113,51 @@ impl SymbolRouter {
         // before any message can be dispatched to this symbol.
         tokio::spawn(order_book_task(sym, rx));
         tx  // return cloned sender directly — no need to re-acquire
+    }
+}
+
+fn parse_order_enums(
+    order: &fxp::NewOrderSingle,
+) -> Result<(OrderSide, OrderType, TimeInForce), String> {
+    let side = match fxp::OrderSide::try_from(order.side) {
+        Ok(fxp::OrderSide::Buy) => OrderSide::Buy,
+        Ok(fxp::OrderSide::Sell) => OrderSide::Sell,
+        Ok(fxp::OrderSide::Unspecified) => return Err("side is required".into()),
+        Err(_) => return Err(format!("unknown side {}", order.side)),
+    };
+    let order_type = match fxp::OrderType::try_from(order.order_type) {
+        Ok(fxp::OrderType::Market) => OrderType::Market,
+        Ok(fxp::OrderType::Limit) => OrderType::Limit,
+        Ok(fxp::OrderType::Stop) => OrderType::Stop,
+        Ok(fxp::OrderType::StopLimit) => OrderType::StopLimit,
+        Ok(fxp::OrderType::Unspecified) => return Err("order_type is required".into()),
+        Err(_) => return Err(format!("unknown order_type {}", order.order_type)),
+    };
+    let time_in_force = match fxp::TimeInForce::try_from(order.time_in_force) {
+        Ok(fxp::TimeInForce::Day) => TimeInForce::Day,
+        Ok(fxp::TimeInForce::Gtc) => TimeInForce::GTC,
+        Ok(fxp::TimeInForce::Ioc) => TimeInForce::IOC,
+        Ok(fxp::TimeInForce::Fok) => TimeInForce::FOK,
+        Ok(fxp::TimeInForce::AtOpen) => TimeInForce::AtOpen,
+        Ok(fxp::TimeInForce::AtClose) => TimeInForce::AtClose,
+        Ok(fxp::TimeInForce::Gtd) => TimeInForce::Gtd,
+        Ok(fxp::TimeInForce::Unspecified) => return Err("time_in_force is required".into()),
+        Err(_) => return Err(format!("unknown time_in_force {}", order.time_in_force)),
+    };
+    Ok((side, order_type, time_in_force))
+}
+
+fn parse_replace_time_in_force(value: i32) -> Result<Option<TimeInForce>, String> {
+    match fxp::TimeInForce::try_from(value) {
+        Ok(fxp::TimeInForce::Unspecified) => Ok(None),
+        Ok(fxp::TimeInForce::Day) => Ok(Some(TimeInForce::Day)),
+        Ok(fxp::TimeInForce::Gtc) => Ok(Some(TimeInForce::GTC)),
+        Ok(fxp::TimeInForce::Ioc) => Ok(Some(TimeInForce::IOC)),
+        Ok(fxp::TimeInForce::Fok) => Ok(Some(TimeInForce::FOK)),
+        Ok(fxp::TimeInForce::AtOpen) => Ok(Some(TimeInForce::AtOpen)),
+        Ok(fxp::TimeInForce::AtClose) => Ok(Some(TimeInForce::AtClose)),
+        Ok(fxp::TimeInForce::Gtd) => Ok(Some(TimeInForce::Gtd)),
+        Err(_) => Err(format!("unknown new_time_in_force {}", value)),
     }
 }
 
@@ -163,7 +209,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
                                 fxp::MarketDataIncrementalUpdate {
                                     symbol:    symbol.clone(),
-                                    header:    Some(fxp::FxpHeader { protocol_version: "1.1".to_string(), sequence_number: 1 }),
+                                    header:    Some(fxp::FxpHeader { protocol_version: crate::PROTOCOL_VERSION.to_string(), sequence_number: 1 }),
                                     timestamp: ts.clone(),
                                     changes:   md_update.changes.iter().map(|c| fxp::MarketOrderUpdate {
                                         update_type: match c.update_type {
@@ -202,11 +248,24 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     nanos:   now.subsec_nanos() as i32,
                 });
 
+                let new_time_in_force = match parse_replace_time_in_force(cr_msg.new_time_in_force) {
+                    Ok(value) => value,
+                    Err(reason) => {
+                        let report = make_reject_report(
+                            &cr_msg.order_id, &symbol, &cr_msg.client_replace_id, &reason, &ts,
+                        );
+                        let _ = cr_msg.output_tx.send(report).await;
+                        println!("⚠️ CancelReplace rejected: {}", reason);
+                        continue;
+                    }
+                };
+
                 let result = book.replace_order(
                     &cr_msg.order_id,
                     &cr_msg.new_order_id,
                     cr_msg.new_price,
                     cr_msg.new_quantity.max(0) as u32,
+                    new_time_in_force,
                     &cr_msg.client_replace_id,
                     &cr_msg.sender,
                     now.as_millis() as u64,
@@ -260,7 +319,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
                                 fxp::MarketDataIncrementalUpdate {
                                     symbol:    symbol.clone(),
-                                    header:    Some(fxp::FxpHeader { protocol_version: "1.1".to_string(), sequence_number: 1 }),
+                                    header:    Some(fxp::FxpHeader { protocol_version: crate::PROTOCOL_VERSION.to_string(), sequence_number: 1 }),
                                     timestamp: ts.clone(),
                                     changes:   inc.changes.iter().map(|c| fxp::MarketOrderUpdate {
                                         update_type: match c.update_type {
@@ -281,7 +340,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                 payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
                                     fxp::MarketDataIncrementalUpdate {
                                         symbol:    fill.symbol.clone(),
-                                        header:    Some(fxp::FxpHeader { protocol_version: "1.1".to_string(), sequence_number: 1 }),
+                                        header:    Some(fxp::FxpHeader { protocol_version: crate::PROTOCOL_VERSION.to_string(), sequence_number: 1 }),
                                         timestamp: ts.clone(),
                                         changes:   fill.changes.iter().map(|c| fxp::MarketOrderUpdate {
                                             update_type: match c.update_type {
@@ -308,21 +367,22 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                 let output_tx = order_msg.output_tx;
                 let now       = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 
-                // Validate before the signed quantity is cast to u32.
-                let is_limit = order.order_type == fxp::OrderType::Limit as i32
-                    || order.order_type == fxp::OrderType::StopLimit as i32;
-                let invalid = if order.quantity <= 0 {
-                    Some("quantity must be positive")
-                } else if is_limit && order.price <= 0 {
-                    Some("limit price must be positive")
-                } else {
-                    None
+                let parsed_enums = parse_order_enums(&order);
+                let is_limit = match &parsed_enums {
+                    Ok((_, order_type, _)) => matches!(order_type, OrderType::Limit | OrderType::StopLimit),
+                    Err(_) => false,
+                };
+                let invalid = match &parsed_enums {
+                    Err(reason) => Some(reason.clone()),
+                    Ok(_) if order.quantity <= 0 => Some("quantity must be positive".to_string()),
+                    Ok(_) if is_limit && order.price <= 0 => Some("limit price must be positive".to_string()),
+                    _ => None,
                 };
                 if let Some(reason) = invalid {
                     let ts = Some(Timestamp { seconds: now.as_secs() as i64, nanos: now.subsec_nanos() as i32 });
                     let state = OrderState::new(&order, order.quantity.max(0) as u32, output_tx.clone());
                     let ev = ReportEvent {
-                        reject_reason: reason,
+                        reject_reason: &reason,
                         ..ReportEvent::new(fxp::ExecutionType::ExecRejected, fxp::OrderStatus::OrderRejected)
                     };
                     let _ = output_tx.send(build_report(&order.order_id, &symbol, Some(&state), ev, &ts)).await;
@@ -330,31 +390,16 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     continue;
                 }
 
+                let (side, order_type, time_in_force) = parsed_enums.expect("enum values validated");
                 let order_obj = Order {
                     order_id:      order.order_id.clone(),
                     trader_id:     order.sender.clone(),
                     symbol:        symbol.clone(),
                     price:         order.price,
                     quantity:      order.quantity as u32,
-                    side: match order.side {
-                        0 => OrderSide::Buy,
-                        _ => OrderSide::Sell,
-                    },
-                    order_type: match order.order_type {
-                        1 => OrderType::Limit,
-                        2 => OrderType::Stop,
-                        3 => OrderType::StopLimit,
-                        _ => OrderType::Market,
-                    },
-                    time_in_force: match order.time_in_force {
-                        1 => TimeInForce::GTC,
-                        2 => TimeInForce::IOC,
-                        3 => TimeInForce::FOK,
-                        4 => TimeInForce::AtOpen,
-                        5 => TimeInForce::AtClose,
-                        6 => TimeInForce::Gtd,
-                        _ => TimeInForce::Day,
-                    },
+                    side,
+                    order_type,
+                    time_in_force,
                     timestamp:        now.as_millis() as u64,
                     stop_price:       order.stop_price,
                     expire_date:      order.expire_date.clone(),
@@ -465,7 +510,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                     payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
                                         fxp::MarketDataIncrementalUpdate {
                                             symbol:    symbol.clone(),
-                                            header:    Some(fxp::FxpHeader { protocol_version: "1.1".to_string(), sequence_number: 1 }),
+                                            header:    Some(fxp::FxpHeader { protocol_version: crate::PROTOCOL_VERSION.to_string(), sequence_number: 1 }),
                                             timestamp: ts.clone(),
                                             changes:   inc.changes.iter().map(|c| fxp::MarketOrderUpdate {
                                                 update_type: match c.update_type { MarketUpdateType::NewOrder => 0, MarketUpdateType::ModifyOrder => 1, MarketUpdateType::CancelOrder => 2 },
@@ -513,7 +558,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             fxp::MarketDataIncrementalUpdate {
                                 symbol:    symbol.clone(),
                                 header:    Some(fxp::FxpHeader {
-                                    protocol_version: "1.0".to_string(),
+                                    protocol_version: crate::PROTOCOL_VERSION.to_string(),
                                     sequence_number:  1,
                                 }),
                                 timestamp: ts.clone(),
@@ -539,7 +584,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             fxp::MarketDataIncrementalUpdate {
                                 symbol:    fill.symbol.clone(),
                                 header:    Some(fxp::FxpHeader {
-                                    protocol_version: "1.0".to_string(),
+                                    protocol_version: crate::PROTOCOL_VERSION.to_string(),
                                     sequence_number:  1,
                                 }),
                                 timestamp: ts.clone(),
@@ -644,7 +689,7 @@ fn build_report(
     frame_message(&fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::ExecutionReport(
             fxp::ExecutionReport {
-                header:            Some(fxp::FxpHeader { protocol_version: "1.1".to_string(), sequence_number: 0 }),
+                header:            Some(fxp::FxpHeader { protocol_version: crate::PROTOCOL_VERSION.to_string(), sequence_number: 0 }),
                 execution_id:      next_exec_id(),
                 order_id:          order_id.to_string(),
                 symbol:            symbol.to_string(),
@@ -831,6 +876,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                         client_replace_id: cr.client_replace_id.clone(),
                         new_price:         cr.new_price,
                         new_quantity:      cr.new_quantity,
+                        new_time_in_force: cr.new_time_in_force,
                         output_tx:         output_tx.clone(),
                     })).await.is_err() {
                         println!("❌ Symbol task for {} dropped on cancel/replace", symbol);
@@ -946,9 +992,9 @@ mod report_tests {
         assert!(rx.try_recv().is_err(), "unexpected extra report");
     }
 
-    const BUY: i32 = 0; const SELL: i32 = 1;
-    const MARKET: i32 = 0; const LIMIT: i32 = 1; const STOP: i32 = 2;
-    const DAY: i32 = 0; const GTC: i32 = 1; const IOC: i32 = 2;
+    const BUY: i32 = 1; const SELL: i32 = 2;
+    const MARKET: i32 = 1; const LIMIT: i32 = 2; const STOP: i32 = 3;
+    const DAY: i32 = 1; const GTC: i32 = 2; const IOC: i32 = 3;
 
     fn et(r: &fxp::ExecutionReport) -> fxp::ExecutionType { fxp::ExecutionType::try_from(r.execution_type).unwrap() }
     fn st(r: &fxp::ExecutionReport) -> fxp::OrderStatus { fxp::OrderStatus::try_from(r.order_status).unwrap() }
@@ -1101,7 +1147,7 @@ mod report_tests {
     async fn invalid_quantity_and_price_are_rejected() {
         let book = spawn_book();
         let (a, mut a_rx) = conn();
-        let mut stop_limit = nos("SL1", "A", SELL, 0, 5, 3, GTC);
+        let mut stop_limit = nos("SL1", "A", SELL, 0, 5, 4, GTC);
         stop_limit.stop_price = 99_00;
         for order in [
             nos("Q0", "A", BUY, 100_00, 0, LIMIT, GTC),
@@ -1122,6 +1168,71 @@ mod report_tests {
         send_order(&book, nos("M1", "A", SELL, 0, 1, MARKET, DAY), &a).await;
         assert_eq!(st(&next(&mut a_rx).await), fxp::OrderStatus::OrderCanceled);
         assert_quiet(&mut a_rx).await;
+    }
+
+    #[tokio::test]
+    async fn unspecified_and_unknown_order_enums_are_rejected() {
+        let book = spawn_book();
+        let (out, mut rx) = conn();
+        for (id, side, order_type, time_in_force, reason) in [
+            ("S0", 0, LIMIT, GTC, "side is required"),
+            ("S99", 99, LIMIT, GTC, "unknown side 99"),
+            ("T0", BUY, 0, GTC, "order_type is required"),
+            ("T99", BUY, 99, GTC, "unknown order_type 99"),
+            ("F0", BUY, LIMIT, 0, "time_in_force is required"),
+            ("F99", BUY, LIMIT, 99, "unknown time_in_force 99"),
+        ] {
+            send_order(&book, nos(id, "A", side, 100_00, 10, order_type, time_in_force), &out).await;
+            let report = next(&mut rx).await;
+            assert_eq!(et(&report), fxp::ExecutionType::ExecRejected, "{id}");
+            assert_eq!(st(&report), fxp::OrderStatus::OrderRejected, "{id}");
+            assert_eq!(report.reject_reason, reason, "{id}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_replace_time_in_force_is_rejected() {
+        let book = spawn_book();
+        let (out, mut rx) = conn();
+        send_order(&book, nos("R0", "A", BUY, 100_00, 10, LIMIT, GTC), &out).await;
+        assert_eq!(et(&next(&mut rx).await), fxp::ExecutionType::ExecNew);
+
+        book.send(SymbolMsg::CancelReplace(CancelReplaceMsg {
+            order_id: "R0".into(), sender: "A".into(), new_order_id: "R1".into(),
+            client_replace_id: "CR1".into(), new_price: 0, new_quantity: 0,
+            new_time_in_force: 99, output_tx: out,
+        })).await.unwrap();
+        let report = next(&mut rx).await;
+        assert_eq!(et(&report), fxp::ExecutionType::ExecRejected);
+        assert_eq!(report.reject_reason, "unknown new_time_in_force 99");
+    }
+
+    #[tokio::test]
+    async fn unspecified_replace_time_in_force_keeps_existing_value() {
+        let book = spawn_book();
+        let (out, mut rx) = conn();
+        send_order(&book, nos("P0", "A", BUY, 100_00, 10, LIMIT, GTC), &out).await;
+        assert_eq!(et(&next(&mut rx).await), fxp::ExecutionType::ExecNew);
+
+        book.send(SymbolMsg::CancelReplace(CancelReplaceMsg {
+            order_id: "P0".into(), sender: "A".into(), new_order_id: "P1".into(),
+            client_replace_id: "CR2".into(), new_price: 0, new_quantity: 0,
+            new_time_in_force: 0, output_tx: out,
+        })).await.unwrap();
+        let original = next(&mut rx).await;
+        let replacement = next(&mut rx).await;
+        assert_eq!(et(&original), fxp::ExecutionType::ExecReplaced);
+        assert_eq!(et(&replacement), fxp::ExecutionType::ExecNew);
+        assert_eq!(replacement.order_id, "P1");
+
+        let mut standalone = crate::test_helpers::make_book();
+        standalone.add_order(crate::test_helpers::make_order(
+            "P0", crate::order_book::order::OrderSide::Buy, 100_00, 10,
+            crate::order_book::order::OrderType::Limit,
+            crate::order_book::order::TimeInForce::GTC,
+        ));
+        let (kept, _) = standalone.replace_order("P0", "P1", 0, 0, None, "CR2", "T", 1).unwrap();
+        assert_eq!(kept.time_in_force, crate::order_book::order::TimeInForce::GTC);
     }
 
     #[test]
