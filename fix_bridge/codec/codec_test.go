@@ -177,7 +177,6 @@ func TestParserRejectsMalformedFields(t *testing.T) {
 	}{
 		{"missing equals", "55MSFT"},
 		{"empty tag", "=MSFT"},
-		{"empty value", "55="},
 		{"non-numeric tag", "abc=1"},
 		{"leading zero tag", "055=MSFT"},
 		{"signed tag", "+55=MSFT"},

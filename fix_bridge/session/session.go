@@ -80,7 +80,8 @@ type Session struct {
 	handler Handler
 
 	// Auth validates Logon credentials; a nil Auth rejects every Logon.
-	Auth Authenticator
+	Auth             Authenticator
+	StrictDictionary bool
 	// Store keeps sent messages for ResendRequest and the sequence numbers.
 	// With a Registry it is replaced at Logon by the session's durable store.
 	Store MessageStore
@@ -421,11 +422,11 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		s.sendReject(seq, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
 		return nil
 	}
-	if f, missing := codec.MissingRequired(msg); missing {
-		s.sendRejectRef(seq, f.Tag, msgType, codec.RejectRequiredTagMissing,
-			fmt.Sprintf("Required tag missing: %s (%d)", f.Name, f.Tag))
+	if v := codec.DefaultDictionary.Validate(msg, s.StrictDictionary); v != nil {
+		s.sendRejectRef(seq, v.Tag, msgType, v.Reason, v.Text)
 		return nil
 	}
+
 	switch msgType {
 	case codec.MsgTypeLogon:
 		return nil // repeated Logon without reset: nothing to do
@@ -534,6 +535,16 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	if s.Schedule != nil && !s.Schedule.Contains(s.Now()) {
 		return s.rejectLogon(msg, "Logon outside configured session schedule")
 	}
+	cod := msg.Get(codec.TagCancelOnDisconnect)
+	if cod != "" && cod != "Y" && cod != "N" {
+		return s.rejectLogon(msg, "invalid CancelOnDisconnect (8013); expected Y or N")
+	}
+	if v := codec.DefaultDictionary.Validate(msg, s.StrictDictionary); v != nil {
+		s.SendWithSeq(func(n int) []byte {
+			return codec.NewRejectRef(s.SenderCompID, sender, n, seq, v.Tag, msg.MsgType(), v.Reason, v.Text)
+		})
+		return s.rejectLogon(msg, v.Text)
+	}
 	reset := msg.Get(codec.TagResetSeqNumFlag) == "Y" || s.ResetOnLogon
 	if reset && seq != 1 {
 		return s.rejectLogon(msg, "ResetSeqNumFlag=Y requires MsgSeqNum=1")
@@ -557,10 +568,6 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	}
 	if seq < s.inSeqNum {
 		return s.rejectLogon(msg, fmt.Sprintf("MsgSeqNum too low, expecting %d but received %d", s.inSeqNum, seq))
-	}
-	cod := msg.Get(codec.TagCancelOnDisconnect)
-	if cod != "" && cod != "Y" && cod != "N" {
-		return s.rejectLogon(msg, "invalid CancelOnDisconnect (8013); expected Y or N")
 	}
 
 	gap := seq > s.inSeqNum

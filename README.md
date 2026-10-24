@@ -494,9 +494,20 @@ All settings are optional. See [FIX conformance](docs/fix-conformance.md) for bo
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `FXP_FIX_DICTIONARY_STRICT` | `false` | Reject undeclared user-defined tags (>=5000); standard tags always validated |
 | `FXP_FIX_START_TIME` / `FXP_FIX_END_TIME` | unset | Local `HH:MM:SS` window; both required to enable |
 | `FXP_FIX_START_DAY` / `FXP_FIX_END_DAY` | unset | Full weekday names; both enable a weekly window |
 | `FXP_FIX_TIME_ZONE` | `UTC` | IANA timezone |
 | `FXP_FIX_RESET_ON_LOGON` | `false` | Reset on authenticated Logon; requires inbound sequence 1 |
 | `FXP_FIX_RESET_ON_LOGOUT` | `false` | Reset after Logout |
 | `FXP_FIX_RESET_ON_DISCONNECT` | `false` | Reset after a logged-on connection ends |
+
+### FIX conformance
+
+The bridge loads the pinned QuickFIX FIX 4.4 XML dictionary at startup, with
+[documented venue extensions](fix_bridge/codec/spec/README.md). It validates
+required tags, membership, datatypes, enums, duplicates and repeating-group
+counts/order; invalid messages receive Reject(3) with 371/372/373. See
+[conformance details](docs/fix-conformance.md). Unknown standard message types
+remain BusinessMessageReject(j). Dictionary validation changes an invalid
+Side enum from an ExecutionReport rejection to session Reject reason 5.

@@ -103,7 +103,14 @@ func (p *peer) frame(msgType string, seq int, kv ...string) []byte {
 	}
 	for _, f := range codec.RequiredFields[msgType] {
 		if tag := strconv.Itoa(f.Tag); !given[tag] {
-			kv = append(kv, tag, "1")
+			value := "1"
+			switch f.Tag {
+			case codec.TagTransactTime:
+				value = time.Now().UTC().Format(fixTimeLayout)
+			case codec.TagMDEntryType:
+				value = "0"
+			}
+			kv = append(kv, tag, value)
 		}
 	}
 	return p.exactFrame(msgType, seq, kv...)

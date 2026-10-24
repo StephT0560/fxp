@@ -29,3 +29,27 @@ Logon reset requires sequence 1. Logout/disconnect resets run after disconnect
 callbacks and before the registry releases the session. Ordinary unscheduled
 reconnects retain durable state, as before. Protocol tag 141=Y remains supported.
 No reset policy enables initiator mode or TLS.
+
+## Dictionary validation
+
+The acceptor embeds the full QuickFIX v1.15.1 FIX44 dictionary and a separate
+MIT venue profile. This product includes software developed by
+quickfixengine.org (http://www.quickfixengine.org/). See the preserved
+[license and provenance](../fix_bridge/codec/spec/README.md).
+
+Required fields in present optional components are checked too. Each group has
+its own duplicate/order/required-field scope. Missing tags use reason 1,
+undefined tags 0, tags from a different message type 2, empty values 4,
+invalid enums 5, incorrect datatypes 6, duplicate tags 13, group order 15 and
+incorrect NumInGroup counts 16. Replies include RefTagID/RefMsgType and consume
+the invalid message's inbound sequence number. Garbled framing/checksum is
+still ignored without consuming a sequence number. Unknown application types
+are answered with BusinessMessageReject by the application handler.
+
+`FXP_FIX_DICTIONARY_STRICT=false` permits unknown user-defined tags >=5000.
+Strict mode rejects them; declared STP and COD extensions remain allowed.
+Standard tags are checked regardless of strictness. The XML venue profile
+requires Symbol (the venue has no alternate instrument identifier resolver).
+The previous tests' placeholder TransactTime=1 and their expectation that a
+bad Side enum reached order business validation were technically invalid;
+fixtures now use proper timestamps and expect dictionary Reject reason 5.

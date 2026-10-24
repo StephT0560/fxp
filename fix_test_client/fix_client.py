@@ -499,12 +499,9 @@ def test_missing_side(s, r):
         ]
         seq = s.seq
         s.send('D', fields, description)
-        if side_fields:
-            msg = s.wait_for(order_id=clordid, timeout=3.0)
-            rejected = msg is not None and msg.get(35) == '8' and msg.get(150) == '8'
-        else:
-            msg = s.wait_for_reject(seq, timeout=3.0)
-            rejected = msg is not None and msg.get(35) == '3' and msg.get(373) == '1' and msg.get(371) == '54'
+        msg = s.wait_for_reject(seq, timeout=3.0)
+        reason = '5' if side_fields else '1'
+        rejected = msg is not None and msg.get(35) == '3' and msg.get(373) == reason and msg.get(371) == '54'
         if rejected and msg.get(58):
             print(f'  {PASS} {description}: 35={msg[35]} reject with Text={msg[58]}')
             r.passed += 1

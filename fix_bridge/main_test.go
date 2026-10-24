@@ -390,7 +390,7 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	go send(codec.MsgTypeNewOrderSingle,
 		codec.TagClOrdID, "O3", codec.TagSymbol, "MSFT", codec.TagSide, "Z",
 		codec.TagOrderQty, "10", codec.TagOrdType, "2", codec.TagPrice, "10.00", codec.TagTransactTime, "20260101-00:00:00")
-	if m := next(); m.MsgType() != codec.MsgTypeExecutionReport || m.Get(codec.TagExecType) != codec.ExecTypeRejected || m.Get(codec.TagText) == "" {
+	if m := next(); m.MsgType() != codec.MsgTypeReject || m.Get(codec.TagSessionRejectReason) != "5" || m.Get(codec.TagRefTagID) != "54" {
 		t.Fatalf("unknown Side reject: 35=%s 150=%s 58=%s", m.MsgType(), m.Get(codec.TagExecType), m.Get(codec.TagText))
 	}
 	go send(codec.MsgTypeOrderCancelRequest, codec.TagClOrdID, "C1", codec.TagOrigClOrdID, "O1", codec.TagSymbol, "MSFT", codec.TagSide, "1",

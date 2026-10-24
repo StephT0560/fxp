@@ -261,7 +261,7 @@ func (p *Parser) readMessage() (*Message, error) {
 
 // parseTagValue splits "tag=value" and rejects anything FIX does not allow:
 // the tag must be a positive integer without sign or leading zeros, and the
-// value must be non-empty.
+// empty values are retained for dictionary Reject reason 4.
 func parseTagValue(pair string) (int, string, error) {
 	eqIdx := strings.IndexByte(pair, '=')
 	if eqIdx < 0 {
@@ -274,9 +274,6 @@ func parseTagValue(pair string) (int, string, error) {
 	tag, err := strconv.Atoi(tagStr)
 	if err != nil {
 		return 0, "", fmt.Errorf("malformed field %q: %w", pair, err)
-	}
-	if value == "" {
-		return 0, "", fmt.Errorf("malformed field %q: empty value", pair)
 	}
 	return tag, value, nil
 }

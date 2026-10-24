@@ -101,7 +101,7 @@ func (s *Session) ConfigureSchedule() error {
 	if err != nil {
 		return err
 	}
-	for name, dest := range map[string]*bool{"FXP_FIX_RESET_ON_LOGON": &s.ResetOnLogon, "FXP_FIX_RESET_ON_LOGOUT": &s.ResetOnLogout, "FXP_FIX_RESET_ON_DISCONNECT": &s.ResetOnDisconnect} {
+	for name, dest := range map[string]*bool{"FXP_FIX_DICTIONARY_STRICT": &s.StrictDictionary, "FXP_FIX_RESET_ON_LOGON": &s.ResetOnLogon, "FXP_FIX_RESET_ON_LOGOUT": &s.ResetOnLogout, "FXP_FIX_RESET_ON_DISCONNECT": &s.ResetOnDisconnect} {
 		if v := os.Getenv(name); v != "" {
 			b, e := strconv.ParseBool(v)
 			if e != nil {
