@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: MIT
+# Core, gateway and FIX bridge. Secrets come from the environment (or a .env
+# file next to this one); compose refuses to start without them:
+#   export FXP_JWT_SECRET=... FXP_FIX_CREDENTIALS='FIRM01:password,...'
+#   docker compose up --build
+#
+# The core listens on 127.0.0.1:8080 and the gateway/bridge dial 127.0.0.1, so
+# all three share the core container's network namespace. Only the client-facing
+# ports are published; the core port stays private.
+
+x-image: &image
+  image: fxp:local
+  restart: unless-stopped
+
+services:
+  core:
+    <<: *image
+    build: .
+    command: ["fxp_core"]
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${FXP_WS_PORT:-8081}:8081"   # gateway WebSocket
+      - "${FXP_TCP_PORT:-8082}:8082"  # gateway TCP (FXP protobuf)
+      - "${FXP_FIX_PORT:-8083}:8083"  # FIX 4.4 bridge
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  gateway:
+    <<: *image
+    command: ["go_gateway"]
+    network_mode: "service:core"
+    depends_on:
+      core:
+        condition: service_healthy
+    environment:
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set FXP_JWT_SECRET}
+      FXP_JWT_KID: ${FXP_JWT_KID:-}
+      FXP_JWT_PREVIOUS_KID: ${FXP_JWT_PREVIOUS_KID:-}
+      FXP_JWT_PREVIOUS_SECRET: ${FXP_JWT_PREVIOUS_SECRET:-}
+      FXP_GW_WS_ALLOWED_ORIGINS: ${FXP_GW_WS_ALLOWED_ORIGINS:-}
+      FXP_LOG_LEVEL: ${FXP_LOG_LEVEL:-info}
+
+  bridge:
+    <<: *image
+    command: ["fix_bridge"]
+    network_mode: "service:core"
+    depends_on:
+      gateway:
+        condition: service_started
+    environment:
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set FXP_JWT_SECRET}
+      FXP_JWT_KID: ${FXP_JWT_KID:-}
+      FXP_FIX_CREDENTIALS: ${FXP_FIX_CREDENTIALS:?set FXP_FIX_CREDENTIALS}
+      FXP_FIX_STORE_DIR: /data/fix_store
+      FXP_FIX_STORE_FSYNC: ${FXP_FIX_STORE_FSYNC:-strict}
+      FXP_LOG_LEVEL: ${FXP_LOG_LEVEL:-info}
+    volumes:
+      - fix_store:/data/fix_store
+
+volumes:
+  fix_store:
