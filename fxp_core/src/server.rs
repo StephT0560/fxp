@@ -867,6 +867,13 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
     }
 }
 
+const ACCEPT_BACKOFF_MIN: std::time::Duration = std::time::Duration::from_millis(5);
+const ACCEPT_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn next_accept_backoff(current: std::time::Duration) -> std::time::Duration {
+    (current * 2).min(ACCEPT_BACKOFF_MAX)
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub async fn start_server() {
@@ -876,12 +883,23 @@ pub async fn start_server() {
     println!("🚀 FXP Core running on 127.0.0.1:8080");
     println!("   Architecture: per-symbol tasks + lock-free output channels");
 
+    let mut backoff = ACCEPT_BACKOFF_MIN;
     loop {
-        let (stream, _)  = listener.accept().await.unwrap();
-        let router_clone = router.clone();
-        tokio::spawn(async move {
-            handle_tcp_client(stream, router_clone).await;
-        });
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                backoff = ACCEPT_BACKOFF_MIN;
+                let router_clone = router.clone();
+                tokio::spawn(async move {
+                    handle_tcp_client(stream, router_clone).await;
+                });
+            }
+            // Transient errors (EMFILE, ECONNABORTED, ...) must not kill the server.
+            Err(e) => {
+                eprintln!("❌ accept failed: {e}; retrying in {backoff:?}");
+                tokio::time::sleep(backoff).await;
+                backoff = next_accept_backoff(backoff);
+            }
+        }
     }
 }
 #[cfg(test)]
@@ -1104,5 +1122,15 @@ mod report_tests {
         send_order(&book, nos("M1", "A", SELL, 0, 1, MARKET, DAY), &a).await;
         assert_eq!(st(&next(&mut a_rx).await), fxp::OrderStatus::OrderCanceled);
         assert_quiet(&mut a_rx).await;
+    }
+
+    #[test]
+    fn accept_backoff_doubles_and_caps() {
+        let mut d = ACCEPT_BACKOFF_MIN;
+        let mut seen = vec![d];
+        for _ in 0..12 { d = next_accept_backoff(d); seen.push(d); }
+        assert_eq!(seen[1], ACCEPT_BACKOFF_MIN * 2);
+        assert!(seen.windows(2).all(|w| w[1] >= w[0]));
+        assert_eq!(*seen.last().unwrap(), ACCEPT_BACKOFF_MAX);
     }
 }
