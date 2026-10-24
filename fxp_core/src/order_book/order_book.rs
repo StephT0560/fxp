@@ -15,6 +15,9 @@ pub struct OrderBook {
     pub order_lookup: HashMap<String, Order>,
     /// Cumulative filled quantity of each live order in `order_lookup`.
     pub cum_filled: HashMap<String, u32>,
+    /// Arrival sequence of each live order; the lower value is the resting side.
+    pub arrival: HashMap<String, u64>,
+    next_arrival: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +52,8 @@ impl OrderBook {
             sell_orders: BTreeMap::new(),
             order_lookup: HashMap::new(),
             cum_filled: HashMap::new(),
+            arrival: HashMap::new(),
+            next_arrival: 0,
         }
     }
 
@@ -60,6 +65,8 @@ impl OrderBook {
         };
         price_level.push_back(order.clone());
         self.order_lookup.insert(order.order_id.clone(), order.clone());
+        self.next_arrival += 1;
+        self.arrival.insert(order.order_id.clone(), self.next_arrival);
     
         // ✅ Return market update when order is added
         self.generate_incremental_update(MarketUpdateType::NewOrder, order.price, order.quantity)
@@ -70,6 +77,7 @@ impl OrderBook {
     pub fn cancel_order(&mut self, order_id: &str) -> Option<MarketDataIncrementalUpdate> {
         if let Some(order) = self.order_lookup.remove(order_id) {
             self.cum_filled.remove(order_id);
+            self.arrival.remove(order_id);
             let price_level = match order.side {
                 OrderSide::Buy => self.buy_orders.get_mut(&order.price),
                 OrderSide::Sell => self.sell_orders.get_mut(&order.price),
@@ -111,6 +119,7 @@ impl OrderBook {
     pub(crate) fn sync_fill(
         lookup:    &mut HashMap<String, Order>,
         cum:       &mut HashMap<String, u32>,
+        arrival:   &mut HashMap<String, u64>,
         order_id:  &str,
         remaining: u32,
         trade_qty: u32,
@@ -118,6 +127,7 @@ impl OrderBook {
         if remaining == 0 {
             lookup.remove(order_id);
             cum.remove(order_id);
+            arrival.remove(order_id);
         } else if let Some(o) = lookup.get_mut(order_id) {
             o.quantity = remaining;
             *cum.entry(order_id.to_string()).or_insert(0) += trade_qty;
