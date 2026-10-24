@@ -49,6 +49,16 @@ impl OrderReject {
     }
 }
 
+/// Requested changes for [`OrderBook::replace_order`].
+#[derive(Debug, Clone, Copy)]
+pub struct OrderReplace<'a> {
+    pub new_price: i64,
+    pub new_total_qty: u32,
+    pub new_time_in_force: Option<TimeInForce>,
+    pub client_order_id: &'a str,
+    pub timestamp: u64,
+}
+
 impl OrderBook {
     pub fn new(symbol: &str, broadcaster: Arc<MarketDataBroadcaster>) -> Self {
         Self {
@@ -66,14 +76,8 @@ impl OrderBook {
     /// ✅ Notify clients when adding an order
     pub fn add_order(&mut self, order: Order) -> MarketDataIncrementalUpdate {
         let price_level = match order.side {
-            OrderSide::Buy => self
-                .buy_orders
-                .entry(order.price)
-                .or_insert_with(VecDeque::new),
-            OrderSide::Sell => self
-                .sell_orders
-                .entry(order.price)
-                .or_insert_with(VecDeque::new),
+            OrderSide::Buy => self.buy_orders.entry(order.price).or_default(),
+            OrderSide::Sell => self.sell_orders.entry(order.price).or_default(),
         };
         price_level.push_back(order.clone());
         self.order_lookup
@@ -169,13 +173,16 @@ impl OrderBook {
         &mut self,
         orig_id: &str,
         new_id: &str,
-        new_price: i64,
-        new_total_qty: u32,
-        new_time_in_force: Option<TimeInForce>,
-        client_order_id: &str,
+        changes: OrderReplace<'_>,
         owner: &str,
-        timestamp: u64,
     ) -> Result<(Order, MarketDataIncrementalUpdate), OrderReject> {
+        let OrderReplace {
+            new_price,
+            new_total_qty,
+            new_time_in_force,
+            client_order_id,
+            timestamp,
+        } = changes;
         self.check_owner(orig_id, owner)?;
         let orig = self
             .order_lookup
@@ -212,7 +219,7 @@ impl OrderBook {
     }
 
     /// ✅ Send full snapshot when a client subscribes
-    pub fn send_snapshot(&self, client_id: u32) {
+    pub fn send_snapshot(&self, _client_id: u32) {
         let snapshot = self.get_market_snapshot();
         self.broadcaster.broadcast_snapshot(&snapshot);
     }

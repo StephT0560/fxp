@@ -42,6 +42,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -52,6 +53,7 @@ import (
 	"fix_bridge/session"
 	"fix_bridge/translator"
 
+	"go_gateway/logging"
 	"go_gateway/protobuf"
 )
 
@@ -65,6 +67,7 @@ var (
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 func main() {
+	logging.Setup()
 	flag.Parse()
 
 	jwtSecret := os.Getenv("FXP_JWT_SECRET")
@@ -171,9 +174,10 @@ func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net
 		select {
 		case slots <- struct{}{}:
 			go func(conn net.Conn) {
+				// Free the slot before closing so a client that sees EOF can reconnect immediately.
 				defer func() {
-					_ = conn.Close()
 					<-slots
+					_ = conn.Close()
 				}()
 				handle(conn)
 			}(conn)
@@ -277,6 +281,12 @@ func (h *bridgeHandler) OnLogout(sess *session.Session, reason string) {
 // Handle is called by the session for each inbound application message.
 // Translates the FIX message to FXP and forwards to the gateway.
 func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
+	if !supportedAppMsgTypes[msg.MsgType()] {
+		sess.SendWithSeq(func(seq int) []byte {
+			return buildUnsupportedReject(msg, h.bridgeCompID, sess.TargetCompID, seq)
+		})
+		return
+	}
 	if h.gwClient == nil {
 		h.sendBusinessReject(msg, sess, "gateway not connected")
 		return
@@ -289,7 +299,7 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 
 	fxpMsg, err := translator.TranslateFIXtoFXP(msg)
 	if err != nil {
-		log.Printf("[%s] translation error for %s: %v", sess.TargetCompID, msg.MsgType(), err)
+		slog.Warn("translation error", "session", sess.TargetCompID, "msg_type", msg.MsgType(), "err", err)
 		h.sendBusinessReject(msg, sess, err.Error())
 		return
 	}
@@ -313,7 +323,7 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		if undoMD != nil {
 			undoMD()
 		}
-		log.Printf("[%s] gateway send error: %v", sess.TargetCompID, err)
+		slog.Warn("gateway send error", "session", sess.TargetCompID, "err", err)
 		h.sendBusinessReject(msg, sess, "gateway unavailable: "+err.Error())
 	}
 }
@@ -392,10 +402,46 @@ func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, 
 			b.Set(codec.TagRefSeqNum, ref)
 		}
 		b.Set(codec.TagRefMsgType, msg.MsgType())
-		b.Set(codec.TagBusinessRejectReason, "0") // Other
+		b.Set(codec.TagBusinessRejectReason, codec.BusinessRejectReasonOther)
 		b.Set(codec.TagText, reason)
 		return b.Build()
 	}
+}
+
+// supportedAppMsgTypes are the inbound application messages the bridge
+// translates; every other application MsgType gets BusinessMessageReject.
+var supportedAppMsgTypes = map[string]bool{
+	codec.MsgTypeNewOrderSingle:            true,
+	codec.MsgTypeOrderCancelRequest:        true,
+	codec.MsgTypeOrderCancelReplaceRequest: true,
+	codec.MsgTypeMarketDataRequest:         true,
+}
+
+// unsupportedMsgTypeNames names common FIX 4.4 requests for reject texts.
+var unsupportedMsgTypeNames = map[string]string{
+	codec.MsgTypeOrderStatusRequest: "OrderStatusRequest",
+	"AF":                            "OrderMassStatusRequest",
+	"q":                             "OrderMassCancelRequest",
+	"AD":                            "TradeCaptureReportRequest",
+	"c":                             "SecurityDefinitionRequest",
+	"x":                             "SecurityListRequest",
+}
+
+// buildUnsupportedReject answers an unsupported application message with
+// BusinessMessageReject(j), BusinessRejectReason(380)=3.
+func buildUnsupportedReject(msg *codec.Message, bridgeCompID, targetCompID string, seq int) []byte {
+	name := msg.MsgType()
+	if n, ok := unsupportedMsgTypeNames[name]; ok {
+		name += " (" + n + ")"
+	}
+	b := codec.NewBuilder(codec.MsgTypeBusinessMessageReject, bridgeCompID, targetCompID, seq)
+	if ref := msg.Get(codec.TagMsgSeqNum); ref != "" {
+		b.Set(codec.TagRefSeqNum, ref)
+	}
+	b.Set(codec.TagRefMsgType, msg.MsgType())
+	b.Set(codec.TagBusinessRejectReason, codec.BusinessRejectReasonUnsupportedMsgType)
+	b.Set(codec.TagText, "Unsupported MsgType "+name+"; supported: D, F, G, V")
+	return b.Build()
 }
 
 // fixRequestFor reconstructs the identifying FIX fields of a queued FXP

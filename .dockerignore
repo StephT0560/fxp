@@ -1,0 +1,6 @@
+.git
+**/target
+bin
+fix_store
+**/*.log
+go_gateway/protobuf/*.pb.go

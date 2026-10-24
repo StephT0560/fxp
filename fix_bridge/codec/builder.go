@@ -183,8 +183,20 @@ func NewLogout(senderCompID, targetCompID string, seqNum int, reason string) []b
 
 // NewReject builds a session-level Reject (3) message.
 func NewReject(senderCompID, targetCompID string, seqNum, refSeqNum int, reason, text string) []byte {
+	return NewRejectRef(senderCompID, targetCompID, seqNum, refSeqNum, 0, "", reason, text)
+}
+
+// NewRejectRef builds a Reject(3) that also names the offending tag
+// (RefTagID 371) and MsgType (RefMsgType 372); zero/empty values are omitted.
+func NewRejectRef(senderCompID, targetCompID string, seqNum, refSeqNum, refTagID int, refMsgType, reason, text string) []byte {
 	b := NewBuilder(MsgTypeReject, senderCompID, targetCompID, seqNum)
 	b.SetInt(TagRefSeqNum, refSeqNum)
+	if refTagID > 0 {
+		b.SetInt(TagRefTagID, refTagID)
+	}
+	if refMsgType != "" {
+		b.Set(TagRefMsgType, refMsgType)
+	}
 	b.Set(TagSessionRejectReason, reason)
 	if text != "" {
 		b.Set(TagText, text)

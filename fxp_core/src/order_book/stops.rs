@@ -207,6 +207,7 @@ pub fn run_stop_cascade(
 mod property_tests {
     use super::*;
     use crate::order_book::broadcaster::MarketDataBroadcaster;
+    use crate::order_book::order_book::OrderReplace;
     use std::sync::Arc;
 
     type Fill = (String, String, i64, u32);
@@ -410,7 +411,18 @@ mod property_tests {
                 }
             } else if self
                 .book
-                .replace_order(id, new_id, px, 0, None, "", "T", 0)
+                .replace_order(
+                    id,
+                    new_id,
+                    OrderReplace {
+                        new_price: px,
+                        new_total_qty: 0,
+                        new_time_in_force: None,
+                        client_order_id: "",
+                        timestamp: 0,
+                    },
+                    "T",
+                )
                 .is_ok()
             {
                 let (fills, fill_updates) = self.book.match_orders();
@@ -422,7 +434,7 @@ mod property_tests {
     }
 
     fn random_order(rng: &mut Rng, id: String) -> Order {
-        let side = if rng.next() % 2 == 0 {
+        let side = if rng.next().is_multiple_of(2) {
             OrderSide::Buy
         } else {
             OrderSide::Sell
@@ -450,8 +462,19 @@ mod property_tests {
             }
         };
         Order {
+            order_id: id,
+            trader_id: "T".into(),
+            symbol: "P".into(),
+            price,
+            quantity: qty,
+            side,
+            order_type: kind,
+            time_in_force: tif,
+            timestamp: 0,
             stop_price: stop,
-            ..Order::simple(id, "T".into(), "P".into(), price, qty, side, kind, tif, 0)
+            expire_date: String::new(),
+            account: String::new(),
+            client_order_id: String::new(),
         }
     }
 

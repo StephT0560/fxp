@@ -9,6 +9,12 @@ pub struct MarketDataBroadcaster {
     subscribers: Arc<Mutex<HashMap<String, HashSet<u32>>>>, // Symbol → Client IDs
 }
 
+impl Default for MarketDataBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MarketDataBroadcaster {
     pub fn new() -> Self {
         Self {
@@ -20,7 +26,7 @@ impl MarketDataBroadcaster {
     pub fn subscribe(&self, client_id: u32, symbol: &str) {
         let mut subs = self.subscribers.lock().unwrap();
         subs.entry(symbol.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(client_id);
     }
 
@@ -49,10 +55,7 @@ impl MarketDataBroadcaster {
     pub fn broadcast_snapshot(&self, snapshot: &MarketDataSnapshot) {
         let clients = self.get_subscribers(&snapshot.symbol);
         for client_id in clients {
-            println!(
-                "📡 Sending snapshot to client {}: {:?}",
-                client_id, snapshot
-            );
+            tracing::trace!("Sending snapshot to client {}: {:?}", client_id, snapshot);
         }
     }
 
@@ -60,9 +63,10 @@ impl MarketDataBroadcaster {
     pub fn broadcast_incremental(&self, update: &MarketDataIncrementalUpdate) {
         let clients = self.get_subscribers(&update.symbol);
         for client_id in clients {
-            println!(
-                "📡 Sending incremental update to client {}: {:?}",
-                client_id, update
+            tracing::trace!(
+                "Sending incremental update to client {}: {:?}",
+                client_id,
+                update
             );
         }
     }

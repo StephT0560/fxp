@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"runtime"
 	"sync"
@@ -232,7 +233,7 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string, owner string
 			return
 		}
 	}
-	log.Printf("📤 OrderID %s sent via pool conn %d", orderID, pc.id)
+	slog.Debug("order sent via pool", "order_id", orderID, "conn", pc.id)
 }
 
 // ── poolReader ────────────────────────────────────────────────────────────────
@@ -294,7 +295,7 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		rep := payload.ExecutionReport
 		orderID := rep.OrderId
 		status := protobuf.OrderStatus(rep.OrderStatus)
-		log.Printf("📩 ExecutionReport for OrderID %s status=%s", orderID, status)
+		slog.Debug("ExecutionReport received", "order_id", orderID, "status", status)
 
 		routeAny, ok := orderClientMap.Load(orderID)
 		if !ok {
@@ -357,25 +358,25 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 
 		if terminal {
 			orderClientMap.Delete(orderID)
-			log.Printf("🗑️ OrderID %s removed from client map (terminal)", orderID)
+			slog.Debug("order removed from client map (terminal)", "order_id", orderID)
 		} else if route.provisional {
 			route.provisional = false
 			orderClientMap.Store(orderID, route)
 		}
 		if !terminal && isCanceled {
-			log.Printf("📬 OrderID %s cancel with leaves>0 — keeping in map for partial fill", orderID)
+			slog.Debug("cancel with leaves>0; keeping order in client map", "order_id", orderID)
 		}
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
-		log.Printf("📡 MarketDataIncrementalUpdate for symbol: %s", payload.MarketDataIncremental.Symbol)
+		slog.Debug("MarketDataIncrementalUpdate received", "symbol", payload.MarketDataIncremental.Symbol)
 		ForwardMarketData(payload.MarketDataIncremental)
 
 	case *protobuf.FXPMessage_MarketDataSnapshot:
-		log.Printf("📡 MarketDataSnapshot for symbol: %s", payload.MarketDataSnapshot.Symbol)
+		slog.Debug("MarketDataSnapshot received", "symbol", payload.MarketDataSnapshot.Symbol)
 		ForwardMarketData(payload.MarketDataSnapshot)
 
 	case *protobuf.FXPMessage_TradeCaptureReport:
-		log.Printf("📡 TradeCaptureReport for symbol: %s", payload.TradeCaptureReport.Symbol)
+		slog.Debug("TradeCaptureReport received", "symbol", payload.TradeCaptureReport.Symbol)
 		ForwardMarketData(payload.TradeCaptureReport)
 
 	default:
@@ -401,6 +402,6 @@ func deliverReport(clientAny any, encoded []byte, orderID string) {
 	if sendErr != nil {
 		log.Printf("❌ ExecutionReport delivery failed for OrderID %s: %v", orderID, sendErr)
 	} else {
-		log.Printf("✅ ExecutionReport delivered for OrderID %s", orderID)
+		slog.Debug("ExecutionReport delivered", "order_id", orderID)
 	}
 }

@@ -6,7 +6,20 @@ cut a release yet, so everything is under Unreleased.
 
 ## [Unreleased]
 
+### Added
+- FIX bridge required-field dictionary for NewOrderSingle, OrderCancelRequest,
+  OrderCancelReplaceRequest and MarketDataRequest; a message missing one gets
+  `Reject(35=3)` with `373=1`, `371=<tag>`, `372=<MsgType>` (#9).
+- Multi-stage `Dockerfile`, `docker-compose.yml`, GitHub issue and PR templates.
+- `RUST_LOG` (core) and `FXP_LOG_LEVEL` (gateway, bridge) log-level control (#10).
+
 ### Changed
+- Unsupported FIX application messages (e.g. OrderStatusRequest `35=H`) get
+  `BusinessMessageReject(35=j)` with `380=3` and an explicit text, even while
+  the gateway is disconnected (#9).
+- Core logs through `tracing`, gateway and bridge through `log/slog`;
+  per-order/per-fill/per-message events moved to debug (#10).
+- CI clippy runs with `-D warnings` (#10).
 - **Token format (breaking):** the gateway now requires JWT header
   `alg: HS256` and the claims `iss` (default `fxp-dev`) and `aud` (default
   `fxp-gateway`) in addition to `sub`/`exp`/`iat`, honours `nbf`, and accepts

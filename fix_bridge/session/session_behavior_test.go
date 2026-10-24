@@ -93,7 +93,23 @@ func fastHeartbeats(t *testing.T) {
 	t.Cleanup(func() { heartbeatUnit = old })
 }
 
+// frame builds a message; required body fields (codec.RequiredFields) that
+// kv omits get placeholder values so tests exercise the session, not the
+// data dictionary. Use exactFrame to send a message as given.
 func (p *peer) frame(msgType string, seq int, kv ...string) []byte {
+	given := map[string]bool{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		given[kv[i]] = true
+	}
+	for _, f := range codec.RequiredFields[msgType] {
+		if tag := strconv.Itoa(f.Tag); !given[tag] {
+			kv = append(kv, tag, "1")
+		}
+	}
+	return p.exactFrame(msgType, seq, kv...)
+}
+
+func (p *peer) exactFrame(msgType string, seq int, kv ...string) []byte {
 	b := codec.NewBuilder(msgType, p.sender, p.target, seq)
 	for i := 0; i+1 < len(kv); i += 2 {
 		tag, _ := strconv.Atoi(kv[i])
@@ -550,6 +566,35 @@ func TestInvalidMessageGetsSessionReject(t *testing.T) {
 	p.seq = 3
 	p.send("D", "11", "O4")
 	waitFor(t, "valid order", func() bool { return p.h.appCount() == 1 })
+	p.expectQuiet(50 * time.Millisecond)
+}
+
+// A well-formed application message missing a FIX 4.4 required field gets
+// Reject(3) with 373=1 and RefTagID(371); it never reaches the handler.
+func TestMissingRequiredFieldGetsSessionReject(t *testing.T) {
+	p := newPeer(t)
+	p.logon()
+	order := []string{"11", "O1", "55", "MSFT", "54", "1", "38", "10", "40", "2", "44", "1.00"}
+	p.seq++
+	p.write(p.exactFrame("D", p.seq, order...))
+	r := p.expect(codec.MsgTypeReject)
+	if r.Get(codec.TagRefSeqNum) != "2" || r.Get(codec.TagSessionRejectReason) != codec.RejectRequiredTagMissing ||
+		r.Get(codec.TagRefTagID) != "60" || r.Get(codec.TagRefMsgType) != "D" || r.Get(codec.TagText) == "" {
+		t.Fatalf("Reject 45=%s 373=%s 371=%s 372=%s 58=%q", r.Get(codec.TagRefSeqNum),
+			r.Get(codec.TagSessionRejectReason), r.Get(codec.TagRefTagID), r.Get(codec.TagRefMsgType), r.Get(codec.TagText))
+	}
+	p.seq++
+	p.write(p.exactFrame("V", p.seq, "262", "R1", "263", "2", "146", "1", "55", "MSFT"))
+	r = p.expect(codec.MsgTypeReject)
+	if r.Get(codec.TagRefSeqNum) != "3" || r.Get(codec.TagRefTagID) != "264" {
+		t.Fatalf("MarketDataRequest Reject 45=%s 371=%s", r.Get(codec.TagRefSeqNum), r.Get(codec.TagRefTagID))
+	}
+	if got := p.h.appCount(); got != 0 {
+		t.Fatalf("incomplete messages reached handler: %d", got)
+	}
+	p.seq++
+	p.write(p.exactFrame("D", p.seq, append(order, "60", fixTime(time.Now()))...))
+	waitFor(t, "complete order", func() bool { return p.h.appCount() == 1 })
 	p.expectQuiet(50 * time.Millisecond)
 }
 

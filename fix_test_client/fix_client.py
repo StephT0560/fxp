@@ -162,6 +162,7 @@ class FIXSession:
         self.sock    = None
         self.inbox   = queue.Queue()  # inbound ExecutionReports
         self.md_inbox = queue.Queue() # inbound MarketData W/X
+        self.reject_inbox = queue.Queue() # inbound Reject(3) / BusinessMessageReject(j)
         self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
@@ -244,6 +245,18 @@ class FIXSession:
                 return msg
         return None
 
+    def wait_for_reject(self, ref_seq, timeout=4.0):
+        """Wait for a Reject(3) or BusinessMessageReject(j) with RefSeqNum(45)=ref_seq."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                msg = self.reject_inbox.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if msg.get(45) == str(ref_seq):
+                return msg
+        return None
+
     def drain(self, seconds=0.5):
         """Drain any pending messages from the inbox."""
         time.sleep(seconds)
@@ -280,6 +293,8 @@ class FIXSession:
                     self.inbox.put(msg)
                 elif msg_type in ('W', 'X'):
                     self.md_inbox.put(msg)
+                elif msg_type in ('3', 'j'):
+                    self.reject_inbox.put(msg)
 
             except socket.timeout:
                 continue
@@ -442,7 +457,8 @@ def test_cancel_resting(s, r):
 
 
 def test_missing_side(s, r):
-    """Reject NewOrderSingle messages with absent or invalid Side."""
+    """Missing Side (required in FIX 4.4) gets Reject(3) 371=54; an unknown
+    Side value gets ExecutionReport 150=8."""
     print('\n─── test_missing_side ───────────────────────────────────────')
     for description, side_fields in (
         ('missing Side', []),
@@ -450,20 +466,60 @@ def test_missing_side(s, r):
     ):
         clordid = order_id('NOSIDE')
         fields = [(11, clordid), (55, 'MSFT')] + side_fields + [
-            (38, '1'), (40, '2'), (44, '1.00'), (59, '0'),
+            (38, '1'), (40, '2'), (44, '1.00'), (59, '0'), (60, utc_now()),
         ]
+        seq = s.seq
         s.send('D', fields, description)
-        msg = s.wait_for(order_id=clordid, timeout=3.0)
-        rejected = msg is not None and (
-            msg.get(35) == 'j' or (msg.get(35) == '8' and msg.get(150) == '8')
-        )
+        if side_fields:
+            msg = s.wait_for(order_id=clordid, timeout=3.0)
+            rejected = msg is not None and msg.get(35) == '8' and msg.get(150) == '8'
+        else:
+            msg = s.wait_for_reject(seq, timeout=3.0)
+            rejected = msg is not None and msg.get(35) == '3' and msg.get(373) == '1' and msg.get(371) == '54'
         if rejected and msg.get(58):
-            print(f'  {PASS} {description}: reject with Text={msg[58]}')
+            print(f'  {PASS} {description}: 35={msg[35]} reject with Text={msg[58]}')
             r.passed += 1
         else:
-            print(f'  {FAIL} {description}: missing reject or Text')
+            print(f'  {FAIL} {description}: missing reject or Text: {msg and msg["tags"]}')
             r.failed += 1
     s.drain()
+
+
+def test_required_fields(s, r):
+    """A NewOrderSingle without TransactTime(60) gets Reject(3) 373=1 371=60."""
+    print('\n─── test_required_fields ────────────────────────────────────')
+    clordid = order_id('NOTIME')
+    seq = s.seq
+    s.send('D', [(11, clordid), (55, 'MSFT'), (54, '1'), (38, '1'), (40, '2'), (44, '1.00'), (59, '0')],
+           'NOS without TransactTime')
+    msg = s.wait_for_reject(seq, timeout=3.0)
+    if msg and msg.get(35) == '3' and msg.get(373) == '1' and msg.get(371) == '60' and msg.get(372) == 'D':
+        print(f'  {PASS} missing TransactTime: Reject 373=1 371=60 Text={msg.get(58)}')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} missing TransactTime: want Reject 373=1 371=60, got {msg and msg["tags"]}')
+        r.failed += 1
+    if s.wait_for(order_id=clordid, timeout=0.5) is None:
+        print(f'  {PASS} incomplete order not forwarded')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} incomplete order produced an ExecutionReport')
+        r.failed += 1
+
+
+def test_order_status_request(s, r):
+    """OrderStatusRequest (35=H) is unsupported: BusinessMessageReject 380=3."""
+    print('\n─── test_order_status_request ───────────────────────────────')
+    seq = s.seq
+    s.send('H', [(11, order_id('OSR')), (55, 'MSFT'), (54, '1')], 'OrderStatusRequest')
+    msg = s.wait_for_reject(seq, timeout=3.0)
+    if msg and msg.get(35) == 'j' and msg.get(372) == 'H' and msg.get(380) == '3' \
+            and 'OrderStatusRequest' in msg.get(58, ''):
+        print(f'  {PASS} 35=H rejected: 35=j 380=3 Text={msg[58]}')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} 35=H: want BusinessMessageReject 380=3, got {msg and msg["tags"]}')
+        r.failed += 1
 
 
 def test_stop_order(s, r):
@@ -750,7 +806,8 @@ def test_market_data(s, r):
             print(f'  {FAIL} X incremental missing 262/269 group: {inc and inc["tags"]}')
             r.failed += 1
 
-        sess.send('V', [(262, req_id), (263, '2'), (146, '1'), (55, sym)], f'Unsubscribe {req_id}')
+        sess.send('V', [(262, req_id), (263, '2'), (264, '0'), (267, '2'), (269, '0'), (269, '1'),
+                        (146, '1'), (55, sym)], f'Unsubscribe {req_id}')
     finally:
         sess.logout()
     assert_gap_free(r, 'market data session', sess.out_seqs)
@@ -761,6 +818,8 @@ def test_market_data(s, r):
 TESTS = {
     'limit_cross':         test_limit_cross,
     'missing_side':        test_missing_side,
+    'required_fields':     test_required_fields,
+    'order_status_request': test_order_status_request,
     'market_empty_book':   test_market_empty_book,
     'cancel_replace':      test_cancel_replace,
     'cancel_resting':      test_cancel_resting,
