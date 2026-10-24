@@ -48,6 +48,7 @@
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use prost::Message;
 
+#[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
 mod fxp {
     include!(concat!(env!("OUT_DIR"), "/fxp.rs"));
 }
@@ -60,7 +61,7 @@ const ORDER_ID: &str = "ORD-2024-01-15-000042"; // 21 chars
 const SENDER: &str = "GOLDMANSACHS01"; // 14 chars
 const RECEIVER: &str = "NASDAQOPTIONS"; // 13 chars
 const SYMBOL: &str = "AAPL"; // 4 chars equity
-const PRICE_FIXED: i64 = 185_42; // $185.42 fixed-point (cents)
+const PRICE_FIXED: i64 = 18_542; // $185.42 fixed-point (cents)
 const QUANTITY: i32 = 500;
 const SEQ_NUM: u64 = 1_048_576; // Realistic high sequence number
 const BOOK_DEPTH: usize = 5; // 5-level order book

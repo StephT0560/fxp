@@ -38,7 +38,7 @@ jobs:
           cargo fmt --all -- --check
           cargo test --all-targets --locked
           # Warnings are reported but not fatal until the lint cleanup lands.
-          cargo clippy --all-targets --locked -- -W warnings
+          cargo clippy --all-targets --locked -- -D warnings
           cargo bench --no-run --locked
           cargo audit
 

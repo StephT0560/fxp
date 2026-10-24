@@ -82,7 +82,7 @@ impl OrderBook {
                     fills.push(ExecutionReport {
                         buy_order_id: bid.order_id.clone(),
                         sell_order_id: ask.order_id.clone(),
-                        trade_price: trade_price,
+                        trade_price,
                         trade_quantity: trade_qty,
                         buy_fully_filled: buy_done,
                         sell_fully_filled: sell_done,

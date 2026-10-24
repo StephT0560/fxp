@@ -51,7 +51,7 @@ mod test_helpers {
     /// Seed book: sells at 101_00 (100 qty) and 102_00 (100 qty)
     ///            buys  at  99_00 (100 qty) and  98_00 (100 qty)
     pub fn seed_book(book: &mut OrderBook) {
-        for (id, price) in [("SEED-S1", 101_00i64), ("SEED-S2", 102_00i64)] {
+        for (id, price) in [("SEED-S1", 10_100_i64), ("SEED-S2", 10_200_i64)] {
             book.add_order(make_order(
                 id,
                 OrderSide::Sell,
@@ -91,7 +91,7 @@ fn test_full_order_lifecycle() {
         order_id: "B1".to_string(),
         trader_id: "TraderA".to_string(),
         symbol: "AAPL".to_string(),
-        price: 101_00,
+        price: 10_100,
         quantity: 10,
         side: OrderSide::Buy,
         order_type: OrderType::Limit,
@@ -107,7 +107,7 @@ fn test_full_order_lifecycle() {
         order_id: "S1".to_string(),
         trader_id: "TraderB".to_string(),
         symbol: "AAPL".to_string(),
-        price: 101_00,
+        price: 10_100,
         quantity: 10,
         side: OrderSide::Sell,
         order_type: OrderType::Limit,
@@ -121,7 +121,7 @@ fn test_full_order_lifecycle() {
 
     let (fills, updates) = book.match_orders();
     assert_eq!(fills.len(), 1);
-    assert_eq!(fills[0].trade_price, 101_00);
+    assert_eq!(fills[0].trade_price, 10_100);
     assert_eq!(fills[0].trade_quantity, 10);
     assert!(fills[0].buy_fully_filled);
     assert!(fills[0].sell_fully_filled);
@@ -148,7 +148,7 @@ fn test_market_full_fill() {
         TimeInForce::Day,
     ));
     assert_eq!(r.fills.len(), 1);
-    assert_eq!(r.fills[0].trade_price, 101_00);
+    assert_eq!(r.fills[0].trade_price, 10_100);
     assert_eq!(r.fills[0].trade_quantity, 50);
     assert_eq!(r.unfilled_qty, 0);
     assert!(!r.rest_on_book);
@@ -169,9 +169,9 @@ fn test_market_sweeps_multiple_levels() {
         TimeInForce::Day,
     ));
     assert_eq!(r.fills.len(), 2);
-    assert_eq!(r.fills[0].trade_price, 101_00);
+    assert_eq!(r.fills[0].trade_price, 10_100);
     assert_eq!(r.fills[0].trade_quantity, 100);
-    assert_eq!(r.fills[1].trade_price, 102_00);
+    assert_eq!(r.fills[1].trade_price, 10_200);
     assert_eq!(r.fills[1].trade_quantity, 50);
     assert_eq!(r.unfilled_qty, 0);
 }
@@ -223,7 +223,7 @@ fn test_ioc_full_fill() {
     let r = book.process_aggressive(make_order(
         "I1",
         OrderSide::Buy,
-        101_00,
+        10_100,
         50,
         OrderType::Limit,
         TimeInForce::IOC,
@@ -244,7 +244,7 @@ fn test_ioc_partial_then_cancel() {
     let r = book.process_aggressive(make_order(
         "I2",
         OrderSide::Buy,
-        101_00,
+        10_100,
         150,
         OrderType::Limit,
         TimeInForce::IOC,
@@ -264,7 +264,7 @@ fn test_ioc_no_cross() {
     let r = book.process_aggressive(make_order(
         "I3",
         OrderSide::Buy,
-        100_00,
+        10_000,
         50,
         OrderType::Limit,
         TimeInForce::IOC,
@@ -285,7 +285,7 @@ fn test_fok_full_fill() {
     let r = book.process_aggressive(make_order(
         "F1",
         OrderSide::Buy,
-        101_00,
+        10_100,
         50,
         OrderType::Limit,
         TimeInForce::FOK,
@@ -305,7 +305,7 @@ fn test_fok_kill_insufficient_liquidity() {
     let r = book.process_aggressive(make_order(
         "F2",
         OrderSide::Buy,
-        101_00,
+        10_100,
         150,
         OrderType::Limit,
         TimeInForce::FOK,
@@ -327,7 +327,7 @@ fn test_fok_kill_no_cross() {
     let r = book.process_aggressive(make_order(
         "F3",
         OrderSide::Buy,
-        100_00,
+        10_000,
         10,
         OrderType::Limit,
         TimeInForce::FOK,
@@ -346,7 +346,7 @@ fn test_fok_fill_across_levels() {
     let r = book.process_aggressive(make_order(
         "F4",
         OrderSide::Buy,
-        102_00,
+        10_200,
         150,
         OrderType::Limit,
         TimeInForce::FOK,
@@ -363,7 +363,7 @@ fn test_fok_does_not_consume_book_on_kill() {
     book.add_order(make_order(
         "S1",
         OrderSide::Sell,
-        101_00,
+        10_100,
         30,
         OrderType::Limit,
         TimeInForce::GTC,
@@ -372,7 +372,7 @@ fn test_fok_does_not_consume_book_on_kill() {
     let r = book.process_aggressive(make_order(
         "F5",
         OrderSide::Buy,
-        101_00,
+        10_100,
         50,
         OrderType::Limit,
         TimeInForce::FOK,
@@ -423,7 +423,7 @@ fn test_limit_day_matches_on_arrival() {
     let order = make_order(
         "L2",
         OrderSide::Buy,
-        102_00,
+        10_200,
         50,
         OrderType::Limit,
         TimeInForce::Day,
@@ -436,7 +436,7 @@ fn test_limit_day_matches_on_arrival() {
     let (fills, _) = book.match_orders();
     assert_eq!(fills.len(), 1);
     assert_eq!(
-        fills[0].trade_price, 101_00,
+        fills[0].trade_price, 10_100,
         "Price improvement: fills at resting ask"
     );
     assert_eq!(fills[0].trade_quantity, 50);
@@ -452,7 +452,7 @@ fn test_partial_fill_flags() {
     book.add_order(make_order(
         "S1",
         OrderSide::Sell,
-        101_00,
+        10_100,
         50,
         OrderType::Limit,
         TimeInForce::GTC,
@@ -533,14 +533,14 @@ fn test_stop_market_sweeps_multiple_levels() {
         OrderType::Stop,
         TimeInForce::Day,
     );
-    stop.stop_price = 101_00;
+    stop.stop_price = 10_100;
 
     let r = book.process_aggressive(stop);
 
     assert_eq!(r.fills.len(), 2);
-    assert_eq!(r.fills[0].trade_price, 101_00);
+    assert_eq!(r.fills[0].trade_price, 10_100);
     assert_eq!(r.fills[0].trade_quantity, 100);
-    assert_eq!(r.fills[1].trade_price, 102_00);
+    assert_eq!(r.fills[1].trade_price, 10_200);
     assert_eq!(r.fills[1].trade_quantity, 50);
     assert_eq!(r.unfilled_qty, 0);
     assert!(!r.rest_on_book);
@@ -600,7 +600,7 @@ fn test_p03_passive_cross_at_resting_price() {
     book.add_order(test_helpers::make_order(
         "BID",
         OrderSide::Buy,
-        101_00,
+        10_100,
         10,
         OrderType::Limit,
         TimeInForce::GTC,
@@ -616,7 +616,7 @@ fn test_p03_passive_cross_at_resting_price() {
     let (fills, _) = book.match_orders();
     assert_eq!(fills.len(), 1);
     assert_eq!(
-        fills[0].trade_price, 101_00,
+        fills[0].trade_price, 10_100,
         "Aggressor sell executes at the resting bid price"
     );
 }
@@ -633,12 +633,12 @@ fn test_stop_limit_at_limit_crosses_immediately() {
     let mut stop_limit = make_order(
         "SL-B1",
         OrderSide::Buy,
-        101_00,
+        10_100,
         50,
         OrderType::StopLimit,
         TimeInForce::Day,
     );
-    stop_limit.stop_price = 101_00;
+    stop_limit.stop_price = 10_100;
 
     let r = book.process_aggressive(stop_limit.clone());
     assert!(r.rest_on_book);
@@ -650,7 +650,7 @@ fn test_stop_limit_at_limit_crosses_immediately() {
     let (fills, _) = book.match_orders();
 
     assert_eq!(fills.len(), 1);
-    assert_eq!(fills[0].trade_price, 101_00);
+    assert_eq!(fills[0].trade_price, 10_100);
     assert_eq!(fills[0].trade_quantity, 50);
 }
 
@@ -670,7 +670,7 @@ fn test_drain_triggered_stops_buy() {
                 OrderType::Stop,
                 TimeInForce::Day,
             );
-            o.stop_price = 105_00;
+            o.stop_price = 10_500;
             o
         },
         {
@@ -682,7 +682,7 @@ fn test_drain_triggered_stops_buy() {
                 OrderType::Stop,
                 TimeInForce::Day,
             );
-            o.stop_price = 110_00;
+            o.stop_price = 11_000;
             o
         },
         {
@@ -694,14 +694,14 @@ fn test_drain_triggered_stops_buy() {
                 OrderType::Stop,
                 TimeInForce::Day,
             );
-            o.stop_price = 100_00;
+            o.stop_price = 10_000;
             o
         },
     ];
 
     // last_trade = 107 — triggers BS1 (>=105) and BS2... wait, BS2 needs >=110, not triggered
     // and BS3 needs >=100, so triggered
-    let triggered = OrderBook::drain_triggered_stops(&mut stop_book, 107_00);
+    let triggered = OrderBook::drain_triggered_stops(&mut stop_book, 10_700);
 
     assert_eq!(
         triggered.len(),
@@ -754,7 +754,7 @@ fn test_drain_triggered_stops_sell() {
                 OrderType::Stop,
                 TimeInForce::Day,
             );
-            o.stop_price = 100_00;
+            o.stop_price = 10_000;
             o
         },
     ];
@@ -785,7 +785,7 @@ fn test_drain_no_triggers_when_price_unchanged() {
                 OrderType::Stop,
                 TimeInForce::Day,
             );
-            o.stop_price = 110_00;
+            o.stop_price = 11_000;
             o
         },
         {
@@ -803,7 +803,7 @@ fn test_drain_no_triggers_when_price_unchanged() {
     ];
 
     // last_trade = 100 — neither triggers (buy needs >=110, sell needs <=90)
-    let triggered = OrderBook::drain_triggered_stops(&mut stop_book, 100_00);
+    let triggered = OrderBook::drain_triggered_stops(&mut stop_book, 10_000);
 
     assert_eq!(triggered.len(), 0);
     assert_eq!(stop_book.len(), 2, "Both stops should remain");
@@ -822,7 +822,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S-FIRST",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -830,7 +830,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S-SECOND",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -838,7 +838,7 @@ mod critical_tests {
         let r = book.process_aggressive(make_order(
             "B",
             OrderSide::Buy,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::IOC,
@@ -853,7 +853,7 @@ mod critical_tests {
         book.add_order(make_order(
             "B-FIRST",
             OrderSide::Buy,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -861,7 +861,7 @@ mod critical_tests {
         book.add_order(make_order(
             "B-SECOND",
             OrderSide::Buy,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -869,7 +869,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -885,7 +885,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S-FIRST",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -893,7 +893,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S-SECOND",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -901,7 +901,7 @@ mod critical_tests {
         let r1 = book.process_aggressive(make_order(
             "B1",
             OrderSide::Buy,
-            100_00,
+            10_000,
             4,
             OrderType::Limit,
             TimeInForce::IOC,
@@ -910,7 +910,7 @@ mod critical_tests {
         let r2 = book.process_aggressive(make_order(
             "B2",
             OrderSide::Buy,
-            100_00,
+            10_000,
             8,
             OrderType::Limit,
             TimeInForce::IOC,
@@ -939,7 +939,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -947,7 +947,7 @@ mod critical_tests {
         book.process_aggressive(make_order(
             "B",
             OrderSide::Buy,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::IOC,
@@ -963,7 +963,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -971,7 +971,7 @@ mod critical_tests {
         book.process_aggressive(make_order(
             "B",
             OrderSide::Buy,
-            100_00,
+            10_000,
             4,
             OrderType::Limit,
             TimeInForce::IOC,
@@ -986,7 +986,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -994,7 +994,7 @@ mod critical_tests {
         book.process_aggressive(make_order(
             "B",
             OrderSide::Buy,
-            100_00,
+            10_000,
             4,
             OrderType::Limit,
             TimeInForce::IOC,
@@ -1011,7 +1011,7 @@ mod critical_tests {
         book.add_order(make_order(
             "B",
             OrderSide::Buy,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1019,7 +1019,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             4,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1038,7 +1038,7 @@ mod critical_tests {
             book.add_order(make_order(
                 &format!("S{}", i),
                 OrderSide::Sell,
-                100_00 + (i % 7) as i64,
+                10_000 + (i % 7) as i64,
                 5,
                 OrderType::Limit,
                 TimeInForce::GTC,
@@ -1047,7 +1047,7 @@ mod critical_tests {
                 book.process_aggressive(make_order(
                     &format!("B{}", i),
                     OrderSide::Buy,
-                    200_00,
+                    20_000,
                     5,
                     OrderType::Limit,
                     TimeInForce::IOC,
@@ -1056,7 +1056,7 @@ mod critical_tests {
                 book.add_order(make_order(
                     &format!("B{}", i),
                     OrderSide::Buy,
-                    200_00,
+                    20_000,
                     5,
                     OrderType::Limit,
                     TimeInForce::GTC,
@@ -1071,12 +1071,12 @@ mod critical_tests {
     // #2 — replace of a filled order is rejected and never resurrects quantity.
     #[test]
     fn replace_filled_order_rejected() {
-        use crate::order_book::order_book::OrderReject;
+        use crate::order_book::order_book::{OrderReject, OrderReplace};
         let mut book = make_book();
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1084,13 +1084,13 @@ mod critical_tests {
         book.process_aggressive(make_order(
             "B",
             OrderSide::Buy,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::IOC,
         ));
         assert_eq!(
-            book.replace_order("S", "S2", 0, 0, None, "S2", "T", 0)
+            book.replace_order("S", "S2", OrderReplace { new_price: 0, new_total_qty: 0, new_time_in_force: None, client_order_id: "S2", timestamp: 0 }, "T")
                 .unwrap_err(),
             OrderReject::UnknownOrder
         );
@@ -1100,12 +1100,12 @@ mod critical_tests {
     // #2 — replace of a partially filled order keeps only the remaining quantity.
     #[test]
     fn replace_partial_never_resurrects_original_qty() {
-        use crate::order_book::order_book::OrderReject;
+        use crate::order_book::order_book::{OrderReject, OrderReplace};
         let mut book = make_book();
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1113,7 +1113,7 @@ mod critical_tests {
         book.process_aggressive(make_order(
             "B",
             OrderSide::Buy,
-            100_00,
+            10_000,
             4,
             OrderType::Limit,
             TimeInForce::IOC,
@@ -1121,23 +1121,23 @@ mod critical_tests {
 
         // Price-only amend: remaining 6 carries over.
         let (r, _) = book
-            .replace_order("S", "S2", 101_00, 0, None, "S2", "T", 0)
+            .replace_order("S", "S2", OrderReplace { new_price: 10_100, new_total_qty: 0, new_time_in_force: None, client_order_id: "S2", timestamp: 0 }, "T")
             .unwrap();
         assert_eq!(r.quantity, 6);
         // Re-stating the original total (10) leaves 10 - 4 filled = 6 open.
         let (r, _) = book
-            .replace_order("S2", "S3", 0, 10, None, "S3", "T", 0)
+            .replace_order("S2", "S3", OrderReplace { new_price: 0, new_total_qty: 10, new_time_in_force: None, client_order_id: "S3", timestamp: 0 }, "T")
             .unwrap();
         assert_eq!(r.quantity, 6);
         // A total at or below the filled quantity is rejected.
         assert_eq!(
-            book.replace_order("S3", "S4", 0, 4, None, "S4", "T", 0)
+            book.replace_order("S3", "S4", OrderReplace { new_price: 0, new_total_qty: 4, new_time_in_force: None, client_order_id: "S4", timestamp: 0 }, "T")
                 .unwrap_err(),
             OrderReject::QuantityNotAboveFilled
         );
         assert_eq!(book.order_lookup.len(), 1);
         assert_eq!(
-            book.sell_orders[&101_00]
+            book.sell_orders[&10_100]
                 .iter()
                 .map(|o| o.quantity)
                 .sum::<u32>(),
@@ -1152,7 +1152,7 @@ mod critical_tests {
         book.add_order(make_order(
             "S",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1169,7 +1169,7 @@ mod critical_tests {
         let mut o = make_order(
             "ORD-1",
             OrderSide::Sell,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1191,7 +1191,7 @@ mod critical_tests {
             OrderReject::UnknownOrder.reason()
         );
         assert_eq!(book.order_lookup["ORD-1"].quantity, 10);
-        assert_eq!(book.sell_orders[&100_00].len(), 1);
+        assert_eq!(book.sell_orders[&10_000].len(), 1);
 
         assert!(book.cancel_order_for("ORD-1", "VICTIM").is_ok());
         assert!(book.order_lookup.is_empty() && book.sell_orders.is_empty());
@@ -1200,12 +1200,12 @@ mod critical_tests {
     // #3 — only the owner may cancel/replace.
     #[test]
     fn ownership_replace_requires_owner() {
-        use crate::order_book::order_book::OrderReject;
+        use crate::order_book::order_book::{OrderReject, OrderReplace};
         let mut book = make_book();
         let mut o = make_order(
             "ORD-1",
             OrderSide::Buy,
-            100_00,
+            10_000,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1214,18 +1214,18 @@ mod critical_tests {
         book.add_order(o);
 
         assert_eq!(
-            book.replace_order("ORD-1", "ORD-2", 1_00, 0, None, "ORD-2", "ATTACKER", 0)
+            book.replace_order("ORD-1", "ORD-2", OrderReplace { new_price: 1_00, new_total_qty: 0, new_time_in_force: None, client_order_id: "ORD-2", timestamp: 0 }, "ATTACKER")
                 .unwrap_err(),
             OrderReject::NotOwner
         );
-        assert_eq!(book.buy_orders[&100_00][0].order_id, "ORD-1");
+        assert_eq!(book.buy_orders[&10_000][0].order_id, "ORD-1");
 
         let (r, _) = book
-            .replace_order("ORD-1", "ORD-2", 101_00, 0, None, "ORD-2", "VICTIM", 0)
+            .replace_order("ORD-1", "ORD-2", OrderReplace { new_price: 10_100, new_total_qty: 0, new_time_in_force: None, client_order_id: "ORD-2", timestamp: 0 }, "VICTIM")
             .unwrap();
         assert_eq!(
             (r.trader_id.as_str(), r.price, r.quantity),
-            ("VICTIM", 101_00, 10)
+            ("VICTIM", 10_100, 10)
         );
     }
 
@@ -1235,7 +1235,7 @@ mod critical_tests {
         book.add_order(make_order(
             "A1",
             OrderSide::Sell,
-            100_00,
+            10_000,
             u32::MAX,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1243,7 +1243,7 @@ mod critical_tests {
         book.add_order(make_order(
             "A2",
             OrderSide::Sell,
-            101_00,
+            10_100,
             10,
             OrderType::Limit,
             TimeInForce::GTC,
@@ -1251,7 +1251,7 @@ mod critical_tests {
         let r = book.process_aggressive(make_order(
             "F1",
             OrderSide::Buy,
-            101_00,
+            10_100,
             20,
             OrderType::Limit,
             TimeInForce::FOK,
@@ -1372,7 +1372,7 @@ mod critical_tests {
                     continue;
                 }
                 let id = format!("O{}-{}", seed, step);
-                let side = if xorshift(&mut rng) % 2 == 0 {
+                let side = if xorshift(&mut rng).is_multiple_of(2) {
                     OrderSide::Buy
                 } else {
                     OrderSide::Sell

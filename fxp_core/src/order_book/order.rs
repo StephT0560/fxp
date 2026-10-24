@@ -18,38 +18,6 @@ pub struct Order {
     pub client_order_id: String,
 }
 
-impl Order {
-    /// Convenience constructor for simple orders (tests and internal use).
-    /// Extended fields default to zero/empty.
-    pub fn simple(
-        order_id: String,
-        trader_id: String,
-        symbol: String,
-        price: i64,
-        quantity: u32,
-        side: OrderSide,
-        order_type: OrderType,
-        time_in_force: TimeInForce,
-        timestamp: u64,
-    ) -> Self {
-        Self {
-            order_id,
-            trader_id,
-            symbol,
-            price,
-            quantity,
-            side,
-            order_type,
-            time_in_force,
-            timestamp,
-            stop_price: 0,
-            expire_date: String::new(),
-            account: String::new(),
-            client_order_id: String::new(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderSide {
     Buy,

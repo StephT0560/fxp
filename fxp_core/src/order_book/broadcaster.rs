@@ -9,6 +9,12 @@ pub struct MarketDataBroadcaster {
     subscribers: Arc<Mutex<HashMap<String, HashSet<u32>>>>, // Symbol → Client IDs
 }
 
+impl Default for MarketDataBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MarketDataBroadcaster {
     pub fn new() -> Self {
         Self {
@@ -20,7 +26,7 @@ impl MarketDataBroadcaster {
     pub fn subscribe(&self, client_id: u32, symbol: &str) {
         let mut subs = self.subscribers.lock().unwrap();
         subs.entry(symbol.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(client_id);
     }
 
