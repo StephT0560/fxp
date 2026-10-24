@@ -343,7 +343,7 @@ and a `seqnums` file replaced atomically on every change.
 | `FXP_FIX_STORE_MAX_MESSAGES` | `100000` | Outbound messages retained for resend; older ones are answered with SequenceReset-GapFill |
 
 A second Logon for a session that is already logged on is rejected. Session
-schedules / daily reset are not implemented; use `ResetSeqNumFlag=Y` (141=Y).
+schedules and reset policies are optional; see [FIX conformance](docs/fix-conformance.md).
 
 ### Gateway authentication
 
@@ -488,3 +488,15 @@ fxp/
 ## License
 
 MIT
+### FIX session schedule configuration
+
+All settings are optional. See [FIX conformance](docs/fix-conformance.md) for boundaries and archival behavior.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FXP_FIX_START_TIME` / `FXP_FIX_END_TIME` | unset | Local `HH:MM:SS` window; both required to enable |
+| `FXP_FIX_START_DAY` / `FXP_FIX_END_DAY` | unset | Full weekday names; both enable a weekly window |
+| `FXP_FIX_TIME_ZONE` | `UTC` | IANA timezone |
+| `FXP_FIX_RESET_ON_LOGON` | `false` | Reset on authenticated Logon; requires inbound sequence 1 |
+| `FXP_FIX_RESET_ON_LOGOUT` | `false` | Reset after Logout |
+| `FXP_FIX_RESET_ON_DISCONNECT` | `false` | Reset after a logged-on connection ends |

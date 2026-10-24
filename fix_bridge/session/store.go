@@ -27,6 +27,7 @@ type MemoryStore struct {
 	msgs    map[int][]byte
 	nextIn  int
 	nextOut int
+	epoch   int64
 }
 
 func NewMemoryStore() *MemoryStore {

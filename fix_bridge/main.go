@@ -79,6 +79,10 @@ func main() {
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
+	configCheck := session.NewSession(nil, "", nil)
+	if err := configCheck.ConfigureSchedule(); err != nil {
+		log.Fatalf("FIX schedule: %v", err)
+	}
 	jwtSecret := os.Getenv("FXP_JWT_SECRET")
 	if jwtSecret == "" {
 		log.Fatal("FXP_JWT_SECRET environment variable not set")
@@ -330,6 +334,11 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 	sess.LogonTimeout = sessionDurationEnv("FXP_FIX_LOGON_TIMEOUT", sess.LogonTimeout)
 	sess.LogoutTimeout = sessionDurationEnv("FXP_FIX_LOGOUT_TIMEOUT", sess.LogoutTimeout)
 	sess.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", sess.MaxLatency)
+	if err := sess.ConfigureSchedule(); err != nil {
+		log.Printf("FIX schedule: %v", err)
+		conn.Close()
+		return
+	}
 	sess.Auth = auth
 	sess.Registry = registry
 	h.sess = sess

@@ -86,10 +86,16 @@ type Session struct {
 	Store MessageStore
 	// Registry, if set, supplies the store keyed by (BeginString,
 	// SenderCompID, TargetCompID) so sequence state survives reconnects.
-	Registry      *Registry
-	LogonTimeout  time.Duration
-	LogoutTimeout time.Duration
-	MaxLatency    time.Duration
+	Registry                                       *Registry
+	LogonTimeout                                   time.Duration
+	LogoutTimeout                                  time.Duration
+	MaxLatency                                     time.Duration
+	Schedule                                       *Schedule
+	Now                                            func() time.Time
+	ResetOnLogon, ResetOnLogout, ResetOnDisconnect bool
+	resetAtClose                                   atomic.Bool
+	scheduleEpoch                                  atomic.Int64
+	loggedOn                                       atomic.Bool
 
 	// Identity
 	SenderCompID string // bridge's CompID
@@ -128,6 +134,7 @@ type Session struct {
 func NewSession(conn net.Conn, senderCompID string, handler Handler) *Session {
 	s := &Session{
 		conn:          conn,
+		Now:           time.Now,
 		parser:        codec.NewParser(conn),
 		handler:       handler,
 		Store:         NewMemoryStore(),
@@ -166,10 +173,23 @@ func (s *Session) Run() {
 		if dh, ok := s.handler.(DisconnectHandler); ok {
 			dh.OnDisconnect(s)
 		}
+		if s.loggedOn.Load() && (s.resetAtClose.Load() || s.ResetOnDisconnect) {
+			s.sendMu.Lock()
+			if s.Schedule != nil && s.resetAtClose.Load() {
+				if err := s.advanceSchedule(); err != nil {
+					log.Printf("scheduled reset failed: %v", err)
+				}
+			}
+			s.Store.Reset()
+			s.sendMu.Unlock()
+		}
 		s.releaseStore()
 	}()
 	go s.writeLoop()
 	go s.heartbeatLoop()
+	if s.Schedule != nil {
+		go s.scheduleLoop()
+	}
 	if s.LogonTimeout > 0 {
 		go s.logonTimeoutLoop()
 	}
@@ -511,7 +531,10 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 		return s.rejectLogon(msg, text)
 	}
 
-	reset := msg.Get(codec.TagResetSeqNumFlag) == "Y"
+	if s.Schedule != nil && !s.Schedule.Contains(s.Now()) {
+		return s.rejectLogon(msg, "Logon outside configured session schedule")
+	}
+	reset := msg.Get(codec.TagResetSeqNumFlag) == "Y" || s.ResetOnLogon
 	if reset && seq != 1 {
 		return s.rejectLogon(msg, "ResetSeqNumFlag=Y requires MsgSeqNum=1")
 	}
@@ -519,6 +542,12 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 		if err := s.acquireStore(SessionKey{msg.Get(codec.TagBeginString), s.SenderCompID, sender}); err != nil {
 			return s.rejectLogon(msg, err.Error())
 		}
+	}
+	s.sendMu.Lock()
+	scheduleErr := s.advanceSchedule()
+	s.sendMu.Unlock()
+	if scheduleErr != nil {
+		return scheduleErr
 	}
 	if reset {
 		s.resetOutbound()
@@ -559,6 +588,7 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	if gap {
 		s.requestResend(seq)
 	}
+	s.loggedOn.Store(true)
 	s.handler.OnLogon(s)
 	return nil
 }
@@ -638,6 +668,9 @@ func (s *Session) resetOutbound() {
 }
 
 func (s *Session) handleLogout(msg *codec.Message) error {
+	if s.ResetOnLogout {
+		s.resetAtClose.Store(true)
+	}
 	reason := msg.Get(codec.TagText)
 	log.Printf("[%s] Logout received: %q", s.target(), reason)
 	if s.State() != StateLoggingOut {
@@ -654,6 +687,9 @@ func (s *Session) handleLogout(msg *codec.Message) error {
 
 // Logout initiates a graceful Logout exchange with the peer.
 func (s *Session) Logout(reason string) {
+	if s.ResetOnLogout {
+		s.resetAtClose.Store(true)
+	}
 	s.stateMu.Lock()
 	if s.state != StateLoggedOn {
 		s.stateMu.Unlock()
