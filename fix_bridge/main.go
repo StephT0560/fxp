@@ -283,7 +283,7 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 	}
 
 	if msg.MsgType() == codec.MsgTypeMarketDataRequest && msg.Get(codec.TagSubscriptionRequestType) == "2" {
-		h.md.unsubscribe(msg.Get(codec.TagMDReqID))
+		h.md.unsubscribe(msg.Get(codec.TagMDReqID), mdSymbols(msg))
 		return // nothing to forward upstream
 	}
 
@@ -419,4 +419,15 @@ func fixRequestFor(m *protobuf.FXPMessage) *codec.Message {
 		return nil
 	}
 	return &codec.Message{Fields: f}
+}
+
+// mdSymbols returns the Symbol(55) entries of a MarketDataRequest.
+func mdSymbols(msg *codec.Message) []string {
+	var symbols []string
+	for _, f := range msg.Tags {
+		if f.Tag == codec.TagSymbol && f.Value != "" {
+			symbols = append(symbols, f.Value)
+		}
+	}
+	return symbols
 }

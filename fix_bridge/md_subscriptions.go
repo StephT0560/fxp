@@ -48,11 +48,15 @@ func (s *mdSubscriptions) subscribe(reqID string, stream bool, symbols []string)
 	}
 }
 
-// unsubscribe removes the request with reqID from every symbol (263=2).
-func (s *mdSubscriptions) unsubscribe(reqID string) {
+// unsubscribe removes the request with reqID from symbols (263=2), or from
+// every symbol if none are given.
+func (s *mdSubscriptions) unsubscribe(reqID string, symbols []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for sym, reqs := range s.bySym {
+		if len(symbols) > 0 && !slices.Contains(symbols, sym) {
+			continue
+		}
 		s.setLocked(sym, slices.DeleteFunc(reqs, func(r mdRequest) bool { return r.id == reqID }))
 	}
 }

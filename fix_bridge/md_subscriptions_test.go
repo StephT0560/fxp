@@ -20,7 +20,7 @@ func TestMDSubscriptionsOverlappingRequests(t *testing.T) {
 	s.subscribe("R2", true, []string{"AAPL"})
 	wantIDs(t, "snapshot", s.snapshotTargets("AAPL"), "R1", "R2")
 	wantIDs(t, "incremental", s.incrementalTargets("AAPL"), "R1", "R2")
-	s.unsubscribe("R2")
+	s.unsubscribe("R2", nil)
 	wantIDs(t, "incremental after R2 unsubscribe", s.incrementalTargets("AAPL"), "R1")
 	wantIDs(t, "other symbol", s.incrementalTargets("MSFT"))
 }
@@ -61,4 +61,16 @@ func TestMDSubscriptionsUndoRestoresPreviousState(t *testing.T) {
 	undo()
 	wantIDs(t, "AAPL incremental", s.incrementalTargets("AAPL"), "R1")
 	wantIDs(t, "MSFT snapshot", s.snapshotTargets("MSFT"))
+}
+
+func TestMDSubscriptionsPartialUnsubscribe(t *testing.T) {
+	var s mdSubscriptions
+	s.subscribe("R1", true, []string{"AAPL", "MSFT"})
+	s.snapshotTargets("AAPL")
+	s.snapshotTargets("MSFT")
+	s.unsubscribe("R1", []string{"AAPL"})
+	wantIDs(t, "AAPL after unsubscribe", s.incrementalTargets("AAPL"))
+	wantIDs(t, "MSFT still streaming", s.incrementalTargets("MSFT"), "R1")
+	s.unsubscribe("R1", nil)
+	wantIDs(t, "MSFT after unsubscribing every symbol", s.incrementalTargets("MSFT"))
 }
