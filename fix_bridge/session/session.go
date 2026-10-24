@@ -932,3 +932,7 @@ func (s *Session) close() {
 		log.Printf("[%s] session closed", s.target())
 	})
 }
+
+func (s *Session) Close() {
+	s.close()
+}

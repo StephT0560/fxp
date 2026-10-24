@@ -3,7 +3,9 @@
 package transport
 
 import (
+	"context"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -45,13 +47,46 @@ func checkOrigin(r *http.Request) bool {
 }
 
 func StartWebSocketServer() {
+	if err := RunWebSocketServer(context.Background()); err != nil {
+		log.Fatalf("❌ WebSocket server stopped: %v", err)
+	}
+}
+
+func RunWebSocketServer(ctx context.Context) error {
+	listener, err := net.Listen("tcp", ":8081")
+	if err != nil {
+		return err
+	}
+	return runWebSocketServer(ctx, listener, shutdownTimeout())
+}
+
+func runWebSocketServer(ctx context.Context, listener net.Listener, timeout time.Duration) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", handleConnections)
-	srv := &http.Server{Addr: ":8081", Handler: mux, ReadHeaderTimeout: currentLimits().HandshakeTimeout}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: currentLimits().HandshakeTimeout}
 	log.Println("✅ WebSocket Server started on ws://localhost:8081")
 
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("❌ WebSocket server error: %v", err)
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- srv.Serve(listener) }()
+	select {
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownClientWriters(timeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			_ = srv.Close()
+			return err
+		}
+		err := <-serverErr
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
 	}
 }
 
@@ -69,7 +104,6 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		log.Println("❌ WebSocket upgrade failed:", err)
 		return
 	}
-	defer conn.Close()
 	registerClientWriter(conn)
 	defer unregisterClientWriter(conn)
 	conn.SetReadLimit(int64(lim.MaxFramePreAuth))

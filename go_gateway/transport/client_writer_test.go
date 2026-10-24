@@ -3,7 +3,6 @@
 package transport
 
 import (
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -261,7 +260,7 @@ func TestConcurrentWebSocketOutputsUseOneWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	var serverConn *websocket.Conn
 	waitUntil(t, func() bool {
@@ -335,14 +334,4 @@ func startTCPWriterHarness(t *testing.T) (net.Conn, net.Conn, <-chan struct{}) {
 	}()
 	time.Sleep(10 * time.Millisecond)
 	return server, peer, done
-}
-
-func writeFramed(t *testing.T, conn net.Conn, body []byte) {
-	t.Helper()
-	frame := make([]byte, 4+len(body))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(body)))
-	copy(frame[4:], body)
-	if _, err := conn.Write(frame); err != nil {
-		t.Fatal(err)
-	}
 }

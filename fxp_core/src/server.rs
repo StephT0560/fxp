@@ -22,9 +22,10 @@
 
 use prost::Message;
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::net::tcp::OwnedReadHalf;
@@ -147,14 +148,13 @@ impl ClientTx {
     }
 
     fn try_send_frame(&self, frame: Vec<u8>) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.frames.try_send(frame) {
-            if !self
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.frames.try_send(frame)
+            && !self
                 .slow_reported
                 .swap(true, std::sync::atomic::Ordering::Relaxed)
-            {
-                tracing::warn!("critical output queue full; disconnecting slow consumer");
-                self.slow.notify_one();
-            }
+        {
+            tracing::warn!("critical output queue full; disconnecting slow consumer");
+            self.slow.notify_one();
         }
     }
 
@@ -224,6 +224,7 @@ enum SymbolMsg {
 #[derive(Clone)]
 struct SymbolRouter {
     channels: Arc<Mutex<HashMap<String, mpsc::Sender<SymbolMsg>>>>,
+    tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     schedule: Option<SessionSchedule>,
     stp_default: StpMode,
     persistence: Option<Persistence>,
@@ -235,6 +236,7 @@ impl SymbolRouter {
     fn new(schedule: Option<SessionSchedule>) -> Self {
         Self {
             channels: Arc::new(Mutex::new(HashMap::new())),
+            tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             schedule,
             stp_default: StpMode::None,
             persistence: None,
@@ -251,6 +253,11 @@ impl SymbolRouter {
 
     async fn get_existing(&self, symbol: &str) -> Option<mpsc::Sender<SymbolMsg>> {
         self.channels.lock().await.get(symbol).cloned()
+    }
+
+    async fn stop_symbols(&self) -> Vec<tokio::task::JoinHandle<()>> {
+        self.channels.lock().await.clear();
+        std::mem::take(&mut *self.tasks.lock().expect("symbol task list lock poisoned"))
     }
 
     async fn get_or_admit(&self, symbol: &str) -> Result<mpsc::Sender<SymbolMsg>, &'static str> {
@@ -314,13 +321,17 @@ impl SymbolRouter {
         let sym = symbol.to_string();
         // Spawn while holding the lock to guarantee the entry is visible
         // before any message can be dispatched to this symbol.
-        tokio::spawn(scheduled_order_book_task(
+        let task = tokio::spawn(scheduled_order_book_task(
             sym,
             rx,
             self.schedule,
             self.stp_default,
             self.persistence.clone(),
         ));
+        self.tasks
+            .lock()
+            .expect("symbol task list lock poisoned")
+            .push(task);
         tx
     }
 }
@@ -566,15 +577,38 @@ fn snapshot_frame(book: &OrderBook) -> Vec<u8> {
 
 // ── TCP connection handler ────────────────────────────────────────────────────
 
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
+struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
 
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
-        self.0.abort();
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
     }
 }
 
+impl AbortOnDrop {
+    fn detach(mut self) -> tokio::task::JoinHandle<()> {
+        self.0.take().expect("writer handle present")
+    }
+}
+
+#[cfg(test)]
 async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) {
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (writer_tx, mut writer_rx) = mpsc::unbounded_channel();
+    handle_tcp_client_with_shutdown(stream, router, shutdown_rx, writer_tx).await;
+    while let Ok(writer) = writer_rx.try_recv() {
+        writer.abort();
+    }
+}
+
+async fn handle_tcp_client_with_shutdown(
+    stream: tokio::net::TcpStream,
+    router: SymbolRouter,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    writer_tasks: mpsc::UnboundedSender<tokio::task::JoinHandle<()>>,
+) {
     tracing::info!("New TCP client connected.");
 
     let (mut read_half, write_half) = stream.into_split();
@@ -603,17 +637,17 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                     }
                 },
             };
-            if let Some(frame) = frame {
-                if w.write_all(&frame).await.is_err() {
-                    break;
-                }
+            if let Some(frame) = frame
+                && w.write_all(&frame).await.is_err()
+            {
+                break;
             }
         }
         tracing::debug!("Write task exiting for connection");
     });
     // When the client leaves, drop its receiver so reports for its resting
     // orders fail fast instead of filling a channel nobody drains.
-    let _writer = AbortOnDrop(writer);
+    let mut writer_guard = Some(AbortOnDrop(Some(writer)));
 
     // Read loop: dispatches frames to symbol tasks, never blocks on processing.
     loop {
@@ -622,6 +656,15 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
             _ = output_tx.slow.notified() => {
                 tracing::warn!("disconnecting slow consumer after critical output overflow");
                 return;
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    if let Some(writer) = writer_guard.take() {
+                        let _ = writer_tasks.send(writer.detach());
+                    }
+                    return;
+                }
+                continue;
             }
             body = read_framed_message(&mut read_half) => match body {
                 Ok(b) => b,
@@ -792,6 +835,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn server_reject(
     order_id: &str,
     symbol: &str,
@@ -921,7 +965,7 @@ async fn accept_client(listener: &TcpListener) -> std::io::Result<tokio::net::Tc
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-pub async fn start_server() {
+pub async fn start_server(shutdown: impl Future<Output = ()> + Send) -> Result<(), String> {
     let schedule = match std::env::var("FXP_SESSION_SCHEDULE") {
         Ok(value) => parse_session_schedule(Some(&value)),
         Err(std::env::VarError::NotPresent) => parse_session_schedule(None),
@@ -982,23 +1026,116 @@ pub async fn start_server() {
 
     tracing::info!("FXP Core running on 127.0.0.1:8080");
     tracing::info!("Architecture: per-symbol tasks + lock-free output channels");
+    run_server_with_router(listener, router, shutdown, shutdown_timeout()).await
+}
 
+pub async fn run_server(
+    listener: TcpListener,
+    shutdown: impl Future<Output = ()> + Send,
+) -> Result<(), String> {
+    run_server_with_router(
+        listener,
+        SymbolRouter::new(None),
+        shutdown,
+        shutdown_timeout(),
+    )
+    .await
+}
+
+fn shutdown_timeout() -> Duration {
+    let value = read_optional_env("FXP_SHUTDOWN_TIMEOUT_SEC").unwrap_or_else(|error| {
+        tracing::error!("{error}");
+        std::process::exit(1);
+    });
+    match value {
+        None => Duration::from_secs(5),
+        Some(value) => match value.parse::<u64>() {
+            Ok(seconds) if seconds > 0 => Duration::from_secs(seconds),
+            _ => {
+                tracing::error!("FXP_SHUTDOWN_TIMEOUT_SEC must be a positive integer");
+                std::process::exit(1);
+            }
+        },
+    }
+}
+
+async fn run_server_with_router<F>(
+    listener: TcpListener,
+    router: SymbolRouter,
+    shutdown: F,
+    timeout: Duration,
+) -> Result<(), String>
+where
+    F: Future<Output = ()> + Send,
+{
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (writer_tx, mut writer_rx) = mpsc::unbounded_channel();
+    let mut handlers = tokio::task::JoinSet::new();
+    tokio::pin!(shutdown);
     let mut backoff = ACCEPT_BACKOFF_MIN;
     loop {
-        match accept_client(&listener).await {
-            Ok(stream) => {
-                backoff = ACCEPT_BACKOFF_MIN;
-                let router_clone = router.clone();
-                tokio::spawn(async move {
-                    handle_tcp_client(stream, router_clone).await;
-                });
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => break,
+            accepted = accept_client(&listener) => match accepted {
+                Ok(stream) => {
+                    backoff = ACCEPT_BACKOFF_MIN;
+                    let router_clone = router.clone();
+                    let shutdown = shutdown_rx.clone();
+                    let writers = writer_tx.clone();
+                    handlers.spawn(async move {
+                        handle_tcp_client_with_shutdown(stream, router_clone, shutdown, writers).await;
+                    });
+                }
+                // Transient errors (EMFILE, ECONNABORTED, ...) do not kill the server.
+                Err(e) => {
+                    tracing::error!("accept failed: {e}; retrying in {backoff:?}");
+                    tokio::time::sleep(backoff).await;
+                    backoff = next_accept_backoff(backoff);
+                }
             }
-            // Transient errors (EMFILE, ECONNABORTED, ...) must not kill the server.
-            Err(e) => {
-                tracing::error!("accept failed: {e}; retrying in {backoff:?}");
-                tokio::time::sleep(backoff).await;
-                backoff = next_accept_backoff(backoff);
+        }
+    }
+
+    drop(listener);
+    let _ = shutdown_tx.send(true);
+    drop(writer_tx);
+    let drain = async {
+        while let Some(result) = handlers.join_next().await {
+            if let Err(error) = result {
+                tracing::error!("client task failed during shutdown: {error}");
             }
+        }
+        for task in router.stop_symbols().await {
+            if let Err(error) = task.await {
+                tracing::error!("symbol task failed during shutdown: {error}");
+            }
+        }
+        let mut writers = Vec::new();
+        while let Some(writer) = writer_rx.recv().await {
+            writers.push(writer);
+        }
+        for writer in writers {
+            if let Err(error) = writer.await {
+                tracing::error!("client writer failed during shutdown: {error}");
+            }
+        }
+        if let Some(persistence) = &router.persistence {
+            persistence
+                .lock()
+                .unwrap_or_else(|error| persistence_failure(error))
+                .sync()
+                .unwrap_or_else(|error| persistence_failure(error));
+        }
+    };
+    match tokio::time::timeout(timeout, drain).await {
+        Ok(()) => {
+            tracing::info!("core shutdown completed");
+            Ok(())
+        }
+        Err(_) => {
+            tracing::error!("core shutdown timed out; abandoning unfinished work");
+            Err("core shutdown timed out".into())
         }
     }
 }
@@ -2552,5 +2689,28 @@ mod snapshot_tests {
         let (b, s) = (fxp::OrderSide::Buy as i32, fxp::OrderSide::Sell as i32);
         assert_eq!(lv(&snap.bid_levels), vec![(1000, 10, b), (990, 20, b)]);
         assert_eq!(lv(&snap.ask_levels), vec![(1010, 30, s), (1020, 40, s)]);
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn run_server_stops_handlers_and_listener_after_shutdown() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(run_server(listener, async move {
+            let _ = shutdown_rx.await;
+        }));
+        let _client = tokio::net::TcpStream::connect(address).await.unwrap();
+        let _ = shutdown_tx.send(());
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("server shutdown timed out")
+            .expect("server task panicked")
+            .expect("server shutdown failed");
+        assert!(tokio::net::TcpStream::connect(address).await.is_err());
     }
 }

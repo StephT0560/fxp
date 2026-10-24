@@ -186,6 +186,21 @@ func InitPool() error {
 	return initErr
 }
 
+func ShutdownPool() {
+	if corePool == nil {
+		return
+	}
+	for range poolSize {
+		select {
+		case connection := <-corePool:
+			connection.shutdown()
+		default:
+			log.Printf("core connection pool shutdown left in-use connections")
+			return
+		}
+	}
+}
+
 // acquire blocks until a pool connection is available.
 func acquire() *pooledConn { return <-corePool }
 

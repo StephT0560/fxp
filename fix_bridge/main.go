@@ -39,6 +39,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -46,8 +47,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"fix_bridge/codec"
@@ -73,6 +76,8 @@ var (
 func main() {
 	logging.Setup()
 	flag.Parse()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 
 	jwtSecret := os.Getenv("FXP_JWT_SECRET")
 	if jwtSecret == "" {
@@ -88,24 +93,49 @@ func main() {
 	if err != nil {
 		log.Fatalf("FIX session store: %v", err)
 	}
-	defer func() { _ = registry.Close() }()
 
 	listener, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
 		log.Fatalf("failed to listen on %s: %v", *listenAddr, err)
 	}
-	defer listener.Close()
-
 	log.Printf("🌉 FXP FIX Bridge listening on %s", *listenAddr)
 	log.Printf("   SenderCompID: %s", *bridgeCompID)
 	log.Printf("   Gateway:      127.0.0.1:8082")
 	log.Printf("   FXP_JWT_SECRET: set ✓")
 	log.Printf("   FIX CompIDs allowed: %d", len(creds))
 
-	acceptFIXClients(listener, fixMaxConnections(), func(conn net.Conn) {
-		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
-		handleFIXClient(conn, *bridgeCompID, jwtSecret, auth, registry)
-	})
+	sessions := newSessionTracker()
+	acceptDone := make(chan struct{})
+	go func() {
+		acceptFIXClientsContext(ctx, listener, fixMaxConnections(), func(conn net.Conn) {
+			log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
+			handleFIXClient(conn, *bridgeCompID, jwtSecret, auth, registry, sessions)
+		})
+		close(acceptDone)
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Printf("received shutdown signal; draining FIX sessions")
+	case <-acceptDone:
+		log.Printf("FIX accept loop stopped; draining remaining sessions")
+	}
+	sessions.beginShutdown()
+	timeout := time.Duration(positiveIntEnv("FXP_SHUTDOWN_TIMEOUT_SEC", 5)) * time.Second
+	timer := time.NewTimer(timeout)
+	select {
+	case <-acceptDone:
+		timer.Stop()
+	case <-timer.C:
+		log.Printf("FIX session shutdown exceeded %v; closing remaining sessions", timeout)
+		sessions.closeAll()
+		<-acceptDone
+	}
+	if err := registry.Close(); err != nil {
+		log.Printf("FIX session store shutdown failed: %v", err)
+		os.Exit(1)
+	}
+	log.Printf("FIX bridge shutdown completed")
 }
 
 // newSessionRegistry keeps FIX session state (sequence numbers, sent messages)
@@ -165,19 +195,40 @@ func fixMaxConnections() int {
 }
 
 func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net.Conn)) {
+	acceptFIXClientsContext(context.Background(), listener, maxConnections, handle)
+}
+
+func acceptFIXClientsContext(ctx context.Context, listener net.Listener, maxConnections int, handle func(net.Conn)) {
 	if maxConnections <= 0 {
 		maxConnections = 1
 	}
 	slots := make(chan struct{}, maxConnections)
+	var handlers sync.WaitGroup
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = listener.Close()
+		case <-stopped:
+		}
+	}()
+	defer close(stopped)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				handlers.Wait()
+				return
+			}
 			log.Printf("accept error: %v", err)
+			handlers.Wait()
 			return
 		}
 		select {
 		case slots <- struct{}{}:
+			handlers.Add(1)
 			go func(conn net.Conn) {
+				defer handlers.Done()
 				// Free the slot before closing so a client that sees EOF can reconnect immediately.
 				defer func() {
 					<-slots
@@ -192,12 +243,73 @@ func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net
 	}
 }
 
+type sessionTracker struct {
+	mu       sync.Mutex
+	sessions map[*session.Session]struct{}
+	stopping bool
+}
+
+func newSessionTracker() *sessionTracker {
+	return &sessionTracker{sessions: make(map[*session.Session]struct{})}
+}
+
+func (t *sessionTracker) track(sess *session.Session) {
+	t.mu.Lock()
+	t.sessions[sess] = struct{}{}
+	stopping := t.stopping
+	t.mu.Unlock()
+	if stopping {
+		t.requestShutdown(sess)
+	}
+}
+
+func (t *sessionTracker) untrack(sess *session.Session) {
+	t.mu.Lock()
+	delete(t.sessions, sess)
+	t.mu.Unlock()
+}
+
+func (t *sessionTracker) beginShutdown() {
+	t.mu.Lock()
+	t.stopping = true
+	sessions := make([]*session.Session, 0, len(t.sessions))
+	for sess := range t.sessions {
+		sessions = append(sessions, sess)
+	}
+	t.mu.Unlock()
+	for _, sess := range sessions {
+		t.requestShutdown(sess)
+	}
+}
+
+func (t *sessionTracker) closeAll() {
+	t.mu.Lock()
+	sessions := make([]*session.Session, 0, len(t.sessions))
+	for sess := range t.sessions {
+		sessions = append(sessions, sess)
+	}
+	t.mu.Unlock()
+	for _, sess := range sessions {
+		sess.Close()
+	}
+}
+
+func (t *sessionTracker) requestShutdown(sess *session.Session) {
+	switch sess.State() {
+	case session.StateLoggedOn:
+		sess.Logout("server shutdown")
+	case session.StateLoggingOut:
+	default:
+		sess.Close()
+	}
+}
+
 // ── Per-client handler ────────────────────────────────────────────────────────
 
 // handleFIXClient runs the full lifecycle for one FIX client connection.
 // Creates a session, a gateway client, wires them together, and blocks
 // until the FIX session ends.
-func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session.Authenticator, registry *session.Registry) {
+func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session.Authenticator, registry *session.Registry, sessions *sessionTracker) {
 	// The bridge handler implements session.Handler.
 	// It holds references to both the session (to send FIX frames back)
 	// and the gateway client (to forward orders).
@@ -214,6 +326,8 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 	sess.Auth = auth
 	sess.Registry = registry
 	h.sess = sess
+	sessions.track(sess)
+	defer sessions.untrack(sess)
 
 	// Run the session (blocks until disconnect)
 	sess.Run()

@@ -84,6 +84,57 @@ func TestAcceptFIXClientsConnectionLimit(t *testing.T) {
 	}
 }
 
+func TestSessionTrackerInitiatesLogout(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = client.Close() }()
+	sess := session.NewSession(server, "FXPBRIDGE", shutdownTestHandler{})
+	sess.Auth = session.NewCredentialAuth(map[string]string{"GRACE01": "test"})
+	sess.LogoutTimeout = time.Second
+	done := make(chan struct{})
+	go func() {
+		sess.Run()
+		close(done)
+	}()
+	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := client.Write(codec.NewBuilder(codec.MsgTypeLogon, "GRACE01", "FXPBRIDGE", 1).
+		SetInt(codec.TagEncryptMethod, 0).
+		SetInt(codec.TagHeartBtInt, 30).
+		Set(codec.TagPassword, "test").
+		Build()); err != nil {
+		t.Fatal(err)
+	}
+	parser := codec.NewParser(client)
+	if _, err := parser.ReadMessage(); err != nil {
+		t.Fatalf("read Logon acknowledgement: %v", err)
+	}
+
+	tracker := newSessionTracker()
+	tracker.track(sess)
+	tracker.beginShutdown()
+	logout, err := parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("read server Logout: %v", err)
+	}
+	if logout.MsgType() != codec.MsgTypeLogout || logout.Get(codec.TagText) != "server shutdown" {
+		t.Fatalf("Logout = %v, want server-shutdown Logout", logout)
+	}
+	if _, err := client.Write(codec.NewBuilder(codec.MsgTypeLogout, "GRACE01", "FXPBRIDGE", 2).Build()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not finish after Logout exchange")
+	}
+	tracker.untrack(sess)
+}
+
+type shutdownTestHandler struct{}
+
+func (shutdownTestHandler) Handle(*codec.Message, *session.Session) {}
+func (shutdownTestHandler) OnLogon(*session.Session)                {}
+func (shutdownTestHandler) OnLogout(*session.Session, string)       {}
+
 // seqTestHandler drives the real bridgeHandler.onFXPMessage path without a
 // gateway connection.
 type seqTestHandler struct {
@@ -155,7 +206,7 @@ func TestAuctionPayloadsIgnoredWithoutBreakingSession(t *testing.T) {
 func TestOutboundSeqSingleCounter(t *testing.T) {
 	const reports = 50
 	srv, cli := net.Pipe()
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	h := &seqTestHandler{bridgeHandler: &bridgeHandler{bridgeCompID: "FXPBRIDGE"}}
 	h.onLogon = func() {
@@ -208,7 +259,7 @@ func TestOutboundSeqSingleCounter(t *testing.T) {
 // silently dropped: before the gateway client exists and after it closed.
 func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	srv, cli := net.Pipe()
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 	h := &seqTestHandler{bridgeHandler: &bridgeHandler{bridgeCompID: "FXPBRIDGE"}, onLogon: func() {}}
 	sess := session.NewSession(srv, "FXPBRIDGE", h)
 	sess.Auth = session.NewCredentialAuth(map[string]string{"TESTFIRM01": "pw"})
@@ -286,7 +337,7 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 // valid FIX ExecutionReport; they must reach the client as OrderCancelReject.
 func TestCancelRequestRejectsBecomeOrderCancelReject(t *testing.T) {
 	srv, cli := net.Pipe()
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 	loggedOn := make(chan struct{})
 	h := &seqTestHandler{bridgeHandler: &bridgeHandler{bridgeCompID: "FXPBRIDGE"}, onLogon: func() { close(loggedOn) }}
 	sess := session.NewSession(srv, "FXPBRIDGE", h)

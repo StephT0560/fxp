@@ -17,6 +17,8 @@ services:
     <<: *image
     build: .
     command: ["fxp_core"]
+    init: true
+    stop_grace_period: 15s
     environment:
       - RUST_LOG=${RUST_LOG:-info}
       - FXP_SESSION_SCHEDULE
@@ -24,6 +26,7 @@ services:
       - FXP_STP_DEFAULT
       - FXP_SYMBOLS
       - FXP_MAX_SYMBOLS
+      - FXP_SHUTDOWN_TIMEOUT_SEC=${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
     volumes:
       - core_store:/data/core_store
     ports:
@@ -39,6 +42,8 @@ services:
   gateway:
     <<: *image
     command: ["go_gateway"]
+    init: true
+    stop_grace_period: 15s
     network_mode: "service:core"
     depends_on:
       core:
@@ -56,10 +61,13 @@ services:
       FXP_GW_CLIENT_QUEUE: ${FXP_GW_CLIENT_QUEUE:-8192}
       FXP_GW_MD_QUEUE: ${FXP_GW_MD_QUEUE:-4096}
       FXP_LOG_LEVEL: ${FXP_LOG_LEVEL:-info}
+      FXP_SHUTDOWN_TIMEOUT_SEC: ${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
 
   bridge:
     <<: *image
     command: ["fix_bridge"]
+    init: true
+    stop_grace_period: 15s
     network_mode: "service:core"
     depends_on:
       gateway:
@@ -73,6 +81,7 @@ services:
       FXP_FIX_STORE_DIR: /data/fix_store
       FXP_FIX_STORE_FSYNC: ${FXP_FIX_STORE_FSYNC:-strict}
       FXP_LOG_LEVEL: ${FXP_LOG_LEVEL:-info}
+      FXP_SHUTDOWN_TIMEOUT_SEC: ${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
     volumes:
       - fix_store:/data/fix_store
 

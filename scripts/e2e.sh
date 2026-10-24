@@ -18,13 +18,15 @@ mkdir -p "$log_dir" "$repo_root/bin"
 
 export FXP_JWT_SECRET="${FXP_JWT_SECRET:-dev-secret-change-in-production}"
 export FXP_FIX_PASSWORD="${FXP_FIX_PASSWORD:-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
-export FXP_FIX_CREDENTIALS="${FXP_FIX_CREDENTIALS:-TESTFIRM01:$FXP_FIX_PASSWORD,VICTIM01:$FXP_FIX_PASSWORD,ATTACKER01:$FXP_FIX_PASSWORD,SEQCHECK01:$FXP_FIX_PASSWORD,MDCHECK01:$FXP_FIX_PASSWORD,DURABLE01:$FXP_FIX_PASSWORD,MASSCXL01:$FXP_FIX_PASSWORD,CODTEST01:$FXP_FIX_PASSWORD,CODCHK01:$FXP_FIX_PASSWORD}"
+export FXP_FIX_CREDENTIALS="${FXP_FIX_CREDENTIALS:-TESTFIRM01:$FXP_FIX_PASSWORD,VICTIM01:$FXP_FIX_PASSWORD,ATTACKER01:$FXP_FIX_PASSWORD,SEQCHECK01:$FXP_FIX_PASSWORD,MDCHECK01:$FXP_FIX_PASSWORD,DURABLE01:$FXP_FIX_PASSWORD,MASSCXL01:$FXP_FIX_PASSWORD,CODTEST01:$FXP_FIX_PASSWORD,CODCHK01:$FXP_FIX_PASSWORD,GRACE01:$FXP_FIX_PASSWORD,GRACE02:$FXP_FIX_PASSWORD}"
 if [[ -z "${FXP_FIX_STORE_DIR:-}" ]]; then
     export FXP_FIX_STORE_DIR="$log_dir/fix_store"
     rm -rf "$FXP_FIX_STORE_DIR"
 fi
 export FXP_E2E_DURABLE_STATE="$log_dir/durable.state"
 rm -f "$FXP_E2E_DURABLE_STATE"
+export FXP_E2E_GRACE_STATE="$log_dir/graceful.state"
+rm -f "$FXP_E2E_GRACE_STATE"
 
 for port in 8080 8081 8082 8083; do
     if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
@@ -37,8 +39,12 @@ done
 (cd "$repo_root/go_gateway" && go build -o "$repo_root/bin/go_gateway" .)
 (cd "$repo_root/fix_bridge" && go build -o "$repo_root/bin/fix_bridge" .)
 
-pids=()
-cleanup() { for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; wait 2>/dev/null || true; }
+cleanup() {
+    for pid in $(jobs -pr); do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    wait 2>/dev/null || true
+}
 trap cleanup EXIT
 
 wait_for_port() {
@@ -51,13 +57,12 @@ wait_for_port() {
 }
 
 (cd "$repo_root/fxp_core" && exec env -u FXP_EVENT_LOG ./target/release/fxp_core) >"$log_dir/core.log" 2>&1 &
-core_pid=$!; pids+=("$core_pid"); wait_for_port 8080
+core_pid=$!; wait_for_port 8080
 (cd "$repo_root/go_gateway" && exec "$repo_root/bin/go_gateway") >"$log_dir/gateway.log" 2>&1 &
-gateway_pid=$!; pids+=("$gateway_pid"); wait_for_port 8082
+gateway_pid=$!; wait_for_port 8082
 start_bridge() {
     (cd "$repo_root/fix_bridge" && exec "$repo_root/bin/fix_bridge") >>"$log_dir/bridge.log" 2>&1 &
     bridge_pid=$!
-    pids+=("$bridge_pid")
     wait_for_port 8083
 }
 : >"$log_dir/bridge.log"
@@ -85,21 +90,53 @@ cat "$log_dir/durable_before.log"
 [[ $client_ok -eq 0 ]]
 durable durable_after_restart | tee "$log_dir/durable_after.log"
 
+# Graceful FIX shutdown: persist a filled order, request Logout with SIGTERM,
+# restart the bridge and verify sequence and ExecutionID resend continuity.
+python3 "$repo_root/fix_test_client/fix_client.py" --sender GRACE01 --test graceful_shutdown >"$log_dir/graceful_client.log" 2>&1 &
+grace_client_pid=$!
+for _ in $(seq 1 100); do [[ -s "$FXP_E2E_GRACE_STATE" ]] && break; sleep 0.1; done
+[[ -s "$FXP_E2E_GRACE_STATE" ]]
+python3 "$repo_root/fix_test_client/fix_client.py" --sender GRACE02 --test graceful_fill | tee "$log_dir/graceful_fill.log"
+for _ in $(seq 1 100); do grep -q '"exec_id"' "$FXP_E2E_GRACE_STATE" 2>/dev/null && break; sleep 0.1; done
+kill -TERM "$bridge_pid"
+bridge_exit=0
+wait "$bridge_pid" || bridge_exit=$?
+[[ $bridge_exit -eq 0 ]]
+client_exit=0
+wait "$grace_client_pid" || client_exit=$?
+[[ $client_exit -eq 0 ]]
+grep -q 'received server Logout' "$log_dir/graceful_client.log"
+start_bridge
+python3 "$repo_root/fix_test_client/fix_client.py" --sender GRACE01 --test graceful_after_restart | tee "$log_dir/graceful_after_restart.log"
+
 # Exercise core persistence directly: gateway orderClientMap is intentionally
 # not recovered. Never reuse an operator's FXP_EVENT_LOG for this test.
-kill "$bridge_pid" "$gateway_pid" "$core_pid"
-wait "$bridge_pid" "$gateway_pid" "$core_pid" 2>/dev/null || true
+kill -TERM "$bridge_pid" "$gateway_pid"
+bridge_exit=0
+gateway_exit=0
+wait "$bridge_pid" || bridge_exit=$?
+wait "$gateway_pid" || gateway_exit=$?
+[[ $bridge_exit -eq 0 && $gateway_exit -eq 0 ]]
+kill -TERM "$core_pid"
+core_exit=0
+wait "$core_pid" || core_exit=$?
+[[ $core_exit -eq 0 ]]
 event_log="$log_dir/core-restart-events.log"
 rm -f "$event_log"
 start_persistent_core() {
     (cd "$repo_root/fxp_core" && exec env -u FXP_SESSION_SCHEDULE FXP_EVENT_LOG="$event_log" ./target/release/fxp_core) >>"$log_dir/core-persistence.log" 2>&1 &
     core_pid=$!
-    pids+=("$core_pid")
     wait_for_port 8080
 }
 start_persistent_core
 (cd "$repo_root/go_gateway" && go run ./test_clients/persistence_client seed)
-kill -9 "$core_pid"
-wait "$core_pid" 2>/dev/null || true
+kill -TERM "$core_pid"
+core_exit=0
+wait "$core_pid" || core_exit=$?
+[[ $core_exit -eq 0 ]]
 start_persistent_core
 (cd "$repo_root/go_gateway" && go run ./test_clients/persistence_client verify)
+kill -TERM "$core_pid"
+core_exit=0
+wait "$core_pid" || core_exit=$?
+[[ $core_exit -eq 0 ]]

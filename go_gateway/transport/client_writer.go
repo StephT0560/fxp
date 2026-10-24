@@ -12,6 +12,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -27,8 +28,11 @@ type clientWriter struct {
 	critical  chan []byte
 	md        chan []byte
 	stopped   chan struct{}
+	draining  chan struct{}
 	finished  chan struct{}
 	stopOnce  sync.Once
+	drainOnce sync.Once
+	enqueueMu sync.RWMutex
 	mdDropped atomic.Uint64
 }
 
@@ -41,6 +45,7 @@ func registerClientWriter(conn any) *clientWriter {
 		critical: make(chan []byte, lim.ClientQueue),
 		md:       make(chan []byte, lim.MDQueue),
 		stopped:  make(chan struct{}),
+		draining: make(chan struct{}),
 		finished: make(chan struct{}),
 	}
 	if old, loaded := clientWriters.Swap(conn, writer); loaded {
@@ -56,10 +61,60 @@ func unregisterClientWriter(conn any) {
 	}
 }
 
+func shutdownClientWriters(timeout time.Duration) {
+	var writers []*clientWriter
+	clientWriters.Range(func(_, value any) bool {
+		writer := value.(*clientWriter)
+		writers = append(writers, writer)
+		writer.drain()
+		return true
+	})
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for _, writer := range writers {
+		select {
+		case <-writer.finished:
+		case <-timer.C:
+			log.Printf("client writers did not stop within %v", timeout)
+			for _, pending := range writers {
+				pending.forceStop()
+			}
+			return
+		}
+	}
+}
+
 func (w *clientWriter) stop() {
+	select {
+	case <-w.draining:
+		return
+	default:
+		w.forceStop()
+	}
+}
+
+func (w *clientWriter) forceStop() {
 	w.stopOnce.Do(func() {
 		close(w.stopped)
 		closeConn(w.conn)
+	})
+}
+
+func (w *clientWriter) drain() {
+	w.drainOnce.Do(func() {
+		w.enqueueMu.Lock()
+		close(w.draining)
+		switch conn := w.conn.(type) {
+		case net.Conn:
+			if tcp, ok := conn.(*net.TCPConn); ok {
+				_ = tcp.CloseRead()
+			} else {
+				_ = conn.SetReadDeadline(time.Now())
+			}
+		case *websocket.Conn:
+			_ = conn.SetReadDeadline(time.Now())
+		}
+		w.enqueueMu.Unlock()
 	})
 }
 
@@ -67,14 +122,18 @@ func (w *clientWriter) fail(err error) {
 	if err != nil {
 		log.Printf("client writer failed (%T): %v", w.conn, err)
 	}
-	w.stop()
+	w.forceStop()
 	clientWriters.CompareAndDelete(w.conn, w)
 }
 
 func (w *clientWriter) enqueue(raw []byte, marketData bool) error {
+	w.enqueueMu.RLock()
+	defer w.enqueueMu.RUnlock()
 	data := append([]byte(nil), raw...)
 	select {
 	case <-w.stopped:
+		return net.ErrClosed
+	case <-w.draining:
 		return net.ErrClosed
 	default:
 	}
@@ -85,6 +144,8 @@ func (w *clientWriter) enqueue(raw []byte, marketData bool) error {
 	}
 	select {
 	case <-w.stopped:
+		return net.ErrClosed
+	case <-w.draining:
 		return net.ErrClosed
 	case queue <- data:
 		return nil
@@ -101,10 +162,33 @@ func (w *clientWriter) enqueue(raw []byte, marketData bool) error {
 
 func (w *clientWriter) run() {
 	defer close(w.finished)
+	draining := false
 	for {
+		if draining {
+			select {
+			case raw := <-w.critical:
+				if err := w.write(raw); err != nil {
+					w.fail(err)
+					return
+				}
+			case raw := <-w.md:
+				if err := w.write(raw); err != nil {
+					w.fail(err)
+					return
+				}
+			default:
+				closeConn(w.conn)
+				clientWriters.CompareAndDelete(w.conn, w)
+				return
+			}
+			continue
+		}
 		select {
 		case <-w.stopped:
 			return
+		case <-w.draining:
+			draining = true
+			continue
 		case raw := <-w.critical:
 			if err := w.write(raw); err != nil {
 				w.fail(err)
@@ -116,6 +200,8 @@ func (w *clientWriter) run() {
 		select {
 		case <-w.stopped:
 			return
+		case <-w.draining:
+			draining = true
 		case raw := <-w.critical:
 			if err := w.write(raw); err != nil {
 				w.fail(err)

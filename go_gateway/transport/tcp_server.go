@@ -3,11 +3,13 @@
 package transport
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"log"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 
 	"go_gateway/protobuf"
@@ -17,24 +19,49 @@ import (
 )
 
 func StartTCPServer() {
+	if err := RunTCPServer(context.Background()); err != nil {
+		log.Fatalf("❌ TCP server stopped: %v", err)
+	}
+}
+
+func RunTCPServer(ctx context.Context) error {
 	if err := InitPool(); err != nil {
-		log.Fatalf("❌ Failed to initialise FXP Core connection pool: %v", err)
+		return err
 	}
 	listener, err := net.Listen("tcp", ":8082")
 	if err != nil {
-		log.Fatalf("❌ Failed to start TCP server: %v", err)
+		return err
 	}
 	defer listener.Close()
 	log.Println("✅ TCP Server started on 127.0.0.1:8082")
-	serveTCP(listener)
+	serveTCPContext(ctx, listener)
+	return nil
 }
 
 func serveTCP(listener net.Listener) {
+	serveTCPContext(context.Background(), listener)
+}
+
+func serveTCPContext(ctx context.Context, listener net.Listener) {
 	lim, conns := currentLimits(), tcpConnsP.Load()
+	var handlers sync.WaitGroup
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = listener.Close()
+		case <-stopped:
+		}
+	}()
+	defer close(stopped)
 	for {
 		clientConn, err := listener.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
+			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
+				if ctx.Err() != nil {
+					shutdownClientWriters(shutdownTimeout())
+				}
+				handlers.Wait()
 				return
 			}
 			log.Println("❌ Failed to accept TCP connection:", err)
@@ -45,16 +72,21 @@ func serveTCP(listener net.Listener) {
 			clientConn.Close()
 			continue
 		}
+		handlers.Add(1)
+		writer := registerClientWriter(clientConn)
 		go func() {
+			defer handlers.Done()
 			defer conns.release()
-			handleTCPClient(clientConn)
+			handleTCPClientWithWriter(clientConn, writer)
 		}()
 	}
 }
 
 func handleTCPClient(clientConn net.Conn) {
-	defer clientConn.Close()
-	registerClientWriter(clientConn)
+	handleTCPClientWithWriter(clientConn, registerClientWriter(clientConn))
+}
+
+func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 	defer unregisterClientWriter(clientConn)
 	lim := currentLimits()
 	sessionID := ""
