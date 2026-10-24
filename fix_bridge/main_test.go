@@ -269,7 +269,7 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	if m := next(); m.MsgType() != codec.MsgTypeBusinessMessageReject || m.Get(codec.TagRefMsgType) != "H" ||
 		m.Get(codec.TagRefSeqNum) != strconv.Itoa(seq) ||
 		m.Get(codec.TagBusinessRejectReason) != codec.BusinessRejectReasonUnsupportedMsgType ||
-		m.Get(codec.TagText) != "Unsupported MsgType H (OrderStatusRequest); supported: D, F, G, V" {
+		m.Get(codec.TagText) != "Unsupported MsgType H (OrderStatusRequest); supported: D, F, G, V, q" {
 		t.Fatalf("unsupported type: 35=%s 45=%s 372=%s 380=%s 58=%q", m.MsgType(), m.Get(codec.TagRefSeqNum),
 			m.Get(codec.TagRefMsgType), m.Get(codec.TagBusinessRejectReason), m.Get(codec.TagText))
 	}

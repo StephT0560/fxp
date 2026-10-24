@@ -39,6 +39,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -46,6 +47,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"fix_bridge/codec"
@@ -55,6 +57,8 @@ import (
 
 	"go_gateway/logging"
 	"go_gateway/protobuf"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -227,6 +231,52 @@ type bridgeHandler struct {
 	gwClient     *gateway.Client
 	pending      pendingRequests
 	md           mdSubscriptions
+	cod          codState
+}
+
+// codRequestID marks the bridge's own cancel-on-disconnect mass cancel.
+const codRequestID = "FXP-COD"
+
+// codTimeout bounds how long a closed COD session waits for its cancels.
+const codTimeout = 2 * time.Second
+
+// codState tracks the cancel-on-disconnect mass cancel sent when a COD
+// session ends; done closes once its report and all its canceled ERs arrived.
+type codState struct {
+	mu       sync.Mutex
+	active   bool
+	total    int // -1 until the report arrives
+	canceled int
+	done     chan struct{}
+}
+
+func (c *codState) start() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.active, c.total, c.canceled, c.done = true, -1, 0, make(chan struct{})
+	return c.done
+}
+
+// observe reports whether msg was the COD report, which is not forwarded.
+func (c *codState) observe(msg *protobuf.FXPMessage) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return false
+	}
+	consumed := false
+	if rep := msg.GetOrderMassCancelReport(); rep != nil && rep.ClientRequestId == codRequestID {
+		consumed = true
+		c.total = int(rep.TotalAffected)
+	} else if er := msg.GetExecutionReport(); er != nil &&
+		er.ExecutionType == protobuf.ExecutionType_EXEC_CANCELED && er.RejectReason == "cancel on disconnect" {
+		c.canceled++
+	}
+	if c.total >= 0 && c.canceled >= c.total {
+		c.active = false
+		close(c.done)
+	}
+	return consumed
 }
 
 // OnLogon is called by the session after Logon is accepted.
@@ -240,6 +290,7 @@ func (h *bridgeHandler) OnLogon(sess *session.Session) {
 	h.gwClient = gateway.NewClient(traderID, h.jwtSecret, func(msg *protobuf.FXPMessage) {
 		h.onFXPMessage(msg)
 	})
+	h.gwClient.CancelOnDisconnect = sess.CancelOnDisconnect
 
 	// Connect to gateway in a separate goroutine — Connect() blocks until disconnect.
 	go func() {
@@ -272,9 +323,47 @@ func sessionDurationEnv(name string, fallback time.Duration) time.Duration {
 
 // OnLogout is called by the session when the FIX client logs out or disconnects.
 func (h *bridgeHandler) OnLogout(sess *session.Session, reason string) {
+	if sess.CancelOnDisconnect {
+		log.Printf("[%s] OnLogout: %q — cancel-on-disconnect runs when the connection closes", sess.TargetCompID, reason)
+		return
+	}
 	log.Printf("[%s] OnLogout: %q — closing gateway connection", sess.TargetCompID, reason)
 	if h.gwClient != nil {
 		h.gwClient.Close()
+	}
+}
+
+// OnDisconnect runs after the FIX connection closed for any reason. For a
+// cancel-on-disconnect session it mass-cancels the trader's orders first; the
+// canceled ERs go through SendWithSeq, so a durable session stores them for
+// resend after reconnect. The gateway's own COD is the backstop if this
+// bridge's link to it fails.
+func (h *bridgeHandler) OnDisconnect(sess *session.Session) {
+	if h.gwClient == nil {
+		return
+	}
+	defer h.gwClient.Close()
+	if !sess.CancelOnDisconnect {
+		return
+	}
+	done := h.cod.start()
+	err := h.gwClient.Send(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderMassCancel{
+		OrderMassCancel: &protobuf.OrderMassCancelRequest{
+			Sender:          sess.TargetCompID,
+			ClientRequestId: codRequestID,
+			Reason:          protobuf.MassCancelReason_MASS_CANCEL_REASON_DISCONNECT,
+			Timestamp:       timestamppb.Now(),
+		},
+	}})
+	if err != nil {
+		log.Printf("[%s] cancel-on-disconnect not sent: %v (gateway COD applies)", sess.TargetCompID, err)
+		return
+	}
+	select {
+	case <-done:
+		log.Printf("[%s] cancel-on-disconnect complete", sess.TargetCompID)
+	case <-time.After(codTimeout):
+		log.Printf("[%s] cancel-on-disconnect: timed out waiting for cancels", sess.TargetCompID)
 	}
 }
 
@@ -300,6 +389,15 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 	fxpMsg, err := translator.TranslateFIXtoFXP(msg)
 	if err != nil {
 		slog.Warn("translation error", "session", sess.TargetCompID, "msg_type", msg.MsgType(), "err", err)
+		var mcErr *translator.MassCancelRejectError
+		if errors.As(err, &mcErr) {
+			sess.SendWithSeq(func(seq int) []byte {
+				return translator.MassCancelReport(h.bridgeCompID, sess.TargetCompID, seq,
+					msg.Get(codec.TagClOrdID), msg.Get(codec.TagMassCancelRequestType), msg.Get(codec.TagSymbol),
+					protobuf.OrderSide_ORDER_SIDE_UNSPECIFIED, 0, mcErr.Reason, mcErr.Text)
+			})
+			return
+		}
 		h.sendBusinessReject(msg, sess, err.Error())
 		return
 	}
@@ -331,6 +429,9 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 // onFXPMessage is called by the gateway client for every inbound FXP frame.
 // Translates the FXP message to FIX and delivers to the FIX client.
 func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
+	if h.cod.observe(msg) {
+		return
+	}
 	if rep := msg.GetExecutionReport(); rep != nil {
 		if req := h.pending.cancelRequestReject(rep); req != nil {
 			h.sess.SendWithSeq(func(seq int) []byte {
@@ -415,6 +516,7 @@ var supportedAppMsgTypes = map[string]bool{
 	codec.MsgTypeOrderCancelRequest:        true,
 	codec.MsgTypeOrderCancelReplaceRequest: true,
 	codec.MsgTypeMarketDataRequest:         true,
+	codec.MsgTypeOrderMassCancelRequest:    true,
 }
 
 // unsupportedMsgTypeNames names common FIX 4.4 requests for reject texts.
@@ -440,7 +542,7 @@ func buildUnsupportedReject(msg *codec.Message, bridgeCompID, targetCompID strin
 	}
 	b.Set(codec.TagRefMsgType, msg.MsgType())
 	b.Set(codec.TagBusinessRejectReason, codec.BusinessRejectReasonUnsupportedMsgType)
-	b.Set(codec.TagText, "Unsupported MsgType "+name+"; supported: D, F, G, V")
+	b.Set(codec.TagText, "Unsupported MsgType "+name+"; supported: D, F, G, V, q")
 	return b.Build()
 }
 
@@ -461,6 +563,9 @@ func fixRequestFor(m *protobuf.FXPMessage) *codec.Message {
 		f[codec.TagMsgType] = codec.MsgTypeOrderCancelReplaceRequest
 		f[codec.TagClOrdID] = p.OrderCancelReplace.ClientReplaceId
 		f[codec.TagOrigClOrdID] = p.OrderCancelReplace.OrderId
+	case *protobuf.FXPMessage_OrderMassCancel:
+		f[codec.TagMsgType] = codec.MsgTypeOrderMassCancelRequest
+		f[codec.TagClOrdID] = p.OrderMassCancel.ClientRequestId
 	default:
 		return nil
 	}

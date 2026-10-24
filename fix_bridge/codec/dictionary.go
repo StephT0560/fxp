@@ -27,6 +27,10 @@ var RequiredFields = map[string][]RequiredField{
 		{TagOrigClOrdID, "OrigClOrdID"}, {TagClOrdID, "ClOrdID"}, {TagSymbol, "Symbol"},
 		{TagSide, "Side"}, {TagTransactTime, "TransactTime"}, {TagOrdType, "OrdType"},
 	},
+	MsgTypeOrderMassCancelRequest: {
+		{TagClOrdID, "ClOrdID"}, {TagMassCancelRequestType, "MassCancelRequestType"},
+		{TagTransactTime, "TransactTime"},
+	},
 	MsgTypeMarketDataRequest: {
 		{TagMDReqID, "MDReqID"}, {TagSubscriptionRequestType, "SubscriptionRequestType"},
 		{TagMarketDepth, "MarketDepth"}, {TagNoMDEntryTypes, "NoMDEntryTypes"},

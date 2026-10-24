@@ -68,6 +68,8 @@ const (
 	MsgTypeMarketDataSnapshot        = "W"
 	MsgTypeMarketDataIncremental     = "X"
 	MsgTypeOrderStatusRequest        = "H" // not supported: answered with BusinessMessageReject
+	MsgTypeOrderMassCancelRequest    = "q"
+	MsgTypeOrderMassCancelReport     = "r"
 )
 
 // ── Session-level tags ────────────────────────────────────────────────────────
@@ -144,6 +146,20 @@ const (
 	TagOrdRejReason     = 103 // order reject reason code
 	TagCxlRejReason     = 102 // cancel reject reason code
 	TagCxlRejResponseTo = 434 // message type being rejected (1=OrderCancelRequest, 2=OrderCancelReplaceRequest)
+
+	// Self-match prevention (FIX 5.0 SP2, confirmed in the QuickFIX FIX50SP2 dictionary).
+	TagSelfMatchPreventionID          = 2362 // STP group; empty = the order owner
+	TagSelfMatchPreventionInstruction = 2964 // 1=cancel aggressive, 2=cancel passive, 3=both; 99=FXP decrement-and-cancel
+
+	// Mass cancel (35=q / 35=r).
+	TagMassCancelRequestType  = 530 // 1=by symbol, 7=all orders (others unsupported)
+	TagMassCancelResponse     = 531 // 0=rejected, otherwise echoes 530
+	TagMassCancelRejectReason = 532 // 0=not supported, 1=unknown security, 99=other
+	TagTotalAffectedOrders    = 533
+
+	// TagCancelOnDisconnect is an FXP user-defined Logon tag: Y cancels all of
+	// the session's live orders (including parked stops) when it disconnects.
+	TagCancelOnDisconnect = 8013
 )
 
 // ── Market data tags ──────────────────────────────────────────────────────────
@@ -202,6 +218,7 @@ const (
 	ExecTypeRejected    = "8"
 	ExecTypeExpired     = "C"
 	ExecTypeTrade       = "F" // FIX 4.4: any fill; partial vs full is in OrdStatus
+	ExecTypeRestated    = "D"
 )
 
 // ── OrdStatus values (tag 39) ─────────────────────────────────────────────────
