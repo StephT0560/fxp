@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -226,6 +227,39 @@ func TestLogonAuthentication(t *testing.T) {
 	})
 }
 
+func TestLogonRejectsOtherBeginString(t *testing.T) {
+	p := newPeer(t)
+	p.write(withBeginString(p.frame(codec.MsgTypeLogon, 1,
+		"98", "0", "108", "30"), "FIX.4.2"))
+
+	logout := p.expect(codec.MsgTypeLogout)
+	if got := logout.Get(codec.TagText); got != `unsupported BeginString "FIX.4.2"` {
+		t.Fatalf("rejected Logon reason = %q", got)
+	}
+	p.h.mu.Lock()
+	logons := p.h.logons
+	p.h.mu.Unlock()
+	if logons != 0 {
+		t.Fatalf("OnLogon called %d times for mismatched BeginString", logons)
+	}
+}
+
+func TestApplicationMessageRejectsOtherBeginString(t *testing.T) {
+	p := newPeer(t)
+	p.logon()
+	p.write(withBeginString(p.frame(codec.MsgTypeHeartbeat, 2), "FIX.4.2"))
+
+	logout := p.expect(codec.MsgTypeLogout)
+	if logout.Get(codec.TagText) == "" {
+		t.Fatal("mismatched BeginString Logout has no reason")
+	}
+	select {
+	case <-p.closed:
+	case <-time.After(time.Second):
+		t.Fatal("session remained open after BeginString mismatch")
+	}
+}
+
 func TestLogonResetSeqNumFlag(t *testing.T) {
 	p := newPeer(t)
 	if ack := p.logon("141", "Y"); ack.Get(codec.TagResetSeqNumFlag) != "Y" || ack.GetInt(codec.TagMsgSeqNum) != 1 {
@@ -235,6 +269,16 @@ func TestLogonResetSeqNumFlag(t *testing.T) {
 	if ack := p2.logon(); ack.Get(codec.TagResetSeqNumFlag) != "" {
 		t.Fatalf("LogonAck without 141=Y in Logon carries 141=%q", ack.Get(codec.TagResetSeqNumFlag))
 	}
+}
+
+func withBeginString(frame []byte, beginString string) []byte {
+	wire := strings.Replace(string(frame), "FIX.4.4", beginString, 1)
+	checksumStart := strings.LastIndex(wire, "10=")
+	sum := 0
+	for _, b := range []byte(wire[:checksumStart]) {
+		sum += int(b)
+	}
+	return []byte(wire[:checksumStart] + fmt.Sprintf("10=%03d\x01", sum%256))
 }
 
 func TestInboundSeqAdvancesForAdminMessages(t *testing.T) {
