@@ -103,7 +103,10 @@ fn mass_cancel_cancels_all_of_the_owners_orders_including_stops() {
     for (tx, r) in &c {
         assert_eq!(*tx, 1, "reports go to the order owner's connection");
         assert_eq!(r.order_status, fxp::OrderStatus::OrderCanceled as i32);
-        assert_eq!(r.client_order_id, "MC1");
+        assert_eq!(
+            r.client_order_id, "",
+            "each ER keeps the order's own id, not the request id MC1"
+        );
         assert_eq!(r.reject_reason, "mass cancel");
     }
     assert!(e.stop_book.is_empty());

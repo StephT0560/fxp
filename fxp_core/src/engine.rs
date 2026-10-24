@@ -55,7 +55,8 @@ pub struct MassCancelMsg {
     pub sender: String,
     /// `fxp::OrderSide`; 0 = both sides.
     pub side: i32,
-    /// Echoed as the reports' client_order_id when non-empty.
+    /// Echoed only on the mass-cancel report; each canceled order's ER keeps
+    /// that order's own client_order_id.
     pub client_request_id: String,
     /// `fxp::MassCancelReason`.
     pub reason: i32,
@@ -235,13 +236,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             Ok(fxp::MassCancelReason::Disconnect) => "cancel on disconnect",
             _ => "mass cancel",
         };
-        let client_order_id =
-            (!request.client_request_id.is_empty()).then_some(request.client_request_id.as_str());
         for (_, id) in &targets {
             let md = self.remove_live(id);
             let state = self.states.remove(id).expect("live order state");
             let ev = ReportEvent {
-                client_order_id,
                 reject_reason: reason,
                 ..ReportEvent::new(
                     fxp::ExecutionType::ExecCanceled,
