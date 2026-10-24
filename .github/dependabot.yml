@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /fxp_core
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directories:
+      - /go_gateway
+      - /fix_bridge
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

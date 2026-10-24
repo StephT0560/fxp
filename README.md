@@ -329,7 +329,7 @@ fxp/
 - [ ] Stop/StopLimit trigger on live last-trade-price feed
 - [ ] `OrderCancelRequest` / `OrderCancelReplaceRequest` full round-trip in simulation
 - [x] Release build benchmarks
-- [ ] CI/CD pipeline
+- [x] CI/CD pipeline (GitHub Actions: `.github/workflows/ci.yml`)
 - [ ] TLS support (infrastructure exists in proto; not yet wired)
 - [x] FIX 4.x bridge (inbound FIX → FXP translation layer)
 

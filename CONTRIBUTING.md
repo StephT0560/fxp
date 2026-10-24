@@ -20,6 +20,10 @@ make fmt        # cargo fmt + gofmt
 make lint       # clippy, go vet, golangci-lint (.golangci.yml)
 ```
 
+CI (`.github/workflows/ci.yml`) runs the same checks on every PR: `rust`,
+`cargo-deny`, `go (go_gateway)`, `go (fix_bridge)`, `e2e` and `proto`
+(buf lint, plus a breaking-change check against the base branch).
+
 Without `make`: see the commands in the `Makefile`; each target is a few
 plain `cargo`/`go` invocations. A `go.work` at the repo root covers both Go
 modules. Manual test clients live in `go_gateway/test_clients/tcp_client`

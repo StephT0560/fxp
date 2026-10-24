@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+version: v2
+lint:
+  use:
+    - STANDARD
+  except:
+    # Fixing these renames every generated Rust/Go identifier (and the
+    # package), so they are deferred to a dedicated schema PR.
+    - ENUM_VALUE_PREFIX
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - FILE
