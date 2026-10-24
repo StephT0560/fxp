@@ -18,14 +18,14 @@ FXP addresses all three:
 
 | Metric | FXP (Protobuf) | FIX 4.4 text | Improvement |
 |---|---|---|---|
-| `NewOrderSingle` size | 82 bytes | 164 bytes | **50% smaller** |
-| `ExecutionReport` size | 84 bytes | 192 bytes | **56% smaller** |
-| `MarketDataSnapshot` (5L) | 123 bytes | 331 bytes | **63% smaller, beats SBE** |
+| `NewOrderSingle` size | 86 bytes | 164 bytes | **48% smaller** |
+| `ExecutionReport` size | 91 bytes | 192 bytes | **53% smaller** |
+| `MarketDataSnapshot` (5L) | 134 bytes | 331 bytes | **60% smaller, beats SBE** |
 | Encode throughput | 10.9M msg/sec | 1.6M msg/sec | **6.7x faster** |
 | Decode throughput | 2.3M msg/sec | 335K msg/sec | **6.9x faster** |
 | Round-trip (encode+decode) | 527 ns | 3,606 ns | **6.8x faster** |
 
-End-to-end (order → ExecutionReport): **p50 21.8ms** at 50 concurrent senders in the release-build benchmark (Rust `--release`, Go `go build`); the debug-build measurement is 17ms.
+End-to-end (order → ExecutionReport): **p50 ≈ 0.45 ms, p99 ≈ 1.2–2.5 ms** at 50 concurrent senders × 25 orders/s in the release-build benchmark (Rust `--release`, Go `go build`, Linux; see [Benchmark Results](#benchmark-results)).
 
 ---
 
@@ -113,6 +113,9 @@ Custom firm extensions: field numbers 1000–1999 reserved per message.
 - Rust toolchain (`rustup`)
 - Go 1.25.0+ (the modules select Go 1.26.10)
 - `protoc` (the generation script installs the pinned `protoc-gen-go` plugin when needed)
+- Python 3 for the FIX end-to-end suite
+
+`scripts/gen_proto.sh` and `scripts/e2e.sh` need `go` on `PATH`; if it is not, they fall back to `/usr/local/go/bin/go` and fail with an error when neither exists.
 
 ### 1. Generate protobuf bindings
 
@@ -131,7 +134,7 @@ cd fxp_core/proto && mkdir -p ../../go_gateway/protobuf && protoc --go_out=../..
 ```bash
 cd fxp_core
 cargo run
-# 🚀 FXP Core running on 127.0.0.1:8080
+# INFO fxp_core::server: FXP Core running on 127.0.0.1:8080
 ```
 
 ### 3. Start Go Gateway
@@ -139,8 +142,8 @@ cargo run
 ```bash
 cd go_gateway
 export FXP_JWT_SECRET="dev-secret-change-in-production"
-go run main.go
-# ✅ TCP Server started on 127.0.0.1:8082
+go run .
+# level=INFO msg="✅ TCP Server started on 127.0.0.1:8082"
 ```
 
 ### 4. Run the encoding benchmarks
@@ -162,6 +165,26 @@ go run benchmark/benchmark.go --concurrency 10 --orders 500
 # Latency test (rate-limited for honest RTT measurement)
 go run benchmark/benchmark.go --concurrency 50 --orders 200 --rate 25 --timeout 60
 ```
+
+### Logging
+
+Logs go to stderr. Per-order, per-fill and per-message events are logged at debug level and are off by default.
+
+| Component | Variable | Default | Example |
+|---|---|---|---|
+| `fxp_core` | `RUST_LOG` ([`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax) | `info` | `RUST_LOG=fxp_core=debug` |
+| `go_gateway`, `fix_bridge` | `FXP_LOG_LEVEL` (`debug`, `info`, `warn`, `error`) | `info` | `FXP_LOG_LEVEL=debug` |
+
+### Docker
+
+```bash
+export FXP_JWT_SECRET="$(openssl rand -hex 32)"
+export FXP_FIX_CREDENTIALS="FIRM01:$(openssl rand -hex 16)"
+docker compose up --build
+# WebSocket :8081, FXP TCP :8082, FIX 4.4 :8083 (core :8080 stays private)
+```
+
+The multi-stage [`Dockerfile`](Dockerfile) builds all three binaries into one image; [`docker-compose.yml`](docker-compose.yml) runs core, gateway and bridge from it and keeps the FIX session store in the `fix_store` volume. Compose refuses to start without `FXP_JWT_SECRET` and `FXP_FIX_CREDENTIALS`; other variables from the tables below can be added to the `environment:` blocks.
 
 ### 6. Run the trading day simulation
 
@@ -287,12 +310,10 @@ Counts observed at this revision:
 
 | Suite | Test count |
 |---|---:|
-| `fxp_core` (`cargo test`) | 52 unit tests |
-| `go_gateway/transport` (`go test -v`) | 17 top-level tests |
-| `fix_bridge` (`go test -v ./...`) | 53 top-level tests |
-| Python FIX E2E client | 11 scenarios, 27 reported checks |
-
-The Gateway count is from its `transport` test package; package-wide `go test` also reports the existing `benchmark.go:479` vet warning.
+| `fxp_core` (`cargo test`) | 64 unit tests |
+| `go_gateway` (`go test ./...`) | 29 top-level tests |
+| `fix_bridge` (`go test ./...`) | 82 top-level tests |
+| Python FIX E2E client (`scripts/e2e.sh`) | 14 scenarios, 34 reported checks, plus 4 durable-session checks across a bridge restart |
 
 ---
 
@@ -300,16 +321,19 @@ The Gateway count is from its `transport` test package; package-wide `go test` a
 
 Full methodology and results: [`Benchmark.md`](Benchmark.md)
 
-**Benchmark environment:** Windows 11, 8 logical cores, Rust 1.85.0, Go 1.24.1. The E2E figures below distinguish debug and release builds.
+**Benchmark environment:** encoding timings and the debug-build throughput figures were measured on Windows 11, 8 logical cores, Rust 1.85.0, Go 1.24.1; message sizes are deterministic. The release-build latency figures were measured on a shared Linux KVM guest (no CPU pinning) with Rust 1.97 and Go 1.26.10. The code now requires Rust edition 2024 and Go ≥ 1.25 (`go 1.25.0` in `go.mod`, toolchain `go1.26.10`).
 
 ### Encoding (Rust, release build)
 
 ```
 Message size vs FIX 4.4 (realistic payloads):
-  NewOrderSingle:        FXP 82B    FIX 164B   SBE 82B    (FXP ties SBE, both -50%)
-  ExecutionReport:       FXP 75B    FIX 192B   SBE 76B    (FXP -61%)
-  MarketSnapshot (5L):   FXP 123B   FIX 331B   SBE 168B   (FXP -63%, beats SBE by 27%)
+  NewOrderSingle:        FXP 86B    FIX 164B   SBE 82B    (FXP -48%)
+  ExecutionReport:       FXP 91B    FIX 192B   SBE 76B    (FXP -53%)
+  MarketSnapshot (5L):   FXP 134B   FIX 331B   SBE 168B   (FXP -60%, beats SBE by 20%)
   MarketDataIncremental: FXP 30B    FIX 102B   SBE 24B    (FXP -71%)
+
+Schema v2.0 moved every enum off zero, so BUY/LIMIT/DAY/EXEC_NEW are now
+encoded on the wire (proto3 omits zero values): +4 to +11 bytes per message.
 
 Encode (pre-allocated buffer):
   FXP:  91.6ns  (10.9M/sec)
@@ -330,9 +354,11 @@ Debug-build throughput (unlimited rate):
   Concurrency=10:  2,259 orders/sec   0 errors
   Concurrency=50:  1,449 orders/sec   0 errors  (98% fill rate)
 
-Release-build latency (rate=25/sec, concurrency=50, symbols=spread):
-  p50:   21.8ms   p95:  313ms     p99:  409ms    Max: 803ms
-  Market data fan-out: p95 < 1ms
+Release-build latency (rate=25/sec, concurrency=50, orders=200, symbols=spread;
+3 runs, TCP_NODELAY on all hops, default info logging):
+  p50:   0.40–0.46ms   p95:  0.82–0.98ms   p99:  1.2–2.5ms   Max: 3.7–4.3ms
+  9,000 fills / 10,000 orders per run, 0 errors
+  Market data fan-out: p50 ≈ 40µs
 ```
 
 ---
@@ -344,7 +370,7 @@ fxp/
 ├── fxp_core/                    Rust matching engine
 │   ├── src/
 │   │   ├── server.rs            TCP server, per-symbol dispatch, stop trigger logic
-│   │   ├── lib.rs               Unit tests (52 tests)
+│   │   ├── lib.rs               Unit tests
 │   │   └── order_book/
 │   │       ├── order.rs         Order struct, OrderType, TimeInForce enums
 │   │       ├── order_book.rs    BTreeMap price-time priority book
@@ -356,6 +382,7 @@ fxp/
 │       └── fxp.proto            Protocol schema v2.0
 │
 ├── go_gateway/                  Go gateway
+│   ├── logging/                 slog setup (FXP_LOG_LEVEL), shared with fix_bridge
 │   ├── transport/
 │   │   ├── pool.go              Pool defaults to runtime.NumCPU()
 │   │   ├── tcp_server.go        TCP server, auth routing
@@ -375,7 +402,10 @@ fxp/
 ├── fix_test_client/
 │   └── fix_client.py            FIX E2E scenarios
 ├── scripts/
-│   └── gen_proto.sh             Generate protobuf bindings
+│   ├── gen_proto.sh             Generate protobuf bindings
+│   └── e2e.sh                   Start core → gateway → bridge and run the FIX E2E suite
+├── Dockerfile                   Multi-stage build of all three binaries
+├── docker-compose.yml           core + gateway + bridge, secrets from the environment
 └── Benchmark.md                 Full benchmark methodology and results
 ```
 
