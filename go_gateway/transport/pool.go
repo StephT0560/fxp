@@ -344,6 +344,8 @@ var onCoreMessage = routeFromCore
 // Called from all pool reader goroutines — uses sync.Map so no lock needed.
 func routeFromCore(msg *protobuf.FXPMessage) {
 	switch payload := msg.Payload.(type) {
+	case *protobuf.FXPMessage_OrderStatusResponse:
+		routeStatusResponse(msg)
 
 	case *protobuf.FXPMessage_ExecutionReport:
 		rep := payload.ExecutionReport

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Additive protocol v2.3 owner-scoped order status (FIX H/AF), terminal-history snapshots and independent batched query routing (#2).
+
 - Pinned FIX44 XML dictionary validation with reject diagnostics, group validation and optional strict user-tag validation (#2).
 
 - Optional FIX daily/weekly schedules, timezone-aware boundaries, archived durable resets and reset-on-logon/logout/disconnect policies (#2).

@@ -401,8 +401,8 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	go send(codec.MsgTypeOrderStatusRequest, codec.TagClOrdID, "Q1", codec.TagSymbol, "MSFT", codec.TagSide, "1")
 	if m := next(); m.MsgType() != codec.MsgTypeBusinessMessageReject || m.Get(codec.TagRefMsgType) != "H" ||
 		m.Get(codec.TagRefSeqNum) != strconv.Itoa(seq) ||
-		m.Get(codec.TagBusinessRejectReason) != codec.BusinessRejectReasonUnsupportedMsgType ||
-		m.Get(codec.TagText) != "Unsupported MsgType H (OrderStatusRequest); supported: D, F, G, V, q" {
+		m.Get(codec.TagBusinessRejectReason) != "0" ||
+		m.Get(codec.TagText) != "gateway not connected" {
 		t.Fatalf("unsupported type: 35=%s 45=%s 372=%s 380=%s 58=%q", m.MsgType(), m.Get(codec.TagRefSeqNum),
 			m.Get(codec.TagRefMsgType), m.Get(codec.TagBusinessRejectReason), m.Get(codec.TagText))
 	}

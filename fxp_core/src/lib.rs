@@ -10,11 +10,11 @@ pub mod fxp {
     include!(concat!(env!("OUT_DIR"), "/fxp.rs"));
 }
 
-pub const PROTOCOL_VERSION: &str = "2.2";
+pub const PROTOCOL_VERSION: &str = "2.3";
 
 #[test]
 fn protocol_version_is_v2() {
-    assert_eq!(PROTOCOL_VERSION, "2.2");
+    assert_eq!(PROTOCOL_VERSION, "2.3");
 }
 
 // ── Shared test helpers ───────────────────────────────────────────────────────

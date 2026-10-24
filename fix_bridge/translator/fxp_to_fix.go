@@ -281,6 +281,8 @@ func mapMDEntryType(side protobuf.OrderSide) (string, bool) {
 
 func mapExecType(et protobuf.ExecutionType) (string, error) {
 	switch et {
+	case protobuf.ExecutionType_EXEC_ORDER_STATUS:
+		return "I", nil
 	case protobuf.ExecutionType_EXEC_NEW:
 		return codec.ExecTypeNew, nil
 	case protobuf.ExecutionType_EXEC_FILLED:

@@ -534,18 +534,60 @@ def test_required_fields(s, r):
 
 
 def test_order_status_request(s, r):
-    """OrderStatusRequest (35=H) is unsupported: BusinessMessageReject 380=3."""
+    """Owner-scoped single/mass snapshots cover live and terminal order state."""
     print('\n─── test_order_status_request ───────────────────────────────')
-    seq = s.seq
-    s.send('H', [(11, order_id('OSR')), (55, 'MSFT'), (54, '1')], 'OrderStatusRequest')
-    msg = s.wait_for_reject(seq, timeout=3.0)
-    if msg and msg.get(35) == 'j' and msg.get(372) == 'H' and msg.get(380) == '3' \
-            and 'OrderStatusRequest' in msg.get(58, ''):
-        print(f'  {PASS} 35=H rejected: 35=j 380=3 Text={msg[58]}')
-        r.passed += 1
-    else:
-        print(f'  {FAIL} 35=H: want BusinessMessageReject 380=3, got {msg and msg["tags"]}')
-        r.failed += 1
+    sym = 'STATUS'
+    buy, sell, cancel, stop = [order_id(p) for p in ('OSB', 'OSS', 'OSC', 'OSP')]
+    def query(oid, side, expected):
+        request = order_id('QUERY')
+        s.send('H', [(11, oid), (55, sym), (54, side), (790, request)], 'OrderStatusRequest')
+        msg = s.wait_for(order_id=oid, exec_type='I', timeout=3.0)
+        r.assert_exec('status ' + oid, msg, 'I', expected)
+        check(r, bool(msg and msg.get(790) == request and msg.get(17) == '0'), 'status correlation and ExecID=0', msg)
+        return msg
+    s.new_order(buy, sym, '1', 10, '2', price=100.00)
+    r.assert_exec('status seed acknowledged', s.wait_for(order_id=buy, exec_type='0'), '0')
+    query(buy, '1', '0')
+    s.new_order(sell, sym, '2', 4, '2', price=100.00)
+    s.wait_for(order_id=buy, exec_type='F')
+    partial = query(buy, '1', '1')
+    check(r, bool(partial and partial.get(14) == '4' and partial.get(151) == '6'), 'partial status quantities', partial)
+    s.new_order(order_id('OSF'), sym, '2', 6, '2', price=100.00)
+    s.wait_for(order_id=buy, exec_type='F')
+    query(buy, '1', '2')
+    s.new_order(cancel, sym, '1', 1, '2', price=90.00)
+    s.wait_for(order_id=cancel, exec_type='0')
+    s.cancel_order(order_id('OSCX'), cancel, sym, '1')
+    s.wait_for(order_id=cancel, exec_type='4')
+    query(cancel, '1', '4')
+    s.new_order(stop, sym, '1', 1, '3', stop_px=200.00)
+    s.wait_for(order_id=stop, exec_type='0')
+    query(stop, '1', '0')
+    unknown = s.seq
+    s.send('H', [(11, order_id('UNKNOWN')), (55, sym), (54, '1')])
+    msg = s.wait_for_reject(unknown)
+    check(r, bool(msg and msg.get(35) == 'j' and msg.get(380) == '1'), 'unknown status: Unknown ID', msg)
+    victim = FIXSession(s.host, s.port, 'VICTIM01', s.target, verbose=s.verbose)
+    try:
+        victim.connect(); victim.logon()
+        foreign = victim.seq
+        victim.send('H', [(11, buy), (55, sym), (54, '1')])
+        msg = victim.wait_for_reject(foreign)
+        check(r, bool(msg and msg.get(380) == '1' and msg.get(58) == 'Unknown order'), 'foreign order indistinguishable from unknown', msg)
+    finally:
+        victim.logout()
+    mass = order_id('MASSSTATUS')
+    s.send('AF', [(584, mass), (585, '1'), (55, sym)])
+    received = []
+    deadline = time.time() + 4
+    while time.time() < deadline:
+        msg = s.wait_for(exec_type='I', timeout=.5)
+        if msg and msg.get(584) == mass:
+            received.append(msg)
+            if msg.get(912) == 'Y': break
+    check(r, bool(received and len(received) == int(received[-1].get(911, '-1')) and received[-1].get(912) == 'Y'), 'mass status count and final marker', received[-1] if received else None)
+    check(r, {m.get(37) for m in received} >= {buy, cancel, stop}, 'mass status includes own live and terminal orders', None)
+    s.drain()
 
 
 def test_stop_order(s, r):

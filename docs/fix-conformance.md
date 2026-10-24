@@ -53,3 +53,33 @@ requires Symbol (the venue has no alternate instrument identifier resolver).
 The previous tests' placeholder TransactTime=1 and their expectation that a
 bad Side enum reached order business validation were technically invalid;
 fixtures now use proper timestamps and expect dictionary Reject reason 5.
+
+## Order status
+
+FIX H resolves ClOrdID(11), falling back to OrderID(37), within the authenticated
+owner. Symbol(55) and Side(54) are checked through the dictionary; 790 identifies
+the inquiry (falls back to the queried ID if omitted). FIX AF supports
+MassStatusReqType(585)=1 for Symbol or 7 for all retained owner orders, optionally
+filtered by Side. Other mass-status types receive a business rejection.
+
+The additive FXP v2.3 request/response uses new envelope fields 20/21 and
+ExecutionType 10 (`EXEC_ORDER_STATUS`). Existing wire numbers are unchanged.
+Gateway authentication overwrites sender and namespaces the query ID. Reply
+routing uses fresh internal request IDs; it never changes live order routes.
+The response is batched in groups of at most 64 reports and supplies completion
+and total fields. Inquiries time out after 30 seconds. Disconnect removes routes.
+
+Each symbol snapshots its serialized engine state after applying due expiry.
+Mass queries across symbols are independently consistent per symbol, not a
+global atomic snapshot. Reports include new, partial, filled, canceled, expired
+and parked-stop states, with cumulative/leaves/average values. They use FIX
+ExecType I and ExecID 0, and do not create fills. Mass replies echo 584, set
+911=total reports, and set 912=Y on the final report. Empty mass results and
+unknown/foreign single-order IDs get BusinessMessageReject 380=1; the latter
+share exactly the same text and disclose no existence information.
+
+Live state remains queryable; at most 100,000 terminal transitions per symbol
+are retained in memory. Older terminal orders become unknown. Input-log replay
+reconstructs status history with the same bound when FXP_EVENT_LOG is enabled;
+without that log, core restart loses status history. FIX FileStore durability
+alone persists FIX sequence/resend state, not matching-engine history.

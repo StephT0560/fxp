@@ -55,6 +55,16 @@ fn persisted_input(
         .unwrap_or_else(|error| persistence_failure(error));
     let at = WallClock.now();
     let result = match msg {
+        Some(SymbolMsg::Status(m)) => {
+            let outputs = journal.tick(symbol, at);
+            if outputs.is_ok() {
+                let reports = journal.engines.get(symbol).map_or_else(Vec::new, |e| {
+                    e.order_status(&m.request.sender, &m.request.order_id, m.request.side)
+                });
+                let _ = m.reply.send(reports);
+            }
+            outputs
+        }
         None => journal.tick(symbol, at),
         Some(SymbolMsg::Order(m)) => journal.apply(symbol, at, Input::New(m.order), m.output_tx),
         Some(SymbolMsg::Subscribe(m)) => journal.apply(symbol, at, Input::Subscribe, m.tx),
@@ -211,7 +221,13 @@ struct MassCancelMsg {
     reply: Option<tokio::sync::oneshot::Sender<u32>>,
 }
 
+struct StatusMsg {
+    request: fxp::OrderStatusRequest,
+    reply: tokio::sync::oneshot::Sender<Vec<fxp::ExecutionReport>>,
+}
+
 enum SymbolMsg {
+    Status(StatusMsg),
     Order(OrderMsg),
     Subscribe(SubscribeMsg),
     Cancel(CancelMsg),
@@ -470,6 +486,16 @@ async fn scheduled_order_book_task(
             match msg {
                 None => engine.tick(),
                 Some(msg) => match msg {
+                    SymbolMsg::Status(m) => {
+                        let outputs = engine.tick();
+                        let reports = engine.order_status(
+                            &m.request.sender,
+                            &m.request.order_id,
+                            m.request.side,
+                        );
+                        let _ = m.reply.send(reports);
+                        outputs
+                    }
                     SymbolMsg::Order(m) => engine.new_order(m.order, m.output_tx),
                     SymbolMsg::Cancel(m) => engine.cancel(EngineCancel {
                         order_id: m.order_id,
@@ -852,6 +878,9 @@ async fn handle_tcp_client_with_shutdown(
                     }
                 }
 
+                Some(fxp::fxp_message::Payload::OrderStatusRequest(request)) => {
+                    order_status(&router, request, &output_tx).await;
+                }
                 Some(fxp::fxp_message::Payload::OrderMassCancel(request)) => {
                     mass_cancel(&router, request, &output_tx).await;
                 }
@@ -922,6 +951,73 @@ fn server_reject(
         order_quantity,
         auction: false,
     }
+}
+
+/// Query symbol tasks without rebinding live order routes. Each snapshot is
+/// serialized with that symbol's order/expiry events, including journal replay.
+async fn order_status(router: &SymbolRouter, request: fxp::OrderStatusRequest, out: &OutputTx) {
+    let mut replies = Vec::new();
+    let mut reject = if request.sender.is_empty() || fxp::OrderSide::try_from(request.side).is_err()
+    {
+        "invalid order status request"
+    } else {
+        ""
+    };
+    if reject.is_empty() {
+        let symbols = if request.symbol.is_empty() {
+            router.symbols().await
+        } else {
+            vec![request.symbol.clone()]
+        };
+        for symbol in symbols {
+            if let Some(tx) = router.get_existing(&symbol).await {
+                let (reply, done) = tokio::sync::oneshot::channel();
+                if tx
+                    .send(SymbolMsg::Status(StatusMsg {
+                        request: request.clone(),
+                        reply,
+                    }))
+                    .await
+                    .is_ok()
+                {
+                    replies.push(done);
+                } else {
+                    reject = "symbol unavailable";
+                }
+            }
+        }
+    }
+    let out = out.clone();
+    tokio::spawn(async move {
+        let mut reports = Vec::new();
+        for done in replies {
+            match done.await {
+                Ok(r) => reports.extend(r),
+                Err(_) => reject = "symbol unavailable",
+            }
+        }
+        reports.sort_by(|a, b| (&a.symbol, &a.order_id).cmp(&(&b.symbol, &b.order_id)));
+        if reports.is_empty() && !request.order_id.is_empty() && reject.is_empty() {
+            reject = "Unknown order";
+        }
+        let total_reports = reports.len() as u32;
+        let batches = reports.len().div_ceil(64).max(1);
+        for i in 0..batches {
+            let batch = reports[i * 64..((i + 1) * 64).min(reports.len())].to_vec();
+            out.try_send_frame(frame_message(&fxp::FxpMessage {
+                payload: Some(fxp::fxp_message::Payload::OrderStatusResponse(
+                    fxp::OrderStatusResponse {
+                        request_id: request.request_id.clone(),
+                        sender: request.sender.clone(),
+                        reports: batch,
+                        reject_reason: reject.into(),
+                        complete: i + 1 == batches,
+                        total_reports,
+                    },
+                )),
+            }));
+        }
+    });
 }
 
 /// Fans an owner-scoped mass cancel out to the requested symbol (or every

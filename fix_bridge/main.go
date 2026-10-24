@@ -50,6 +50,7 @@ import (
 	"os/signal"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -355,13 +356,15 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 // on Logon, forwards application messages, and routes ExecutionReports back
 // to the FIX client.
 type bridgeHandler struct {
-	bridgeCompID string
-	jwtSecret    string
-	sess         *session.Session
-	gwClient     *gateway.Client
-	pending      pendingRequests
-	md           mdSubscriptions
-	cod          codState
+	statusPending sync.Map
+	statusSerial  atomic.Uint64
+	bridgeCompID  string
+	jwtSecret     string
+	sess          *session.Session
+	gwClient      *gateway.Client
+	pending       pendingRequests
+	md            mdSubscriptions
+	cod           codState
 }
 
 // codRequestID marks the bridge's own cancel-on-disconnect mass cancel.
@@ -556,12 +559,18 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		undoMD = h.md.subscribe(msg.Get(codec.TagMDReqID), stream, mdReq.Symbols)
 	}
 
+	if q := fxpMsg.GetOrderStatusRequest(); q != nil {
+		h.trackStatus(msg, q)
+	}
 	req := fixRequestFor(fxpMsg)
 	tracked := req != nil && isCancelOrReplace(req)
 	if tracked {
 		h.pending.add(req)
 	}
 	if err := h.gwClient.Send(fxpMsg); err != nil {
+		if q := fxpMsg.GetOrderStatusRequest(); q != nil {
+			h.statusPending.Delete(q.RequestId)
+		}
 		if tracked {
 			h.pending.take(req.Get(codec.TagClOrdID))
 		}
@@ -576,6 +585,10 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 // onFXPMessage is called by the gateway client for every inbound FXP frame.
 // Translates the FXP message to FIX and delivers to the FIX client.
 func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
+	if rep := msg.GetOrderStatusResponse(); rep != nil {
+		h.onStatus(rep)
+		return
+	}
 	if h.cod.observeReport(msg) {
 		return
 	}
@@ -660,6 +673,7 @@ func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, 
 // supportedAppMsgTypes are the inbound application messages the bridge
 // translates; every other application MsgType gets BusinessMessageReject.
 var supportedAppMsgTypes = map[string]bool{
+	"H": true, "AF": true,
 	codec.MsgTypeNewOrderSingle:            true,
 	codec.MsgTypeOrderCancelRequest:        true,
 	codec.MsgTypeOrderCancelReplaceRequest: true,
@@ -690,7 +704,7 @@ func buildUnsupportedReject(msg *codec.Message, bridgeCompID, targetCompID strin
 	}
 	b.Set(codec.TagRefMsgType, msg.MsgType())
 	b.Set(codec.TagBusinessRejectReason, codec.BusinessRejectReasonUnsupportedMsgType)
-	b.Set(codec.TagText, "Unsupported MsgType "+name+"; supported: D, F, G, V, q")
+	b.Set(codec.TagText, "Unsupported MsgType "+name+"; supported: D, F, G, V, q, H, AF")
 	return b.Build()
 }
 

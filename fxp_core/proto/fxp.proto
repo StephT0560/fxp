@@ -9,8 +9,8 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.2 (additive: self-trade prevention, cancel-on-disconnect,
-// mass cancel). v2.1 added auction/session messages.
+// FXP Protocol — v2.3 (additive order-status requests/replies); v2.2 added: self-trade prevention, cancel-on-disconnect,
+// mass cancel. v2.1 added auction/session messages.
 // Version 2.0 shifts all enum numbers and is wire-breaking with v1.x.
 //
 // Design principles:
@@ -141,6 +141,7 @@ enum ExecutionType {
   EXEC_EXPIRED               = 6; // order expired at session end or GTD date
   EXEC_PENDING_CANCEL        = 7; // cancel pending confirmation
   EXEC_PENDING_REPLACE       = 8; // replace pending confirmation
+  EXEC_ORDER_STATUS          = 10; // v2.3: snapshot, not a lifecycle event
   EXEC_RESTATED              = 9; // v2.2: quantity reduced by self-trade prevention
 }
 
@@ -426,5 +427,25 @@ message FXPMessage {
     AuctionInfo                 auction_info           = 17;
     OrderMassCancelRequest      order_mass_cancel      = 18;
     OrderMassCancelReport       order_mass_cancel_report = 19;
+    OrderStatusRequest          order_status_request   = 20;
+    OrderStatusResponse         order_status_response  = 21;
   }
+}
+
+// v2.3: owner-scoped single or mass status. An empty order_id requests all
+// retained orders (optionally a symbol/side). The gateway overwrites sender.
+message OrderStatusRequest {
+  string request_id = 1;
+  string sender = 2;
+  string order_id = 3;
+  string symbol = 4;
+  OrderSide side = 5;
+}
+message OrderStatusResponse {
+  string request_id = 1;
+  string sender = 2;
+  repeated ExecutionReport reports = 3;
+  string reject_reason = 4; // same unknown result for missing/non-owned IDs
+  bool complete = 5; // last batch; response batches carry at most 64 reports
+  uint32 total_reports = 6;
 }

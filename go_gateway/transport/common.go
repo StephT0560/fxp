@@ -90,6 +90,9 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 	slog.Debug("HandleFXPMessage", "type", fmt.Sprintf("%T", msg.Payload))
 
 	switch payload := msg.Payload.(type) {
+	case *protobuf.FXPMessage_OrderStatusRequest:
+		forwardStatusRequest(conn, msg)
+
 	case *protobuf.FXPMessage_MarketDataRequest:
 		slog.Debug("processing MarketDataRequest")
 		switch c := conn.(type) {

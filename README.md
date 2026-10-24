@@ -88,7 +88,7 @@ Auction price selection maximizes volume, minimizes imbalance, prefers the refer
 
 ---
 
-## Proto Schema (v2.2)
+## Proto Schema (v2.3)
 
 Full institutional-grade message coverage:
 
@@ -106,7 +106,7 @@ ErrorMessage            — structured error responses
 OrderMassCancelRequest / OrderMassCancelReport — owner-scoped mass cancel
 ```
 
-Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
 **TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
@@ -317,8 +317,8 @@ The FIX 4.4 bridge (`fix_bridge`, port 8083) handles these inbound messages:
 | `G` | OrderCancelReplaceRequest | ✅ |
 | `V` | MarketDataRequest (snapshot, subscribe, unsubscribe) | ✅ |
 | `q` | OrderMassCancelRequest (`530=7` all orders, `530=1` by symbol; optional `54`) | ✅ answered with `35=r` (531/532/533); other 530 values rejected with `531=0 532=0` |
-| `H` | OrderStatusRequest | ❌ BusinessMessageReject (`35=j`, `380=3`) |
-| any other application type | e.g. `AF`, `AD` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
+| `H`, `AF` | OrderStatusRequest / OrderMassStatusRequest | ✅ owner-scoped snapshots, including retained terminal orders; mass types 1 (symbol) and 7 (all) |
+| any other application type | e.g. `AD`, `c` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
 
 Outbound: ExecutionReport (`8`, ExecType `D` = restated by decrement-and-cancel STP), OrderCancelReject (`9`), OrderMassCancelReport (`r`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`), BusinessMessageReject (`j`) plus the session messages.
 
@@ -508,6 +508,12 @@ The bridge loads the pinned QuickFIX FIX 4.4 XML dictionary at startup, with
 [documented venue extensions](fix_bridge/codec/spec/README.md). It validates
 required tags, membership, datatypes, enums, duplicates and repeating-group
 counts/order; invalid messages receive Reject(3) with 371/372/373. See
-[conformance details](docs/fix-conformance.md). Unknown standard message types
+[conformance details](docs/fix-conformance.md). Unsupported application message types
 remain BusinessMessageReject(j). Dictionary validation changes an invalid
 Side enum from an ExecutionReport rejection to session Reject reason 5.
+
+Order status replies use ExecutionReport `150=I`, `17=0`, the current `39`,
+and original cumulative/leaves quantities. Queries do not redirect fills.
+Single status echoes OrdStatusReqID(790); mass status echoes 584 and includes
+911/912 count/final markers. Unknown/foreign IDs and empty mass results get
+BusinessMessageReject (`380=1`). See [status retention and consistency](docs/fix-conformance.md#order-status).
