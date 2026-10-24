@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc; 
 use crate::order_book::order::Order; 
 use crate::order_book::order::OrderSide;
+use crate::order_book::order::TimeInForce;
 use crate::order_book::market_data::{MarketDataSnapshot, MarketDataIncrementalUpdate, MarketOrderUpdate, MarketUpdateType}; 
 use crate::order_book::broadcaster::MarketDataBroadcaster; 
 
@@ -144,6 +145,7 @@ impl OrderBook {
         new_id:          &str,
         new_price:       i64,
         new_total_qty:   u32,
+        new_time_in_force: Option<TimeInForce>,
         client_order_id: &str,
         owner:           &str,
         timestamp:       u64,
@@ -167,6 +169,7 @@ impl OrderBook {
             order_id:        new_id.to_string(),
             price:           if new_price > 0 { new_price } else { orig.price },
             quantity:        leaves,
+            time_in_force:   new_time_in_force.unwrap_or(orig.time_in_force),
             timestamp,
             client_order_id: client_order_id.to_string(),
             ..orig
@@ -210,5 +213,4 @@ impl OrderBook {
         }
     }
 }
-
 

@@ -70,8 +70,21 @@ func translateExecutionReport(
 	senderCompID, targetCompID string,
 	seqNum int,
 ) []byte {
-	execType  := mapExecType(protobuf.ExecutionType(rep.ExecutionType))
-	ordStatus := mapOrdStatus(protobuf.OrderStatus(rep.OrderStatus))
+	execType, err := mapExecType(protobuf.ExecutionType(rep.ExecutionType))
+	if err != nil {
+		log.Printf("[translator] dropping ExecutionReport %q: %v", rep.OrderId, err)
+		return nil
+	}
+	ordStatus, err := mapOrdStatus(protobuf.OrderStatus(rep.OrderStatus))
+	if err != nil {
+		log.Printf("[translator] dropping ExecutionReport %q: %v", rep.OrderId, err)
+		return nil
+	}
+	side, err := mapSideToFIX(rep.Side)
+	if err != nil {
+		log.Printf("[translator] dropping ExecutionReport %q: %v", rep.OrderId, err)
+		return nil
+	}
 
 	b := codec.NewBuilder(codec.MsgTypeExecutionReport, senderCompID, targetCompID, seqNum)
 
@@ -81,7 +94,7 @@ func translateExecutionReport(
 	b.Set(codec.TagExecType, execType)
 	b.Set(codec.TagOrdStatus, ordStatus)
 	b.Set(codec.TagSymbol,   rep.Symbol)
-	b.Set(codec.TagSide,     mapSideToFIX(rep.Side))
+	b.Set(codec.TagSide,     side)
 	if rep.OrderQuantity > 0 {
 		b.SetInt(codec.TagOrderQty, int(rep.OrderQuantity))
 	}
@@ -197,50 +210,64 @@ func translateMarketDataIncremental(
 
 // ── Mapping helpers ───────────────────────────────────────────────────────────
 
-func mapExecType(et protobuf.ExecutionType) string {
+func mapExecType(et protobuf.ExecutionType) (string, error) {
 	switch et {
 	case protobuf.ExecutionType_EXEC_NEW:
-		return codec.ExecTypeNew
+		return codec.ExecTypeNew, nil
 	case protobuf.ExecutionType_EXEC_FILLED:
-		return codec.ExecTypeTrade
+		return codec.ExecTypeTrade, nil
 	case protobuf.ExecutionType_EXEC_CANCELED:
-		return codec.ExecTypeCanceled
+		return codec.ExecTypeCanceled, nil
 	case protobuf.ExecutionType_EXEC_REPLACED:
-		return codec.ExecTypeReplaced
+		return codec.ExecTypeReplaced, nil
 	case protobuf.ExecutionType_EXEC_REJECTED:
-		return codec.ExecTypeRejected
+		return codec.ExecTypeRejected, nil
 	case protobuf.ExecutionType_EXEC_EXPIRED:
-		return codec.ExecTypeExpired
+		return codec.ExecTypeExpired, nil
+	case protobuf.ExecutionType_EXEC_PENDING_CANCEL:
+		return "6", nil
+	case protobuf.ExecutionType_EXEC_PENDING_REPLACE:
+		return "E", nil
 	default:
-		return codec.ExecTypeNew // safe default — EXEC_NEW = 0 = proto3 default
+		return "", fmt.Errorf("unknown or unspecified execution_type %d", et)
 	}
 }
 
-func mapSideToFIX(side protobuf.OrderSide) string {
-	if side == protobuf.OrderSide_SELL {
-		return codec.SideSell
+func mapSideToFIX(side protobuf.OrderSide) (string, error) {
+	switch side {
+	case protobuf.OrderSide_BUY:
+		return codec.SideBuy, nil
+	case protobuf.OrderSide_SELL:
+		return codec.SideSell, nil
+	default:
+		return "", fmt.Errorf("unknown or unspecified side %d", side)
 	}
-	return codec.SideBuy
 }
 
-func mapOrdStatus(os protobuf.OrderStatus) string {
+func mapOrdStatus(os protobuf.OrderStatus) (string, error) {
 	switch os {
 	case protobuf.OrderStatus_ORDER_NEW:
-		return codec.OrdStatusNew
+		return codec.OrdStatusNew, nil
+	case protobuf.OrderStatus_ORDER_PENDING:
+		return "A", nil
 	case protobuf.OrderStatus_ORDER_PARTIALLY_FILLED:
-		return codec.OrdStatusPartiallyFilled
+		return codec.OrdStatusPartiallyFilled, nil
 	case protobuf.OrderStatus_ORDER_FILLED:
-		return codec.OrdStatusFilled
+		return codec.OrdStatusFilled, nil
 	case protobuf.OrderStatus_ORDER_CANCELED:
-		return codec.OrdStatusCanceled
+		return codec.OrdStatusCanceled, nil
 	case protobuf.OrderStatus_ORDER_REPLACED:
-		return codec.OrdStatusReplaced
+		return codec.OrdStatusReplaced, nil
 	case protobuf.OrderStatus_ORDER_REJECTED:
-		return codec.OrdStatusRejected
+		return codec.OrdStatusRejected, nil
 	case protobuf.OrderStatus_ORDER_EXPIRED:
-		return codec.OrdStatusExpired
+		return codec.OrdStatusExpired, nil
+	case protobuf.OrderStatus_ORDER_PENDING_CANCEL:
+		return "6", nil
+	case protobuf.OrderStatus_ORDER_PENDING_REPLACE:
+		return "E", nil
 	default:
-		return codec.OrdStatusNew
+		return "", fmt.Errorf("unknown or unspecified order_status %d", os)
 	}
 }
 
@@ -263,7 +290,7 @@ func mapMDUpdateAction(updateType int32) string {
 // 18542 → "185.42", 18500 → "185.00", 50 → "0.50"
 func formatFixedPoint(cents int64) string {
 	if cents == 0 {
-		return "0"
+		return "0.00"
 	}
 	neg := ""
 	if cents < 0 {

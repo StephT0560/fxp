@@ -227,6 +227,15 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		newQty = int32(qty)
 	}
 
+	var newTimeInForce protobuf.TimeInForce
+	if tifStr := msg.Get(codec.TagTimeInForce); tifStr != "" {
+		var err error
+		newTimeInForce, err = mapTimeInForce(tifStr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	cr := &protobuf.OrderCancelReplaceRequest{
 		Header: &protobuf.FXPHeader{
 			ProtocolVersion: "1.1",
@@ -239,6 +248,7 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		Receiver:        "FXPExchange",
 		NewPrice:        newPrice,
 		NewQuantity:     newQty,
+		NewTimeInForce:  newTimeInForce,
 		Timestamp:       timestamppb.Now(),
 	}
 
@@ -342,36 +352,50 @@ func parseFixedPoint(s string) (int64, error) {
 		return 0, fmt.Errorf("empty price string")
 	}
 
+	negative := strings.HasPrefix(s, "-")
+	if negative {
+		s = s[1:]
+	}
 	parts := strings.SplitN(s, ".", 2)
 	dollars, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
+	if err != nil || dollars < 0 {
 		return 0, fmt.Errorf("invalid integer part %q", parts[0])
 	}
 
 	var cents int64
 	if len(parts) == 2 {
-		// Pad or truncate to 2 decimal places
 		dec := parts[1]
-		if len(dec) > 2 {
-			// Round at 2dp
-			dec = dec[:2]
-		} else if len(dec) == 1 {
-			dec = dec + "0"
+		if dec == "" {
+			return 0, fmt.Errorf("invalid decimal part %q", dec)
 		}
-		c, err := strconv.ParseInt(dec, 10, 64)
+		for _, digit := range []byte(dec) {
+			if digit < '0' || digit > '9' {
+				return 0, fmt.Errorf("invalid decimal part %q", dec)
+			}
+		}
+		rounded := dec + "00"
+		cents, err = strconv.ParseInt(rounded[:2], 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("invalid decimal part %q", parts[1])
 		}
-		cents = c
+		if len(dec) > 2 && dec[2] >= '5' {
+			cents++
+		}
 	}
 
-	if dollars < 0 {
-		cents = -cents
+	maxMagnitude := int64(math.MaxInt32)
+	if negative {
+		maxMagnitude = -int64(math.MinInt32)
 	}
-
-	result := dollars*100 + cents
-	if result > math.MaxInt32 || result < math.MinInt32 {
+	if dollars > maxMagnitude/100 {
 		return 0, fmt.Errorf("price %q out of range", s)
+	}
+	result := dollars*100 + cents
+	if result > maxMagnitude {
+		return 0, fmt.Errorf("price %q out of range", s)
+	}
+	if negative {
+		result = -result
 	}
 	return result, nil
 }

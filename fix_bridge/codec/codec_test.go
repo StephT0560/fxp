@@ -3,6 +3,8 @@ package codec
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -99,6 +101,106 @@ func TestParserRejectsWrongBodyLength(t *testing.T) {
 	}
 }
 
+func TestParserPreservesReceivedBeginStringAndBodyLength(t *testing.T) {
+	body := bodyFromWire(goldenVectors[0].wire)
+	bodyLength := fmt.Sprintf("%03d", len(body))
+	wire := rawWire("FIX.4.2", bodyLength, body)
+
+	msg, err := NewParser(strings.NewReader(wire)).ReadMessage()
+	if err != nil {
+		t.Fatalf("FIX.4.2 message rejected: %v", err)
+	}
+	if got := msg.Get(TagBeginString); got != "FIX.4.2" {
+		t.Fatalf("BeginString = %q, want FIX.4.2", got)
+	}
+	if got := msg.Get(TagBodyLength); got != bodyLength {
+		t.Fatalf("BodyLength = %q, want received value %q", got, bodyLength)
+	}
+}
+
+func TestParserChecksChecksumOverRawFieldBytes(t *testing.T) {
+	body := strings.Replace(bodyFromWire(goldenVectors[1].wire), "35=D", "035=D", 1)
+	wire := rawWire("FIX.4.4", strconv.Itoa(len(body)), body)
+
+	msg, err := NewParser(strings.NewReader(wire)).ReadMessage()
+	if err != nil {
+		t.Fatalf("valid raw checksum rejected: %v", err)
+	}
+	if got := msg.MsgType(); got != "D" {
+		t.Fatalf("MsgType = %q, want D", got)
+	}
+}
+
+func TestParserRejectsMalformedChecksumFields(t *testing.T) {
+	base := wireWithChecksumValue(t, 7)
+	original := base[strings.LastIndex(base, "10=")+3 : strings.LastIndex(base, string(soh))]
+	wrong := fmt.Sprintf("%03d", (mustAtoi(t, original)+1)%256)
+	tests := []struct {
+		name     string
+		checksum string
+	}{
+		{name: "one digit", checksum: "7"},
+		{name: "four digits", checksum: "0007"},
+		{name: "non-digit", checksum: "abc"},
+		{name: "wrong checksum", checksum: wrong},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wire := replaceChecksum(base, tt.checksum)
+			if _, err := NewParser(strings.NewReader(wire)).ReadMessage(); !errors.Is(err, ErrGarbled) {
+				t.Fatalf("ReadMessage error = %v, want ErrGarbled", err)
+			}
+		})
+	}
+}
+
+func TestParserLengthPrefixedDataWithEmbeddedSOH(t *testing.T) {
+	data := "A\x01B=C"
+	builder := NewBuilder(MsgTypeNewOrderSingle, "CLIENT", "FXPBRIDGE", 1)
+	builder.Set(95, strconv.Itoa(len(data)))
+	builder.Set(96, data)
+	first := builder.Build()
+	second := NewBuilder(MsgTypeHeartbeat, "CLIENT", "FXPBRIDGE", 2).Build()
+	stream := append(append([]byte{}, first...), second...)
+
+	parser := NewParser(bytes.NewReader(stream))
+	msg, err := parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("message with RawData rejected: %v", err)
+	}
+	if got := msg.Get(96); got != data {
+		t.Fatalf("RawData = %q, want %q", got, data)
+	}
+	msg, err = parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("second message after RawData: %v", err)
+	}
+	if got := msg.MsgType(); got != MsgTypeHeartbeat {
+		t.Fatalf("second MsgType = %q, want %q", got, MsgTypeHeartbeat)
+	}
+}
+
+func TestParserRejectsWrongLengthAndResyncs(t *testing.T) {
+	data := "ABCDE"
+	builder := NewBuilder(MsgTypeNewOrderSingle, "CLIENT", "FXPBRIDGE", 1)
+	builder.Set(95, strconv.Itoa(len(data)-1))
+	builder.Set(96, data)
+	bad := builder.Build()
+	good := NewBuilder(MsgTypeHeartbeat, "CLIENT", "FXPBRIDGE", 2).Build()
+	parser := NewParser(bytes.NewReader(append(append([]byte{}, bad...), good...)))
+
+	if _, err := parser.ReadMessage(); !errors.Is(err, ErrGarbled) {
+		t.Fatalf("wrong data length error = %v, want ErrGarbled", err)
+	}
+	msg, err := parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("parser did not resync after wrong data length: %v", err)
+	}
+	if got := msg.MsgType(); got != MsgTypeHeartbeat {
+		t.Fatalf("resynced MsgType = %q, want %q", got, MsgTypeHeartbeat)
+	}
+}
+
 // §3.6 sample: LogonAck FXPBRIDGE -> VICTIM, seq 1, HeartBtInt 30:
 // 35=A(5) 49=FXPBRIDGE(13) 56=VICTIM(10) 34=1(5) 52=<21 chars>(25) 98=0(5) 108=30(7) = 70.
 func TestLogonAckBodyLength(t *testing.T) {
@@ -121,6 +223,40 @@ func withBodyLength(wire string, n int) string {
 		sum += int(c)
 	}
 	return prefix + rest + "10=" + leftPad3(sum%256) + "\x01"
+}
+
+func bodyFromWire(wire string) string {
+	fields := strings.Split(wire, string(soh))
+	return strings.Join(fields[2:len(fields)-2], string(soh)) + string(soh)
+}
+
+func rawWire(beginString, bodyLength, body string) string {
+	prefix := "8=" + beginString + string(soh) + "9=" + bodyLength + string(soh)
+	sum := 0
+	for _, b := range []byte(prefix + body) {
+		sum += int(b)
+	}
+	return prefix + body + fmt.Sprintf("10=%03d%c", sum%256, soh)
+}
+
+func wireWithChecksumValue(t *testing.T, want int) string {
+	t.Helper()
+	bodyPrefix := "35=A\x0149=CLIENT\x0156=FXPBRIDGE\x0134=1\x0152=20261024-03:38:00.000\x01"
+	for n := 0; n < 512; n++ {
+		body := bodyPrefix + "58=" + strings.Repeat("A", n) + string(soh)
+		wire := rawWire("FIX.4.4", strconv.Itoa(len(body)), body)
+		value := wire[strings.LastIndex(wire, "10=")+3 : strings.LastIndex(wire, string(soh))]
+		if got, _ := strconv.Atoi(value); got == want {
+			return wire
+		}
+	}
+	t.Fatalf("could not construct message with checksum %03d", want)
+	return ""
+}
+
+func replaceChecksum(wire, checksum string) string {
+	start := strings.LastIndex(wire, "10=")
+	return wire[:start] + "10=" + checksum + string(soh)
 }
 
 func leftPad3(n int) string {

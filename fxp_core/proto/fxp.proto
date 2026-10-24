@@ -7,7 +7,8 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v1.1
+// FXP Protocol — v2.0
+// Version 2.0 shifts all enum numbers and is wire-breaking with v1.x.
 //
 // Design principles:
 //   - Field numbers are permanent wire identifiers. Never reuse
@@ -26,7 +27,7 @@ import "google/protobuf/timestamp.proto";
 // ============================================================
 
 message FXPHeader {
-  string protocol_version = 1; // e.g. "1.1"
+  string protocol_version = 1; // e.g. "2.0"
   uint64 sequence_number  = 2; // monotonically increasing per session
 }
 
@@ -68,9 +69,10 @@ message GapFillRequest {
 }
 
 enum EncryptionType {
-  NONE    = 0;
-  TLS_1_2 = 1;
-  TLS_1_3 = 2;
+  ENCRYPTION_TYPE_UNSPECIFIED = 0;
+  NONE                       = 1;
+  TLS_1_2                    = 2;
+  TLS_1_3                    = 3;
 }
 
 // ============================================================
@@ -78,56 +80,61 @@ enum EncryptionType {
 // ============================================================
 
 enum OrderType {
-  MARKET     = 0;
-  LIMIT      = 1;
-  STOP       = 2; // triggers market order when stop_price is reached
-  STOP_LIMIT = 3; // triggers limit order when stop_price is reached
+  ORDER_TYPE_UNSPECIFIED = 0;
+  MARKET                 = 1;
+  LIMIT                  = 2;
+  STOP                   = 3; // triggers market order when stop_price is reached
+  STOP_LIMIT             = 4; // triggers limit order when stop_price is reached
   // Firms may define proprietary types (pegged, VWAP, TWAP) using
   // values 100+ via the custom extension pattern.
 }
 
 enum OrderSide {
-  BUY  = 0;
-  SELL = 1;
+  ORDER_SIDE_UNSPECIFIED = 0;
+  BUY                    = 1;
+  SELL                   = 2;
   // SHORT_SELL is a regulatory distinction (Reg SHO) handled at the
   // OMS layer, not the matching layer. Firms needing it can use
   // custom field 1000 on NewOrderSingle for a short-sale indicator.
 }
 
 enum TimeInForce {
-  DAY      = 0; // expires at end of regular trading session
-  GTC      = 1; // Good Till Cancelled — persists across sessions
-  IOC      = 2; // Immediate or Cancel — fill available, cancel rest
-  FOK      = 3; // Fill or Kill — fill all immediately or cancel all
-  AT_OPEN  = 4; // participate in opening auction only
-  AT_CLOSE = 5; // participate in closing auction only (e.g. MOC)
-  GTD      = 6; // Good Till Date — expires at end of expire_date
+  TIME_IN_FORCE_UNSPECIFIED = 0; // no change
+  DAY                       = 1; // expires at end of regular trading session
+  GTC                       = 2; // Good Till Cancelled — persists across sessions
+  IOC                       = 3; // Immediate or Cancel — fill available, cancel rest
+  FOK                       = 4; // Fill or Kill — fill all immediately or cancel all
+  AT_OPEN                   = 5; // participate in opening auction only
+  AT_CLOSE                  = 6; // participate in closing auction only (e.g. MOC)
+  GTD                       = 7; // Good Till Date — expires at end of expire_date
   // AT_OPEN and AT_CLOSE require auction session support in the
   // matching engine (opening/closing auction phases).
 }
 
 enum OrderStatus {
-  ORDER_NEW              = 0; // accepted, working
-  ORDER_PENDING          = 1; // received, pending validation
-  ORDER_FILLED           = 2; // completely filled
-  ORDER_PARTIALLY_FILLED = 3; // partially filled, remainder working
-  ORDER_CANCELED         = 4; // canceled
-  ORDER_REJECTED         = 5; // rejected at validation
-  ORDER_REPLACED         = 6; // successfully replaced via cancel/replace
-  ORDER_EXPIRED          = 7; // expired (DAY at session end, GTD past date)
-  ORDER_PENDING_CANCEL   = 8; // cancel request received, not yet processed
-  ORDER_PENDING_REPLACE  = 9; // replace request received, not yet processed
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_NEW                = 1; // accepted, working
+  ORDER_PENDING            = 2; // received, pending validation
+  ORDER_FILLED             = 3; // completely filled
+  ORDER_PARTIALLY_FILLED   = 4; // partially filled, remainder working
+  ORDER_CANCELED           = 5; // canceled
+  ORDER_REJECTED           = 6; // rejected at validation
+  ORDER_REPLACED           = 7; // successfully replaced via cancel/replace
+  ORDER_EXPIRED            = 8; // expired (DAY at session end, GTD past date)
+  ORDER_PENDING_CANCEL     = 9; // cancel request received, not yet processed
+  ORDER_PENDING_REPLACE    = 10; // replace request received, not yet processed
 }
 
 enum ExecutionType {
-  EXEC_NEW             = 0; // order accepted — sent on NewOrderSingle ack
-  EXEC_FILLED          = 1; // full or partial fill (distinguish via order_status)
-  EXEC_CANCELED        = 2; // order canceled
-  EXEC_REPLACED        = 3; // order replaced (cancel/replace accepted)
-  EXEC_REJECTED        = 4; // order or cancel/replace rejected
-  EXEC_EXPIRED         = 5; // order expired at session end or GTD date
-  EXEC_PENDING_CANCEL  = 6; // cancel pending confirmation
-  EXEC_PENDING_REPLACE = 7; // replace pending confirmation
+  EXECUTION_TYPE_UNSPECIFIED = 0;
+  EXEC_NEW                   = 1; // order accepted — sent on NewOrderSingle ack
+  EXEC_FILLED                = 2; // full or partial fill (distinguish via order_status)
+  EXEC_CANCELED              = 3; // order canceled
+  EXEC_REPLACED              = 4; // order replaced (cancel/replace accepted)
+  EXEC_REJECTED              = 5; // order or cancel/replace rejected
+  EXEC_EXPIRED               = 6; // order expired at session end or GTD date
+  EXEC_PENDING_CANCEL        = 7; // cancel pending confirmation
+  EXEC_PENDING_REPLACE       = 8; // replace pending confirmation
 }
 
 // ============================================================
@@ -187,7 +194,7 @@ message OrderCancelReplaceRequest {
   string                    symbol            = 7;
   int64                     new_price         = 8; // 0 = no change
   int32                     new_quantity      = 9; // 0 = no change
-  TimeInForce               new_time_in_force = 10; // DAY (0) = no change
+  TimeInForce               new_time_in_force = 10; // TIME_IN_FORCE_UNSPECIFIED (0) = no change
   google.protobuf.Timestamp timestamp         = 11;
 }
 
@@ -288,17 +295,18 @@ message TradeCaptureReport {
 // ============================================================
 
 enum ErrorType {
-  SYSTEM_ERROR          = 0;
-  INVALID_ORDER         = 1;
-  SESSION_EXPIRED       = 2;
-  RATE_LIMIT_EXCEEDED   = 3;
-  ORDER_NOT_FOUND       = 4;
-  SYMBOL_NOT_SUPPORTED  = 5;
-  AUTH_FAILED           = 6;
-  SESSION_NOT_LOGGED_ON = 7;
-  DUPLICATE_ORDER_ID    = 8; // order_id reused within the session
-  INVALID_PRICE         = 9; // outside tick size or price band
-  INVALID_QUANTITY      = 10; // zero, or exceeds position/lot-size limits
+  ERROR_TYPE_UNSPECIFIED = 0;
+  SYSTEM_ERROR           = 1;
+  INVALID_ORDER          = 2;
+  SESSION_EXPIRED        = 3;
+  RATE_LIMIT_EXCEEDED    = 4;
+  ORDER_NOT_FOUND        = 5;
+  SYMBOL_NOT_SUPPORTED   = 6;
+  AUTH_FAILED            = 7;
+  SESSION_NOT_LOGGED_ON  = 8;
+  DUPLICATE_ORDER_ID     = 9; // order_id reused within the session
+  INVALID_PRICE          = 10; // outside tick size or price band
+  INVALID_QUANTITY       = 11; // zero, or exceeds position/lot-size limits
 }
 
 message ErrorMessage {

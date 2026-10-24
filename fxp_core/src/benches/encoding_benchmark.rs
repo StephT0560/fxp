@@ -70,7 +70,7 @@ fn make_fxp_new_order() -> fxp::FxpMessage {
     fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::NewOrder(fxp::NewOrderSingle {
             header: Some(fxp::FxpHeader {
-                protocol_version: "1.1".to_string(),
+                protocol_version: fxp_core::PROTOCOL_VERSION.to_string(),
                 sequence_number: SEQ_NUM,
             }),
             order_id:        ORDER_ID.to_string(),
@@ -78,7 +78,7 @@ fn make_fxp_new_order() -> fxp::FxpMessage {
             receiver:        RECEIVER.to_string(),
             symbol:          SYMBOL.to_string(),
             price:           PRICE_FIXED,
-            side:            0,
+            side:            fxp::OrderSide::Buy as i32,
             quantity:        QUANTITY,
             order_type:      fxp::OrderType::Limit as i32,
             time_in_force:   fxp::TimeInForce::Day as i32,
@@ -95,7 +95,7 @@ fn make_fxp_execution_report() -> fxp::FxpMessage {
     fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::ExecutionReport(fxp::ExecutionReport {
             header: Some(fxp::FxpHeader {
-                protocol_version: "1.1".to_string(),
+                protocol_version: fxp_core::PROTOCOL_VERSION.to_string(),
                 sequence_number: SEQ_NUM + 1,
             }),
             execution_id:      "EXEC-2024-01-15-000099".to_string(),
@@ -124,19 +124,19 @@ fn make_fxp_market_snapshot() -> fxp::FxpMessage {
         bids.push(fxp::MarketOrderBookEntry {
             price: PRICE_FIXED - (i as i64 * 10),
             size:  100 * (i as i32 + 1),
-            side:  0,
+            side:  fxp::OrderSide::Buy as i32,
         });
         asks.push(fxp::MarketOrderBookEntry {
             price: PRICE_FIXED + (i as i64 * 10) + 1,
             size:  100 * (i as i32 + 1),
-            side:  1,
+            side:  fxp::OrderSide::Sell as i32,
         });
     }
     fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::MarketDataSnapshot(
             fxp::MarketDataSnapshot {
                 header: Some(fxp::FxpHeader {
-                    protocol_version: "1.0".to_string(),
+                    protocol_version: fxp_core::PROTOCOL_VERSION.to_string(),
                     sequence_number: SEQ_NUM,
                 }),
                 symbol:        SYMBOL.to_string(),
@@ -155,7 +155,7 @@ fn make_fxp_incremental() -> fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
             fxp::MarketDataIncrementalUpdate {
                 header: Some(fxp::FxpHeader {
-                    protocol_version: "1.0".to_string(),
+                    protocol_version: fxp_core::PROTOCOL_VERSION.to_string(),
                     sequence_number: SEQ_NUM,
                 }),
                 symbol: SYMBOL.to_string(),

@@ -13,14 +13,14 @@ is tested under its best realistic conditions.
 - Rust toolchain: cargo 1.85.0
 - Go: 1.24.1
 - Rust encoding benchmarks: release build (`cargo bench`)
-- End-to-end benchmarks: debug build (`cargo run` / `go run`)
-- Pool size: 8 connections (Go Gateway ↔ Rust Core)
+- End-to-end benchmarks: debug and release builds (see Part 2)
+- Go connection pool default: `runtime.NumCPU()`; this machine had 8 logical CPUs, so the default was 8 connections
 
 ---
 
 ## Part 1 — Encoding Benchmarks (Rust)
 
-**Location:** `fxp_core/benches/encoding_benchmark.rs`
+**Location:** `fxp_core/src/benches/encoding_benchmark.rs`
 **Framework:** [Criterion.rs](https://github.com/bheisler/criterion.rs) v0.5
 **Runtime:** `cargo bench --bench encoding_benchmark`
 
@@ -82,7 +82,7 @@ optimising away the work being measured.
 
 **Key findings:**
 - FXP ties SBE on `NewOrderSingle` at 82 bytes each with realistic field lengths
-- `ExecutionReport` is 84 bytes (proto v1.1 with `leaves_qty`, `avg_px`, `cum_qty`) vs 192 FIX — 56% smaller
+- `ExecutionReport` is 84 bytes (proto v2.0 with `leaves_qty`, `avg_px`, `cum_qty`) vs 192 FIX — 56% smaller
 - FXP beats SBE on `MarketSnapshot` by 27% — Protobuf `repeated` fields are
   more compact than SBE fixed arrays for variable-depth order books
 - FXP reduces `MarketDataIncremental` by 70.6% vs FIX — the highest-frequency
@@ -139,11 +139,12 @@ FIX_44_text        6,078 µs   (1.6M orders/sec)    — 6.4x slower
 SBE_stack           112 µs   (89.2M orders/sec)
 ```
 
-> **Note on release vs debug:** The encoding benchmarks run under `cargo bench`
-> which uses the release profile automatically. The numbers above are production
-> release build figures. The end-to-end benchmarks in Part 2 use debug builds
-> (`cargo run` / `go run`) — release build Rust Core would show lower latency
-> at the same throughput.
+> **Note on release vs debug:** The encoding benchmarks run under `cargo bench`,
+> which uses the release profile automatically. The numbers above are release
+> figures. Part 2 records both debug and release end-to-end runs; the measured
+> release p50 is 21.8ms and the debug p50 is 17ms, while the release run has a
+> lower maximum latency. These are separate historical measurements, not a
+> guarantee that release always lowers p50.
 
 ---
 
@@ -163,9 +164,9 @@ engineering tradeoff, not a deficiency:
 | Size: MarketSnapshot | **123 bytes** | 168 bytes (FXP wins by 27%) |
 | Appropriate for | Open protocol ecosystem | Closed internal bus |
 
-SBE's decode speed advantage (286x) comes from the fact that "decoding" SBE
+SBE's decode speed advantage (272x) comes from the fact that "decoding" SBE
 is four array index reads with no field validation, schema lookup, or optional
-field handling. FXP at 430ns performs all three. In a system where messages
+field handling. FXP at 435ns performs all three. In a system where messages
 cross organisational boundaries and schemas must evolve, FXP's approach is
 the correct tradeoff.
 
@@ -193,13 +194,13 @@ Benchmark clients (N concurrent senders)
 Go Gateway
     ├── JWT auth (HS256 token validation)
     ├── Session management (per-connection state)
-    ├── Connection pool (8 persistent connections to Rust Core)
+    ├── Connection pool (`runtime.NumCPU()` default; 8 on this benchmark machine)
     └── orderClientMap (routes ExecutionReports back to originators)
     │  TCP, length-prefixed Protobuf frames
     ▼
 Rust Core
-    ├── SymbolRouter: per-symbol tokio tasks (25 parallel order books)
-    ├── Lock-free output channels (no SharedWriter mutex)
+    ├── SymbolRouter: per-symbol Tokio tasks (25 independent order books)
+    ├── Tokio mpsc channels; the symbol-to-task map uses a global mutex
     └── BTreeMap price-time priority matcher
     │  Protobuf ExecutionReport + MarketDataIncrementalUpdate frames
     ▼
@@ -249,10 +250,10 @@ fixed before final results were recorded:
 
 | Issue Found | Observable Symptom | Fix Applied |
 |---|---|---|
-| Single global mutex (`connLock`) on Rust Core connection | p50 latency 3.2s at concurrency=10 | 8-connection pool in Go |
-| All senders on same symbol (`ETH/USD`) | Order book mutex serialised all traffic | Symbol spread: 50 unique symbols |
-| Sequential Rust message processing | 2,916 fills at concurrency=50, all timeouts | Per-symbol tokio tasks (parallel) |
-| `Arc<Mutex<OwnedWriteHalf>>` (SharedWriter) | Write contention across symbol tasks | Lock-free `mpsc` output channels |
+| Single global mutex (`connLock`) on Rust Core connection | p50 latency 3.2s at concurrency=10 | Go pool defaulted to `runtime.NumCPU()` (8 on this machine) |
+| All senders on same symbol (`ETH/USD`) | One per-symbol task processes that symbol's messages in order | Symbol spread: 50 unique symbols |
+| Sequential Rust message processing | 2,916 fills at concurrency=50, all timeouts | Per-symbol Tokio tasks with independent order books |
+| `Arc<Mutex<OwnedWriteHalf>>` (SharedWriter) | Write contention across symbol tasks | Tokio `mpsc` output channel feeding the socket writer |
 | Latency measured across full send queue | p50 reported as 25s (queue depth, not RTT) | Rate-limited mode (`--rate` flag) |
 
 ---
@@ -284,26 +285,26 @@ Concurrency=50  orders=200   symbols=spread
   Total fills: 9,000/10,000 (90%)
 ```
 
-Zero errors across all concurrency levels. **Throughput is nearly identical between
-debug and release** (~2–5% variance within noise). This is the expected result — the
-throughput ceiling is the 8-connection Go pool, not Rust CPU cycles. With 50 senders
-sharing 8 connections, each connection services ~6 senders at peak. Increasing pool
-size would raise this ceiling; the Rust Core is not the bottleneck.
+Zero errors across the recorded throughput runs. The measured rates vary by
+concurrency and build: for example, the concurrency-50 samples are 1,449 orders/sec
+in debug and 1,369 orders/sec in release. The recorded machine's default pool has
+8 connections (`runtime.NumCPU()`); pool size is configurable with `SetPoolSize`.
 
 ---
 
 ### Latency Results (rate-limited, honest RTT measurement)
 
-Both builds measured with compiled binaries (`cargo build --release` + `go build`) for apples-to-apples comparison.
+The debug and release results below were recorded separately. The release run used
+`cargo build --release` plus `go build`.
 
-**Debug build (cargo run / go run — both interpreted):**
+**Debug build (`cargo run` / `go run`):**
 ```
 Concurrency=50   orders=200   rate=25/sec   symbols=spread
   p50:   17ms    p95:  237ms    p99:  330ms    Max: 3,050ms
   Market data fan-out: p95=443µs  p99=515µs
 ```
 
-**Release build (cargo build --release + go build — both compiled):**
+**Release build (`cargo build --release` + `go build`):**
 ```
 Concurrency=50   orders=200   rate=25/sec   symbols=spread
   p50:   21.8ms   p95:  313ms    p99:  409ms    Max: 803ms
@@ -314,15 +315,19 @@ Concurrency=50   orders=200   rate=25/sec   symbols=spread
 (3.8x improvement). The 3.05s debug outlier was first-time `SymbolRouter.get_or_create`
 symbol task spawn under unoptimised code — release eliminates most cold-start overhead.
 
-**p50 is comparable (17ms vs 21ms):** The slight increase in release p50 is expected —
-the rate-limited mode at 25 orders/sec per sender creates 1,250 aggregate orders/sec
-through 8 pool connections. Release Rust drains matches faster, changing queue depth
-timing slightly. Both numbers are genuine sub-25ms RTT through two process hops with
+**p50 is comparable (17ms vs 21.8ms):** The rate-limited mode at 25 orders/sec per
+sender creates 1,250 aggregate orders/sec through the default 8-connection pool
+(`runtime.NumCPU()` on this benchmark machine). The release sample has a slightly
+higher p50; these results do not establish a universal build-profile latency
+ordering. Both measured p50 values are below 25ms through two process hops with
 50 concurrent senders.
 
-**p95/p99 reflect pool contention, not Rust overhead:** With 50 senders sharing 8
-connections, ~6 senders share each connection at peak. The 313ms p95 is queue wait
-time, not matching time. Doubling the pool size to 16 connections would halve this tail.
+**Round-trip latency includes queueing across the stack:** The measurement spans
+sender scheduling, the Go Gateway pool, Rust dispatch and matching, and report
+delivery. With 50 senders and the default pool of 8 on this benchmark machine,
+senders share pooled connections. The result does not isolate engine matching
+latency. `SetPoolSize` can tune the pool; this document does not include a
+16-connection comparison.
 
 **Market data fan-out is build-agnostic:** p95 is 443–558µs across both builds,
 confirming the broadcast path is I/O bound, not CPU bound.
@@ -332,11 +337,20 @@ confirming the broadcast path is I/O bound, not CPU bound.
 ### How to Reproduce
 
 ```bash
-# Prerequisites — both servers must be running
-cd fxp_core && cargo run          # terminal 1
-cd go_gateway && go run main.go   # terminal 2
-
+# Set this in the gateway and benchmark terminals.
 export FXP_JWT_SECRET="dev-secret-change-in-production"
+
+# Debug build — run each command in a separate terminal
+# terminal 1
+cd fxp_core && cargo run
+# terminal 2
+cd go_gateway && go run main.go
+
+# Release build — run each command in a separate terminal
+# terminal 1
+cd fxp_core && cargo build --release && ./target/release/fxp_core
+# terminal 2
+cd go_gateway && go build -o gateway . && ./gateway
 
 # Throughput test (unlimited rate)
 go run benchmark/benchmark.go --concurrency 10 --orders 500
@@ -363,15 +377,15 @@ results with realistic payloads show:
 | Size reduction vs FIX | "up to 70%" | "50–71% depending on message type" |
 | vs SBE | not stated | "matches or beats SBE on market data" |
 | Encode speed | not stated | "6–8x faster encode than FIX" |
-| Decode speed | not stated | "6.2x faster decode than FIX" |
-| Roundtrip speed | not stated | "4.6x faster than FIX end-to-end" |
+| Decode speed | not stated | "6.9x faster decode than FIX" |
+| Roundtrip speed | not stated | "6.8x faster than FIX end-to-end" |
 | Throughput | not stated | "10.9M encodes/sec single thread (pre-allocated)" |
-| E2E latency | not stated | "p50 17ms at concurrency=50 (debug build)" |
+| E2E latency | not stated | "p50 21.8ms at concurrency=50 (release build; debug comparison 17ms)" |
 
 ### Who These Numbers Are For
 
 **For institutional trading desks migrating from FIX:**
-The 4.6x roundtrip speedup and 6.2x decode improvement are the most actionable
+The 6.8x roundtrip speedup and 6.9x decode improvement are the most actionable
 numbers. Network RTT to an exchange (typically 1–50ms) dominates protocol
 overhead — FXP's decode speed means the protocol is never the bottleneck.
 

@@ -19,13 +19,13 @@ FXP addresses all three:
 | Metric | FXP (Protobuf) | FIX 4.4 text | Improvement |
 |---|---|---|---|
 | `NewOrderSingle` size | 82 bytes | 164 bytes | **50% smaller** |
-| `ExecutionReport` size | 75 bytes | 192 bytes | **61% smaller** |
+| `ExecutionReport` size | 84 bytes | 192 bytes | **56% smaller** |
 | `MarketDataSnapshot` (5L) | 123 bytes | 331 bytes | **63% smaller, beats SBE** |
-| Encode throughput | 11.4M msg/sec | 1.7M msg/sec | **6.7x faster** |
-| Decode throughput | 2.3M msg/sec | 373K msg/sec | **6.2x faster** |
-| Round-trip (encode+decode) | 834 ns | 3,828 ns | **4.6x faster** |
+| Encode throughput | 10.9M msg/sec | 1.6M msg/sec | **6.7x faster** |
+| Decode throughput | 2.3M msg/sec | 335K msg/sec | **6.9x faster** |
+| Round-trip (encode+decode) | 527 ns | 3,606 ns | **6.8x faster** |
 
-End-to-end (order → ExecutionReport): **p50 21.8ms** at 50 concurrent senders, release build, both sides compiled.
+End-to-end (order → ExecutionReport): **p50 21.8ms** at 50 concurrent senders in the release-build benchmark (Rust `--release`, Go `go build`); the debug-build measurement is 17ms.
 
 ---
 
@@ -38,13 +38,13 @@ Client (TCP/WebSocket)
 Go Gateway  :8082
     ├── JWT authentication (HS256)
     ├── Session management
-    ├── Connection pool (8 persistent connections to Rust Core)
+    ├── Connection pool (`runtime.NumCPU()` default; 8 on this benchmark machine)
     └── orderClientMap (routes ExecutionReports back to originators)
     │
     ▼
 Rust Core  :8080
-    ├── SymbolRouter: one tokio task per symbol (fully parallel)
-    ├── Lock-free output channels (no shared write mutex)
+    ├── SymbolRouter: one Tokio task per symbol, messages delivered over mpsc
+    ├── Symbol-to-task map guarded by a global mutex
     ├── BTreeMap price-time priority order book
     └── Full order type support: Market, Limit, IOC, FOK, Stop, StopLimit
     │
@@ -53,10 +53,10 @@ Client ← ExecutionReport + MarketDataIncrementalUpdate
 ```
 
 **Key design decisions:**
-- Per-symbol tokio tasks own their order books exclusively — no `Arc<Mutex<OrderBook>>` contention across symbols
-- Lock-free `mpsc` output channels replace `SharedWriter` mutex — 25 concurrent symbol tasks write without coordination
-- 8-connection pool in Go — reduces per-sender lock contention vs single connection
-- Protobuf binary encoding with pre-allocated buffers — 11M encodes/sec single thread
+- Per-symbol Tokio tasks own their order books; the symbol-to-task map is protected by a global mutex
+- Tokio `mpsc` channels carry messages to the socket writer
+- The Go connection pool defaults to `runtime.NumCPU()` and can be tuned with `SetPoolSize`; the benchmark machine had 8 logical CPUs
+- Protobuf binary encoding with pre-allocated buffers — 10.9M encodes/sec single thread
 
 ---
 
@@ -64,22 +64,24 @@ Client ← ExecutionReport + MarketDataIncrementalUpdate
 
 | Type | Behaviour | Status |
 |---|---|---|
-| `LIMIT` Day/GTC/GTD | Rests on book, passive matching | ✅ |
+| `LIMIT` DAY/GTC/GTD | Rests on book, passive matching | ✅ |
 | `LIMIT` IOC | Fill available qty, cancel remainder | ✅ |
 | `LIMIT` FOK | Fill all or cancel all (liquidity check first) | ✅ |
 | `MARKET` | Sweep book at any price, cancel unfilled | ✅ |
 | `STOP` | Parks until `last_trade_price` crosses `stop_price`, then fires as market | ✅ |
 | `STOP_LIMIT` | Parks until stop triggers, then rests as limit | ✅ |
-| `AT_OPEN` | Participates in opening auction | ✅ (rests; auction batch pending) |
-| `AT_CLOSE` | Participates in closing auction (MOC) | ✅ (rests; auction batch pending) |
+| `AT_OPEN` | LIMIT orders rest on the book; no opening-auction matching | ❌ Not supported |
+| `AT_CLOSE` | LIMIT orders rest on the book; no closing-auction matching | ❌ Not supported |
+
+Resting orders are held in an in-memory book. `expire_date` is stored but not enforced, so DAY/GTD orders do not expire automatically and GTC orders are not persisted across process restarts. Price levels use FIFO order (`VecDeque::push_back` on add and `pop_front` on match), covered by `p01_time_priority_fifo_within_level`.
 
 **Cancel workflows:**
 - `OrderCancelRequest` — cancel a working order
-- `OrderCancelReplaceRequest` — atomically amend price/quantity
+- `OrderCancelReplaceRequest` — cancel the original and add a replacement; the replacement loses the original's FIFO priority
 
 ---
 
-## Proto Schema (v1.1)
+## Proto Schema (v2.0)
 
 Full institutional-grade message coverage:
 
@@ -94,7 +96,9 @@ TradeCaptureReport      — trade print feed
 ErrorMessage            — structured error responses
 ```
 
-**TimeInForce:** DAY · GTC · IOC · FOK · AT_OPEN · AT_CLOSE · GTD
+Version 2.0 shifts all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+
+**TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
 **ExecutionType:** EXEC_NEW · EXEC_FILLED · EXEC_CANCELED · EXEC_REPLACED · EXEC_REJECTED · EXEC_EXPIRED
 
@@ -107,14 +111,19 @@ Custom firm extensions: field numbers 1000–1999 reserved per message.
 ### Prerequisites
 
 - Rust toolchain (`rustup`)
-- Go 1.21+
-- `protoc` with `protoc-gen-go` plugin
+- Go 1.25.0+ (the modules select Go 1.26.10)
+- `protoc` (the generation script installs the pinned `protoc-gen-go` plugin when needed)
 
 ### 1. Generate protobuf bindings
 
 ```bash
-cd fxp_core/proto
-protoc --go_out=../../go_gateway --go_opt=paths=source_relative fxp.proto
+./scripts/gen_proto.sh
+```
+
+Equivalent raw command:
+
+```bash
+cd fxp_core/proto && mkdir -p ../../go_gateway/protobuf && protoc --go_out=../../go_gateway/protobuf --go_opt=paths=source_relative fxp.proto
 ```
 
 ### 2. Start Rust Core
@@ -194,6 +203,8 @@ Simulates a realistic institutional trading session with 4 participant archetype
 | CLOSE_AUCTION | 8% | 2× burst, AT_CLOSE/MOC orders |
 | CLOSED | 2% | Wind-down |
 
+The simulation labels these as auction phases, but the matching engine currently treats AT_OPEN/AT_CLOSE orders as ordinary resting limit orders; it does not run auction batch matching.
+
 **Sample output (120s, 5 symbols, 20 participants):**
 
 ```
@@ -214,32 +225,24 @@ NVDA   open=$875.00  last=$875.15  vol=38,359
 
 ## Tests
 
-```bash
-cd fxp_core
-cargo test
-# running 23 tests
-# test_full_order_lifecycle       ... ok
-# test_market_full_fill           ... ok
-# test_market_sweeps_multiple_levels ... ok
-# test_ioc_full_fill              ... ok
-# test_ioc_partial_then_cancel    ... ok
-# test_fok_full_fill              ... ok
-# test_fok_kill_insufficient_liquidity ... ok
-# test_fok_does_not_consume_book_on_kill ... ok
-# test_stop_fires_as_market_order ... ok
-# test_stop_limit_rests_after_trigger ... ok
-# test_drain_triggered_stops_buy  ... ok
-# test_drain_triggered_stops_sell ... ok
-# ... 23 passed; 0 failed
-```
+Counts observed at this revision:
+
+| Suite | Test count |
+|---|---:|
+| `fxp_core` (`cargo test`) | 52 unit tests |
+| `go_gateway/transport` (`go test -v`) | 17 top-level tests |
+| `fix_bridge` (`go test -v ./...`) | 47 top-level tests |
+| Python FIX E2E client | 11 scenarios, 27 reported checks |
+
+The Gateway count is from its `transport` test package; package-wide `go test` also reports the existing `benchmark.go:479` vet warning.
 
 ---
 
 ## Benchmark Results
 
-Full methodology and results: [`BENCHMARK.md`](BENCHMARK.md)
+Full methodology and results: [`Benchmark.md`](Benchmark.md)
 
-**Environment:** Windows 11, 8 logical cores, Rust debug build, Go `go run`
+**Benchmark environment:** Windows 11, 8 logical cores, Rust 1.85.0, Go 1.24.1. The E2E figures below distinguish debug and release builds.
 
 ### Encoding (Rust, release build)
 
@@ -251,25 +254,25 @@ Message size vs FIX 4.4 (realistic payloads):
   MarketDataIncremental: FXP 30B    FIX 102B   SBE 24B    (FXP -71%)
 
 Encode (pre-allocated buffer):
-  FXP:  87.9ns  (11.4M/sec)
-  FIX:  574ns   (1.7M/sec)   — 6.5x slower
-  SBE:  39.4ns  (25.4M/sec)  — 2.2x faster than FXP (no schema, pure memcpy)
+  FXP:  91.6ns  (10.9M/sec)
+  FIX:  618.4ns (1.6M/sec)   — 6.7x slower
+  SBE:  42.1ns  (23.8M/sec)  — 2.2x faster than FXP (no schema, pure memcpy)
 
 Decode:
-  FXP:  430ns   FIX: 2,681ns (6.2x slower)   SBE: 1.5ns
+  FXP:  435ns   FIX: 2,988ns (6.9x slower)   SBE: 1.6ns
 
-Roundtrip: FXP 834ns vs FIX 3,828ns (4.6x faster)
+Roundtrip: FXP 527ns vs FIX 3,606ns (6.8x faster)
 ```
 
-### End-to-End (Go gateway → Rust Core, debug build)
+### End-to-End (Go gateway → Rust Core)
 
 ```
-Throughput (unlimited rate):
+Debug-build throughput (unlimited rate):
   Concurrency=1:   1,454 orders/sec   0 errors
   Concurrency=10:  2,259 orders/sec   0 errors
   Concurrency=50:  1,449 orders/sec   0 errors  (98% fill rate)
 
-Latency (rate=25/sec, concurrency=50, symbols=spread):
+Release-build latency (rate=25/sec, concurrency=50, symbols=spread):
   p50:   21.8ms   p95:  313ms     p99:  409ms    Max: 803ms
   Market data fan-out: p95 < 1ms
 ```
@@ -283,20 +286,20 @@ fxp/
 ├── fxp_core/                    Rust matching engine
 │   ├── src/
 │   │   ├── server.rs            TCP server, per-symbol dispatch, stop trigger logic
-│   │   ├── lib.rs               Integration tests (23 tests)
+│   │   ├── lib.rs               Unit tests (52 tests)
+│   │   ├── benches/
+│   │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   │   └── order_book/
 │   │       ├── order.rs         Order struct, OrderType, TimeInForce enums
 │   │       ├── order_book.rs    BTreeMap price-time priority book
 │   │       ├── matcher.rs       Aggressive matching: Market/IOC/FOK/Stop
 │   │       └── execution_report.rs
-│   ├── proto/
-│   │   └── fxp.proto            Protocol schema v1.1
-│   └── benches/
-│       └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
+│   └── proto/
+│       └── fxp.proto            Protocol schema v2.0
 │
 ├── go_gateway/                  Go gateway
 │   ├── transport/
-│   │   ├── pool.go              8-connection pool to Rust Core
+│   │   ├── pool.go              Pool defaults to runtime.NumCPU()
 │   │   ├── tcp_server.go        TCP server, auth routing
 │   │   ├── common.go            Message router, market data fan-out
 │   │   ├── ws_server.go         WebSocket server
@@ -306,7 +309,16 @@ fxp/
 │   └── simulation/
 │       └── trading_day.go       Trading day simulation
 │
-└── BENCHMARK.md                 Full benchmark methodology and results
+├── fix_bridge/                  FIX 4.4 session, codec, and translators
+│   ├── main.go
+│   ├── codec/
+│   ├── session/
+│   └── translator/
+├── fix_test_client/
+│   └── fix_client.py            FIX E2E scenarios
+├── scripts/
+│   └── gen_proto.sh             Generate protobuf bindings
+└── Benchmark.md                 Full benchmark methodology and results
 ```
 
 ---
@@ -316,10 +328,10 @@ fxp/
 - [ ] Opening/closing auction batch matching at phase transitions
 - [ ] Stop/StopLimit trigger on live last-trade-price feed
 - [ ] `OrderCancelRequest` / `OrderCancelReplaceRequest` full round-trip in simulation
-- [ ] Release build benchmarks
+- [x] Release build benchmarks
 - [ ] CI/CD pipeline
 - [ ] TLS support (infrastructure exists in proto; not yet wired)
-- [ ] FIX 4.x bridge (inbound FIX → FXP translation layer)
+- [x] FIX 4.x bridge (inbound FIX → FXP translation layer)
 
 ---
 

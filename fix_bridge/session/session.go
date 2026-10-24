@@ -72,7 +72,10 @@ type Session struct {
 	// Auth validates Logon credentials; a nil Auth rejects every Logon.
 	Auth Authenticator
 	// Store keeps sent messages for ResendRequest.
-	Store MessageStore
+	Store         MessageStore
+	LogonTimeout  time.Duration
+	LogoutTimeout time.Duration
+	MaxLatency    time.Duration
 
 	// Identity
 	SenderCompID string // bridge's CompID
@@ -105,19 +108,23 @@ type Session struct {
 // NewSession creates a session for an accepted TCP connection.
 func NewSession(conn net.Conn, senderCompID string, handler Handler) *Session {
 	s := &Session{
-		conn:         conn,
-		parser:       codec.NewParser(conn),
-		handler:      handler,
-		Store:        NewMemoryStore(),
-		SenderCompID: senderCompID,
-		outSeqNum:    1,
-		inSeqNum:     1,
-		heartBtInt:   30, // default; overridden by client's Logon HeartBtInt
-		lastSent:     time.Now(),
-		state:        StateConnected,
-		sendCh:       make(chan []byte, 512),
-		done:         make(chan struct{}),
+		conn:          conn,
+		parser:        codec.NewParser(conn),
+		handler:       handler,
+		Store:         NewMemoryStore(),
+		SenderCompID:  senderCompID,
+		outSeqNum:     1,
+		inSeqNum:      1,
+		heartBtInt:    30, // default; overridden by client's Logon HeartBtInt
+		lastSent:      time.Now(),
+		state:         StateConnected,
+		sendCh:        make(chan []byte, 512),
+		done:          make(chan struct{}),
+		LogonTimeout:  10 * time.Second,
+		LogoutTimeout: 5 * time.Second,
+		MaxLatency:    120 * time.Second,
 	}
+	s.parser.SetMaxBodyLength(4096)
 	s.lastReceived.Store(time.Now().UnixNano())
 	return s
 }
@@ -139,7 +146,24 @@ func (s *Session) Run() {
 	}()
 	go s.writeLoop()
 	go s.heartbeatLoop()
+	if s.LogonTimeout > 0 {
+		go s.logonTimeoutLoop()
+	}
 	s.readLoop()
+}
+
+func (s *Session) logonTimeoutLoop() {
+	timer := time.NewTimer(s.LogonTimeout)
+	defer timer.Stop()
+	select {
+	case <-s.done:
+		return
+	case <-timer.C:
+		if s.State() == StateConnected {
+			log.Printf("[%s] Logon timeout after %v — closing", s.target(), s.LogonTimeout)
+			s.close()
+		}
+	}
 }
 
 // SendWithSeq allocates the next outbound MsgSeqNum, builds the frame with it,
@@ -255,19 +279,27 @@ func (s *Session) readLoop() {
 // routes it to the session-level handlers or the application Handler.
 func (s *Session) dispatch(msg *codec.Message) error {
 	msgType := msg.MsgType()
+	state := s.State()
 	seq, err := strconv.Atoi(msg.Get(codec.TagMsgSeqNum))
 	if err != nil || seq <= 0 {
-		if s.State() != StateLoggedOn {
+		if state != StateLoggedOn && state != StateLoggingOut {
 			return s.rejectLogon(msg, "missing or invalid MsgSeqNum (34)")
 		}
 		return fmt.Errorf("missing or invalid MsgSeqNum (34)")
 	}
 
-	if s.State() != StateLoggedOn {
+	if state != StateLoggedOn && state != StateLoggingOut {
 		if msgType != codec.MsgTypeLogon {
 			return s.rejectLogon(msg, fmt.Sprintf("first message must be Logon, got 35=%s", msgType))
 		}
+		if msg.Get(codec.TagBeginString) != "FIX.4.4" {
+			return s.rejectLogon(msg, fmt.Sprintf("unsupported BeginString %q", msg.Get(codec.TagBeginString)))
+		}
 		return s.handleLogon(msg, seq)
+	}
+
+	if msg.Get(codec.TagBeginString) != "FIX.4.4" {
+		return fmt.Errorf("BeginString mismatch: %q", msg.Get(codec.TagBeginString))
 	}
 
 	if msg.Get(codec.TagSenderCompID) != s.target() || msg.Get(codec.TagTargetCompID) != s.SenderCompID {
@@ -319,6 +351,14 @@ func (s *Session) dispatch(msg *codec.Message) error {
 	}
 	if msg.Get(codec.TagSendingTime) == "" {
 		s.sendReject(seq, codec.RejectRequiredTagMissing, "SendingTime (52) missing")
+		return nil
+	}
+	if reason, text := s.validateSendingTime(msg); reason != "" {
+		s.sendReject(seq, reason, text)
+		if reason == codec.RejectSendingTimeAccuracy {
+			s.sendLogout(text)
+			return io.EOF
+		}
 		return nil
 	}
 	if !validMsgType(msgType) {
@@ -377,6 +417,25 @@ func parseFIXTime(v string) (time.Time, error) {
 	return time.Parse("20060102-15:04:05", v)
 }
 
+func (s *Session) validateSendingTime(msg *codec.Message) (string, string) {
+	if s.MaxLatency <= 0 {
+		return "", ""
+	}
+	sendingTime, err := parseFIXTime(msg.Get(codec.TagSendingTime))
+	if err != nil {
+		return codec.RejectIncorrectDataFormat, "SendingTime (52) is not a UTCTimestamp"
+	}
+	now := time.Now()
+	latency := now.Sub(sendingTime)
+	if sendingTime.After(now) {
+		latency = sendingTime.Sub(now)
+	}
+	if latency > s.MaxLatency {
+		return codec.RejectSendingTimeAccuracy, "SendingTime (52) outside MaxLatency"
+	}
+	return "", ""
+}
+
 // checkPossDup validates OrigSendingTime(122) on a PossDupFlag=Y message.
 func checkPossDup(msg *codec.Message) (reason, text string) {
 	orig := msg.Get(codec.TagOrigSendingTime)
@@ -407,6 +466,9 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	if s.Auth == nil || s.Auth.Authenticate(sender, msg.Get(codec.TagPassword)) != nil {
 		return s.rejectLogon(msg, "authentication failed")
 	}
+	if reason, text := s.validateSendingTime(msg); reason != "" {
+		return s.rejectLogon(msg, text)
+	}
 
 	reset := msg.Get(codec.TagResetSeqNumFlag) == "Y"
 	if reset && seq != 1 {
@@ -431,6 +493,7 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	}
 	hbi := s.heartBtInt
 	s.state = StateLoggedOn
+	s.parser.SetMaxBodyLength(1_048_576)
 	s.stateMu.Unlock()
 	log.Printf("[%s] Logon accepted (HeartBtInt=%ds, reset=%v)", sender, hbi, reset)
 
@@ -479,12 +542,45 @@ func (s *Session) resetOutbound() {
 func (s *Session) handleLogout(msg *codec.Message) error {
 	reason := msg.Get(codec.TagText)
 	log.Printf("[%s] Logout received: %q", s.target(), reason)
-	s.setState(StateLoggingOut)
-	s.SendWithSeq(func(seq int) []byte {
-		return codec.NewLogout(s.SenderCompID, s.target(), seq, "")
-	})
-	s.handler.OnLogout(s, reason)
+	if s.State() != StateLoggingOut {
+		s.setState(StateLoggingOut)
+		s.SendWithSeq(func(seq int) []byte {
+			return codec.NewLogout(s.SenderCompID, s.target(), seq, "")
+		})
+	}
+	if s.handler != nil {
+		s.handler.OnLogout(s, reason)
+	}
 	return io.EOF
+}
+
+// Logout initiates a graceful Logout exchange with the peer.
+func (s *Session) Logout(reason string) {
+	s.stateMu.Lock()
+	if s.state != StateLoggedOn {
+		s.stateMu.Unlock()
+		return
+	}
+	s.state = StateLoggingOut
+	timeout := s.LogoutTimeout
+	s.stateMu.Unlock()
+
+	s.SendWithSeq(func(seq int) []byte {
+		return codec.NewLogout(s.SenderCompID, s.target(), seq, reason)
+	})
+	if timeout <= 0 {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case <-s.done:
+		case <-timer.C:
+			log.Printf("[%s] Logout timeout after %v — closing", s.target(), timeout)
+			s.close()
+		}
+	}()
 }
 
 func (s *Session) sendLogout(reason string) {

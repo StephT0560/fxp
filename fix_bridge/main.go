@@ -42,6 +42,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"time"
 
 	"fix_bridge/codec"
 	"fix_bridge/gateway"
@@ -86,14 +88,50 @@ func main() {
 	log.Printf("   FXP_JWT_SECRET: set ✓")
 	log.Printf("   FIX CompIDs allowed: %d", len(creds))
 
+	acceptFIXClients(listener, fixMaxConnections(), func(conn net.Conn) {
+		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
+		handleFIXClient(conn, *bridgeCompID, jwtSecret, auth)
+	})
+}
+
+func fixMaxConnections() int {
+	const defaultMax = 1024
+	value := os.Getenv("FXP_FIX_MAX_CONNS")
+	if value == "" {
+		return defaultMax
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		log.Printf("⚠️ ignoring invalid FXP_FIX_MAX_CONNS=%q, using %d", value, defaultMax)
+		return defaultMax
+	}
+	return n
+}
+
+func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net.Conn)) {
+	if maxConnections <= 0 {
+		maxConnections = 1
+	}
+	slots := make(chan struct{}, maxConnections)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Printf("accept error: %v", err)
-			continue
+			return
 		}
-		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
-		go handleFIXClient(conn, *bridgeCompID, jwtSecret, auth)
+		select {
+		case slots <- struct{}{}:
+			go func(conn net.Conn) {
+				defer func() {
+					_ = conn.Close()
+					<-slots
+				}()
+				handle(conn)
+			}(conn)
+		default:
+			log.Printf("FIX connection limit reached (%d); closing %s", maxConnections, conn.RemoteAddr())
+			_ = conn.Close()
+		}
 	}
 }
 
@@ -113,6 +151,9 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 
 	// Create the FIX session — TargetCompID is filled in when Logon arrives
 	sess := session.NewSession(conn, bridgeCompID, h)
+	sess.LogonTimeout = sessionDurationEnv("FXP_FIX_LOGON_TIMEOUT", sess.LogonTimeout)
+	sess.LogoutTimeout = sessionDurationEnv("FXP_FIX_LOGOUT_TIMEOUT", sess.LogoutTimeout)
+	sess.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", sess.MaxLatency)
 	sess.Auth = auth
 	h.sess = sess
 
@@ -130,6 +171,7 @@ type bridgeHandler struct {
 	jwtSecret    string
 	sess         *session.Session
 	gwClient     *gateway.Client
+	pending      pendingRequests
 }
 
 // OnLogon is called by the session after Logon is accepted.
@@ -155,13 +197,22 @@ func (h *bridgeHandler) OnLogon(sess *session.Session) {
 					h.sendBusinessReject(req, h.sess, "gateway unavailable")
 				}
 			}
-			// Send Logout to FIX client — gateway is unavailable
-			h.sess.SendWithSeq(func(seq int) []byte {
-				return codec.NewLogout(h.bridgeCompID, sess.TargetCompID, seq,
-					fmt.Sprintf("gateway unavailable: %v", err))
-			})
+			h.sess.Logout(fmt.Sprintf("gateway unavailable: %v", err))
 		}
 	}()
+}
+
+func sessionDurationEnv(name string, fallback time.Duration) time.Duration {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d < 0 {
+		log.Printf("⚠️ ignoring invalid %s=%q, using %v", name, value, fallback)
+		return fallback
+	}
+	return d
 }
 
 // OnLogout is called by the session when the FIX client logs out or disconnects.
@@ -187,7 +238,15 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		return
 	}
 
+	req := fixRequestFor(fxpMsg)
+	tracked := req != nil && isCancelOrReplace(req)
+	if tracked {
+		h.pending.add(req)
+	}
 	if err := h.gwClient.Send(fxpMsg); err != nil {
+		if tracked {
+			h.pending.take(req.Get(codec.TagClOrdID))
+		}
 		log.Printf("[%s] gateway send error: %v", sess.TargetCompID, err)
 		h.sendBusinessReject(msg, sess, "gateway unavailable: "+err.Error())
 	}
@@ -196,6 +255,14 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 // onFXPMessage is called by the gateway client for every inbound FXP frame.
 // Translates the FXP message to FIX and delivers to the FIX client.
 func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
+	if rep := msg.GetExecutionReport(); rep != nil {
+		if req := h.pending.cancelRequestReject(rep); req != nil {
+			h.sess.SendWithSeq(func(seq int) []byte {
+				return buildCancelReject(req, rep.OrderId, h.bridgeCompID, h.sess.TargetCompID, seq, rep.RejectReason)
+			})
+			return
+		}
+	}
 	// Sequence numbers come from the session; untranslated types (nil) consume none.
 	h.sess.SendWithSeq(func(seq int) []byte {
 		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq)
@@ -228,19 +295,7 @@ func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, 
 		return b.Build()
 
 	case codec.MsgTypeOrderCancelRequest, codec.MsgTypeOrderCancelReplaceRequest:
-		b := codec.NewBuilder(codec.MsgTypeOrderCancelReject, bridgeCompID, targetCompID, seq)
-		b.Set(codec.TagOrderID,     "NONE")
-		b.Set(codec.TagClOrdID,     msg.Get(codec.TagClOrdID))
-		b.Set(codec.TagOrigClOrdID, msg.Get(codec.TagOrigClOrdID))
-		b.Set(codec.TagOrdStatus,   codec.OrdStatusRejected)
-		b.Set(codec.TagCxlRejReason, "0") // Too late to cancel
-		if msg.MsgType() == codec.MsgTypeOrderCancelReplaceRequest {
-			b.Set(codec.TagCxlRejResponseTo, "2")
-		} else {
-			b.Set(codec.TagCxlRejResponseTo, "1")
-		}
-		b.Set(codec.TagText, reason)
-		return b.Build()
+		return buildCancelReject(msg, "NONE", bridgeCompID, targetCompID, seq, reason)
 
 	default:
 		b := codec.NewBuilder(codec.MsgTypeBusinessMessageReject, bridgeCompID, targetCompID, seq)

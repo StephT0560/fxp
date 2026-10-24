@@ -19,6 +19,7 @@ package codec
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -91,13 +92,21 @@ func garbled(format string, args ...any) error {
 
 // Parser reads FIX messages from a buffered reader.
 type Parser struct {
-	r      *bufio.Reader
-	resync bool
+	r             *bufio.Reader
+	resync        bool
+	maxBodyLength int
 }
 
 // NewParser creates a parser reading from r.
 func NewParser(r io.Reader) *Parser {
-	return &Parser{r: bufio.NewReaderSize(r, 65536)}
+	return &Parser{r: bufio.NewReaderSize(r, 65536), maxBodyLength: 1_048_576}
+}
+
+// SetMaxBodyLength sets the maximum accepted BodyLength.
+func (p *Parser) SetMaxBodyLength(n int) {
+	if n > 0 {
+		p.maxBodyLength = n
+	}
 }
 
 // ReadMessage reads one complete FIX message from the stream.
@@ -135,30 +144,30 @@ func (p *Parser) skipToBeginString() error {
 
 func (p *Parser) readMessage() (*Message, error) {
 	// Step 1: Read tag 8 (BeginString) — must be first
-	tag, val, err := p.readField()
+	tag, beginString, rawBeginString, err := p.readField()
 	if err != nil {
 		return nil, err
 	}
 	if tag != TagBeginString {
 		return nil, garbled("expected tag 8 (BeginString), got tag %d", tag)
 	}
-	if !strings.HasPrefix(val, "FIX.4") {
-		return nil, garbled("unsupported BeginString: %q (expected FIX.4.x)", val)
+	if !strings.HasPrefix(beginString, "FIX.4") {
+		return nil, garbled("unsupported BeginString: %q (expected FIX.4.x)", beginString)
 	}
 
 	// Step 2: Read tag 9 (BodyLength)
-	tag, val, err = p.readField()
+	tag, bodyLengthValue, rawBodyLength, err := p.readField()
 	if err != nil {
 		return nil, err
 	}
 	if tag != TagBodyLength {
 		return nil, garbled("expected tag 9 (BodyLength), got tag %d", tag)
 	}
-	bodyLen, err := strconv.Atoi(val)
+	bodyLen, err := strconv.Atoi(bodyLengthValue)
 	if err != nil {
-		return nil, garbled("invalid BodyLength %q: %v", val, err)
+		return nil, garbled("invalid BodyLength %q: %v", bodyLengthValue, err)
 	}
-	if bodyLen <= 0 || bodyLen > 1_048_576 {
+	if bodyLen <= 0 || bodyLen > p.maxBodyLength {
 		return nil, garbled("BodyLength %d out of range", bodyLen)
 	}
 
@@ -184,33 +193,47 @@ func (p *Parser) readMessage() (*Message, error) {
 	}
 
 	// The field immediately after the body must be tag 10 (CheckSum).
-	tag, val, err = p.readField()
+	tag, checksumValue, _, err := p.readField()
 	if err != nil {
 		return nil, fmt.Errorf("reading CheckSum: %w", err)
 	}
 	if tag != TagCheckSum {
 		return nil, garbled("incorrect BodyLength %d: expected tag 10 after body, got tag %d", bodyLen, tag)
 	}
-	fields = append(fields, Field{TagCheckSum, val})
+	if len(checksumValue) != 3 {
+		return nil, garbled("CheckSum must be exactly three ASCII digits, got %q", checksumValue)
+	}
+	for _, b := range []byte(checksumValue) {
+		if b < '0' || b > '9' {
+			return nil, garbled("CheckSum must be exactly three ASCII digits, got %q", checksumValue)
+		}
+	}
+	expectedChecksum, _ := strconv.Atoi(checksumValue)
+	checksumSum := 0
+	for _, raw := range [][]byte{[]byte(rawBeginString), []byte(rawBodyLength), body} {
+		for _, b := range raw {
+			checksumSum += int(b)
+		}
+	}
+	actualChecksum := checksumSum % 256
+	if actualChecksum != expectedChecksum {
+		return nil, garbled("checksum mismatch: expected %03d, computed %03d", expectedChecksum, actualChecksum)
+	}
+	fields = append(fields, Field{TagCheckSum, checksumValue})
 
 	// Step 5: Build message — prepend tag 8 and 9
 	msg := &Message{
 		Tags:   make([]Field, 0, 2+len(fields)),
 		Fields: make(map[int]string, 2+len(fields)),
 	}
-	msg.Tags = append(msg.Tags, Field{TagBeginString, "FIX.4.4"})
-	msg.Fields[TagBeginString] = "FIX.4.4"
-	msg.Tags = append(msg.Tags, Field{TagBodyLength, strconv.Itoa(bodyLen)})
-	msg.Fields[TagBodyLength] = strconv.Itoa(bodyLen)
+	msg.Tags = append(msg.Tags, Field{TagBeginString, beginString})
+	msg.Fields[TagBeginString] = beginString
+	msg.Tags = append(msg.Tags, Field{TagBodyLength, bodyLengthValue})
+	msg.Fields[TagBodyLength] = bodyLengthValue
 
 	for _, f := range fields {
 		msg.Tags = append(msg.Tags, f)
 		msg.Fields[f.Tag] = f.Value
-	}
-
-	// Step 6: Validate checksum
-	if err := validateChecksum(msg); err != nil {
-		return nil, garbled("%v", err)
 	}
 
 	return msg, nil
@@ -255,73 +278,53 @@ func parseFields(data []byte) ([]Field, error) {
 		}
 
 		fields = append(fields, Field{Tag: tag, Value: value})
+		if dataTag, ok := lengthDataTags[tag]; ok {
+			dataLength, err := strconv.Atoi(value)
+			if err != nil || dataLength < 0 {
+				return nil, fmt.Errorf("invalid length for tag %d: %q", tag, value)
+			}
+			prefix := []byte(strconv.Itoa(dataTag) + "=")
+			if !bytes.HasPrefix(remaining, prefix) {
+				return nil, fmt.Errorf("length tag %d must be followed by data tag %d", tag, dataTag)
+			}
+			dataAndDelimiter := remaining[len(prefix):]
+			if dataLength >= len(dataAndDelimiter) {
+				return nil, fmt.Errorf("data tag %d shorter than declared length %d", dataTag, dataLength)
+			}
+			if dataAndDelimiter[dataLength] != soh {
+				return nil, fmt.Errorf("data tag %d length %d does not end at SOH", dataTag, dataLength)
+			}
+			fields = append(fields, Field{Tag: dataTag, Value: string(dataAndDelimiter[:dataLength])})
+			remaining = dataAndDelimiter[dataLength+1:]
+		}
 	}
 
 	return fields, nil
 }
 
-// validateChecksum verifies tag 10 against the sum of all preceding bytes.
-// FIX checksum = sum of ASCII values of all bytes before tag 10, mod 256.
-// Tag 10 must be the last field.
-func validateChecksum(msg *Message) error {
-	checksumStr := msg.Get(TagCheckSum)
-	if checksumStr == "" {
-		return fmt.Errorf("missing CheckSum (tag 10)")
-	}
-	expected, err := strconv.Atoi(checksumStr)
-	if err != nil {
-		return fmt.Errorf("invalid CheckSum value %q", checksumStr)
-	}
-
-	// Recompute checksum over all bytes except tag 10 itself
-	var sum int
-	for _, f := range msg.Tags {
-		if f.Tag == TagCheckSum {
-			break
-		}
-		sum += checksumBytes(f.Tag, f.Value)
-	}
-	actual := sum % 256
-
-	if actual != expected {
-		return fmt.Errorf("checksum mismatch: expected %03d, computed %03d", expected, actual)
-	}
-	return nil
-}
-
-// checksumBytes computes the byte sum of "TAG=VALUE\x01"
-func checksumBytes(tag int, value string) int {
-	s := strconv.Itoa(tag) + "=" + value + string(soh)
-	var sum int
-	for _, b := range []byte(s) {
-		sum += int(b)
-	}
-	return sum
-}
-
 // readField reads one SOH-terminated "tag=value\x01" pair from the reader.
-func (p *Parser) readField() (int, string, error) {
+func (p *Parser) readField() (int, string, string, error) {
 	// Read up to SOH
-	s, err := p.r.ReadString(soh)
+	raw, err := p.r.ReadString(soh)
 	if err != nil {
-		if err == io.EOF && len(s) > 0 {
-			return 0, "", fmt.Errorf("connection closed mid-field")
+		if err == io.EOF && len(raw) > 0 {
+			return 0, "", "", fmt.Errorf("connection closed mid-field")
 		}
-		return 0, "", err
+		return 0, "", "", err
 	}
 
 	// Strip trailing SOH
-	s = strings.TrimSuffix(s, string(soh))
+	field := strings.TrimSuffix(raw, string(soh))
 
-	eqIdx := strings.IndexByte(s, '=')
+	eqIdx := strings.IndexByte(field, '=')
 	if eqIdx <= 0 {
-		return 0, "", garbled("malformed field %q: missing '='", s)
+		return 0, "", "", garbled("malformed field %q: missing '='", field)
 	}
 
-	tag, err := strconv.Atoi(s[:eqIdx])
+	tag, err := strconv.Atoi(field[:eqIdx])
 	if err != nil {
-		return 0, "", garbled("invalid tag %q: %v", s[:eqIdx], err)
+		return 0, "", "", garbled("invalid tag %q: %v", field[:eqIdx], err)
 	}
 
-	return tag, s[eqIdx+1:], nil
+	return tag, field[eqIdx+1:], raw, nil
 }

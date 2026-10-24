@@ -137,6 +137,53 @@ func TestProvisionalRouteLifecycle(t *testing.T) {
 	}
 }
 
+func TestInvalidNewOrderIsRejectedWithoutForwarding(t *testing.T) {
+	client, peer := pipes(t)
+	core, corePeer := net.Pipe()
+	oldPool := corePool
+	corePool = make(chan *pooledConn, 1)
+	corePool <- &pooledConn{conn: core}
+	t.Cleanup(func() {
+		corePool = oldPool
+		core.Close()
+		corePeer.Close()
+	})
+
+	coreBytes := make(chan []byte, 1)
+	go func() {
+		_ = corePeer.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(corePeer, buf); err == nil {
+			n := binary.BigEndian.Uint32(buf)
+			body := make([]byte, n)
+			if _, err := io.ReadFull(corePeer, body); err == nil {
+				coreBytes <- body
+			}
+		}
+	}()
+	done := make(chan struct{})
+	go func() {
+		HandleFXPMessage(client, newOrder(0, 1, 1))
+		close(done)
+	}()
+
+	rep := readReport(t, peer)
+	if rep.OrderId != "enum-test" || rep.ExecutionType != protobuf.ExecutionType_EXEC_REJECTED ||
+		rep.OrderStatus != protobuf.OrderStatus_ORDER_REJECTED || rep.RejectReason != "side is required" ||
+		rep.Symbol != "AAPL" || rep.Side != 0 {
+		t.Fatalf("unexpected enum reject: %+v", rep)
+	}
+	select {
+	case body := <-coreBytes:
+		t.Fatalf("invalid NewOrder reached core: %x", body)
+	case <-time.After(300 * time.Millisecond):
+	}
+	<-done
+	if _, ok := orderClientMap.Load("enum-test"); ok {
+		t.Fatal("invalid order route was registered")
+	}
+}
+
 // A cancel from a second session of the same trader: its reject goes only to
 // the requester; a successful cancel reaches both the requester and the
 // session that placed the order. Fills keep the original route.
