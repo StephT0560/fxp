@@ -33,3 +33,6 @@ out/
 
 # Logs and temporary
 *.log
+# Python
+__pycache__/
+fix_store/

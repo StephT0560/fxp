@@ -24,6 +24,7 @@ Usage:
 """
 
 import sys
+import json
 import os
 import socket
 import time
@@ -78,6 +79,11 @@ def parse_message(data):
                 fields[int(tag)] = val
             except ValueError:
                 pass
+    # Ordered (tag, value) pairs: repeating groups repeat tags, which the dict collapses.
+    fields['tags'] = [
+        (int(t), v) for t, _, v in (p.partition('=') for p in data.decode(errors='replace').split(SOH))
+        if t.isdigit()
+    ]
     return fields
 
 def read_message(sock):
@@ -155,6 +161,7 @@ class FIXSession:
         self.seq     = 1
         self.sock    = None
         self.inbox   = queue.Queue()  # inbound ExecutionReports
+        self.md_inbox = queue.Queue() # inbound MarketData W/X
         self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
@@ -225,6 +232,18 @@ class FIXSession:
                 continue
         return None
 
+    def wait_for_md(self, msg_type, match=lambda m: True, timeout=4.0):
+        """Wait for a MarketData message of msg_type satisfying match(msg)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                msg = self.md_inbox.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if msg.get(35) == msg_type and match(msg):
+                return msg
+        return None
+
     def drain(self, seconds=0.5):
         """Drain any pending messages from the inbox."""
         time.sleep(seconds)
@@ -259,6 +278,8 @@ class FIXSession:
                 # Route to inbox for test assertions
                 if msg_type in ('8', '9'):
                     self.inbox.put(msg)
+                elif msg_type in ('W', 'X'):
+                    self.md_inbox.put(msg)
 
             except socket.timeout:
                 continue
@@ -459,10 +480,11 @@ def test_stop_order(s, r):
     updated by actual fills. The resting buy + aggressive sell creates the fill.
     """
     print('\n─── test_stop_order ─────────────────────────────────────────')
-    sym      = 'AAPL'
+    sym      = 'STPX'  # own symbol: no earlier prints, so the stop must park
     rest_id  = order_id('STP')   # resting buy that provides liquidity
     stop_id  = order_id('STS')   # buy stop that should trigger
     aggr_id  = order_id('STA')   # aggressive sell that creates the fill
+    liq_id   = order_id('STL')   # resting sell the triggered stop executes against
 
     # Step 1: Place resting buy @ 185.00 (provides liquidity for the aggressive sell)
     s.new_order(rest_id, sym, '1', 100, '2', price=185.00,
@@ -474,6 +496,11 @@ def test_stop_order(s, r):
                 description=f'BUY STOP 50 {sym} stop@185.00')
     time.sleep(0.3)
 
+    # Liquidity above the stop for the triggered stop (market) to execute against
+    s.new_order(liq_id, sym, '2', 50, '2', price=186.00,
+                description=f'SELL 50 {sym} @186.00 (resting, stop liquidity)')
+    r.assert_exec('stop liquidity acknowledged', s.wait_for(order_id=liq_id, exec_type='0', timeout=3.0), '0', '0')
+
     # Step 3: Aggressive sell @ 185.00 crosses the resting buy → sets last_trade=185.00
     s.new_order(aggr_id, sym, '2', 100, '2', price=185.00, tif='3',
                 description=f'SELL IOC 100 {sym} @185.00 (triggers stop)')
@@ -484,13 +511,10 @@ def test_stop_order(s, r):
 
     # Step 5: Stop should now trigger — wait for its fill
     stop_fill = s.wait_for(order_id=stop_id, exec_type='F', timeout=4.0)
-    if stop_fill:
-        r.assert_exec('stop triggered and filled', stop_fill, 'F')
-    else:
-        # Stop may not trigger if book is empty after the IOC — acceptable
-        # since stop triggers require liquidity to execute against
-        print(f'  ⚠️  stop not triggered (empty book after IOC) — parking acknowledged')
-        r.passed += 1  # not a failure — stop is parked correctly
+    r.assert_exec('stop triggered and filled', stop_fill, 'F', '2')
+    if stop_fill and stop_fill.get(31) != '186.00':
+        print(f'  {FAIL} stop filled at {stop_fill.get(31)}, want 186.00')
+        r.failed += 1
 
     s.drain(1.0)
 
@@ -676,6 +700,62 @@ def test_outbound_sequence(s, r):
     assert_gap_free(r, 'fresh session', seqs)
 
 
+def md_group(msg, tags):
+    """Entries of the NoMDEntries(268) group as tuples of the given tags."""
+    group = [(t, v) for t, v in msg['tags'] if t in tags]
+    width = len(tags)
+    return [tuple(v for _, v in group[i:i + width]) for i in range(0, len(group), width)]
+
+
+def test_market_data(s, r):
+    """V subscribe → W carries every book level, X carries 262/269 per entry."""
+    print('\n─── test_market_data ────────────────────────────────────────')
+    sym    = 'MDSYM'
+    req_id = order_id('MDR')
+    sess = FIXSession(s.host, s.port, 'MDCHECK01', s.target, verbose=s.verbose)
+    sess.connect(); sess.logon()
+    try:
+        book = [('1', 10, 10.00), ('1', 20, 9.90), ('2', 30, 10.10), ('2', 40, 10.20)]
+        for side, qty, px in book:
+            oid = order_id('MDB')
+            sess.new_order(oid, sym, side, qty, '2', price=px, description=f'{side} {qty} {sym} @{px:.2f}')
+            if not sess.wait_for(order_id=oid, exec_type='0', timeout=3.0):
+                print(f'  {FAIL} book order {oid} not acknowledged'); r.failed += 1; return
+
+        sess.send('V', [(262, req_id), (263, '1'), (264, '0'), (267, '2'), (269, '0'), (269, '1'),
+                        (146, '1'), (55, sym)], f'MarketDataRequest {req_id}')
+        snap = sess.wait_for_md('W', lambda m: m.get(55) == sym)
+        want = [('0', '10.00', '10'), ('0', '9.90', '20'), ('1', '10.10', '30'), ('1', '10.20', '40')]
+        got = md_group(snap, (269, 270, 271)) if snap else None
+        counts = {t: sum(1 for tag, _ in snap['tags'] if tag == t) for t in (269, 270, 271)} if snap else {}
+        if snap and snap.get(262) == req_id and snap.get(268) == '4' and got == want \
+                and all(n == 4 for n in counts.values()):
+            print(f'  {PASS} W 262={req_id} 268=4 with all 4 levels')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} W snapshot incomplete: {snap and snap["tags"]}')
+            r.failed += 1
+
+        aggr = order_id('MDA')
+        sess.new_order(aggr, sym, '1', 30, '2', price=10.10, description=f'BUY 30 {sym} @10.10 (lifts offer)')
+        # The fill updates the resting offer level: 279=1 (Change) with 269=1 (Offer).
+        fill = ('1', '1', sym, '10.10', '30')
+        inc = sess.wait_for_md('X', lambda m: fill in md_group(m, (279, 269, 55, 270, 271)))
+        entries = md_group(inc, (279, 269, 55, 270, 271)) if inc else None
+        if inc and inc.get(262) == req_id and inc.get(268) == str(len(entries)) \
+                and fill in entries:
+            print(f'  {PASS} X 262={req_id} 268={len(entries)} trade on offer side (269=1)')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} X incremental missing 262/269 group: {inc and inc["tags"]}')
+            r.failed += 1
+
+        sess.send('V', [(262, req_id), (263, '2'), (146, '1'), (55, sym)], f'Unsubscribe {req_id}')
+    finally:
+        sess.logout()
+    assert_gap_free(r, 'market data session', sess.out_seqs)
+
+
 # ── Test registry ─────────────────────────────────────────────────────────────
 
 TESTS = {
@@ -690,6 +770,78 @@ TESTS = {
     'cancel_filled_order': test_cancel_filled_order,
     'cross_session_cancel': test_cross_session_cancel,
     'outbound_sequence':   test_outbound_sequence,
+    'market_data':         test_market_data,
+}
+
+# ── Durable session (bridge killed and restarted between the two phases) ─────
+
+DURABLE_STATE = os.environ.get('FXP_E2E_DURABLE_STATE', 'durable.state')
+LOGON_NO_RESET = [(98, '0'), (108, '30')]
+
+
+def durable_before_kill(args, r):
+    """Logon without reset, get an ExecutionReport, record sequence state, then
+    hold the session open until the bridge is killed under it."""
+    print('\n─── durable_before_kill ─────────────────────────────────────')
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.connect()
+    sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset)')
+    time.sleep(0.6)
+    oid = order_id('DUR')
+    sess.new_order(oid, 'DURX', '1', 10, '2', price=5.00, description='BUY 10 DURX @5.00')
+    er = sess.wait_for(order_id=oid, exec_type='0', timeout=3.0)
+    if not r.assert_exec('order acknowledged before kill', er, '0', '0'):
+        return
+    state = {'next_seq': sess.seq, 'last_out': max(n for _, n in sess.out_seqs),
+             'er_seq': int(er.get(34)), 'order_id': oid}
+    with open(DURABLE_STATE + '.tmp', 'w') as f:
+        json.dump(state, f)
+    os.replace(DURABLE_STATE + '.tmp', DURABLE_STATE)
+    sess._thread.join(timeout=30)
+    if sess._thread.is_alive():
+        print(f'  {FAIL} bridge was not killed')
+        r.failed += 1
+    else:
+        print(f'  {PASS} session dropped by bridge kill (state {state})')
+        r.passed += 1
+
+
+def durable_after_restart(args, r):
+    """After restart, Logon resumes the stored sequence numbers and a
+    ResendRequest replays the pre-kill ExecutionReport."""
+    print('\n─── durable_after_restart ───────────────────────────────────')
+    with open(DURABLE_STATE) as f:
+        state = json.load(f)
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.seq = state['next_seq']
+    sess.connect()
+    try:
+        sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset) after restart')
+        time.sleep(0.6)
+        ack = sess.out_seqs[:1]
+        want = [('A', state['last_out'] + 1)]
+        if ack == want:
+            print(f'  {PASS} Logon ack continues outbound sequence: 34={want[0][1]}')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} Logon ack after restart {ack}, want {want}')
+            r.failed += 1
+        er_seq = str(state['er_seq'])
+        sess.send('2', [(7, er_seq), (16, er_seq)], f'ResendRequest {er_seq}..{er_seq}')
+        re = sess.wait_for(order_id=state['order_id'], exec_type='0', timeout=3.0)
+        if re and re.get(43) == 'Y' and re.get(34) == er_seq:
+            print(f'  {PASS} pre-kill ExecutionReport resent with 34={er_seq} 43=Y')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} pre-kill ExecutionReport not resent: {re}')
+            r.failed += 1
+    finally:
+        sess.logout()
+
+
+DURABLE_PHASES = {
+    'durable_before_kill':   durable_before_kill,
+    'durable_after_restart': durable_after_restart,
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -709,6 +861,15 @@ def main():
                     help='Logon Password(554) (default: $FXP_FIX_PASSWORD)')
     args = ap.parse_args()
     FIX_PASSWORD = args.password
+
+    if args.test in DURABLE_PHASES:
+        runner = TestRunner(None)
+        try:
+            DURABLE_PHASES[args.test](args, runner)
+        except Exception as e:
+            print(f'  {FAIL} test crashed: {e}')
+            runner.failed += 1
+        sys.exit(0 if runner.summary() else 1)
 
     if args.test != 'all' and args.test not in TESTS:
         print(f'Unknown test: {args.test}')

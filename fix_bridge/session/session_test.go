@@ -3,6 +3,7 @@
 package session
 
 import (
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -48,5 +49,55 @@ func TestSendWithSeqBackpressureClosesSession(t *testing.T) {
 	case <-s.done:
 	default:
 		t.Fatal("session not closed after send backpressure timeout")
+	}
+}
+
+type failingStore struct {
+	*MemoryStore
+	failSave, failIn bool
+}
+
+func (f *failingStore) Save(seq int, frame []byte) error {
+	if f.failSave {
+		return errors.New("disk full")
+	}
+	return f.MemoryStore.Save(seq, frame)
+}
+
+func (f *failingStore) SetNextInSeq(n int) error {
+	if f.failIn {
+		return errors.New("disk full")
+	}
+	return f.MemoryStore.SetNextInSeq(n)
+}
+
+func TestStoreSaveFailureClosesSessionWithoutSending(t *testing.T) {
+	srv, cli := net.Pipe()
+	defer func() { _ = cli.Close() }()
+	s := NewSession(srv, "FXPBRIDGE", nil)
+	s.Store = &failingStore{MemoryStore: NewMemoryStore(), failSave: true}
+	s.SendWithSeq(func(int) []byte { return []byte("x") })
+	select {
+	case <-s.done:
+	default:
+		t.Fatal("session not closed after store write failure")
+	}
+	if n := len(s.sendCh); n != 0 {
+		t.Fatalf("%d unpersisted frame(s) queued for the wire", n)
+	}
+}
+
+func TestStoreInSeqFailureClosesSession(t *testing.T) {
+	srv, cli := net.Pipe()
+	defer func() { _ = cli.Close() }()
+	s := NewSession(srv, "FXPBRIDGE", nil)
+	s.Store = &failingStore{MemoryStore: NewMemoryStore(), failIn: true}
+	if err := s.setInSeq(2); err == nil {
+		t.Fatal("setInSeq must report the store failure")
+	}
+	select {
+	case <-s.done:
+	default:
+		t.Fatal("session not closed after store write failure")
 	}
 }

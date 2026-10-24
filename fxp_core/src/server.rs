@@ -36,9 +36,10 @@ mod fxp {
 }
 
 use crate::order_book::broadcaster::MarketDataBroadcaster;
-use crate::order_book::market_data::MarketUpdateType;
+use crate::order_book::market_data::{MarketDataIncrementalUpdate, MarketUpdateType};
 use crate::order_book::order::{Order, OrderSide, OrderType, TimeInForce};
-use crate::order_book::order_book::OrderBook;
+use crate::order_book::order_book::{OrderBook, OrderReject};
+use crate::order_book::stops::{Execution, StopBook, StopReplace, run_stop_cascade, stop_fires};
 use prost_types::Timestamp;
 
 // ── Output channel ────────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ struct CancelReplaceMsg {
     new_price: i64,    // 0 = no change
     new_quantity: i32, // 0 = no change
     new_time_in_force: i32,
+    new_stop_price: i64, // 0 = no change (parked stops only)
     output_tx: OutputTx,
 }
 
@@ -175,8 +177,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
     let mut subscribers: Vec<mpsc::Sender<Vec<u8>>> = Vec::new();
 
     // Stop order state
-    let mut stop_book: Vec<crate::order_book::order::Order> = Vec::new();
-    let mut last_trade_price: i64 = 0; // 0 = no trade yet this session
+    let mut stop_book = StopBook::default();
+    let mut last_trade_price: Option<i64> = None; // None = no trade yet this session
     // Report state of every live order (resting, parked stop or in-flight)
     let mut states: HashMap<String, OrderState> = HashMap::new();
 
@@ -185,7 +187,11 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
     while let Some(msg) = rx.recv().await {
         match msg {
             SymbolMsg::Subscribe(sub) => {
-                subscribers.push(sub.tx);
+                let _ = sub.tx.send(snapshot_frame(&book)).await;
+                // A repeated subscription gets a fresh snapshot but no second stream.
+                if !subscribers.iter().any(|tx| tx.same_channel(&sub.tx)) {
+                    subscribers.push(sub.tx);
+                }
                 println!("✅ Client subscribed to {}", symbol);
             }
 
@@ -196,7 +202,14 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     nanos: now.subsec_nanos() as i32,
                 });
 
-                match book.cancel_order_for(&cancel_msg.order_id, &cancel_msg.sender) {
+                let cancelled =
+                    match book.cancel_order_for(&cancel_msg.order_id, &cancel_msg.sender) {
+                        Err(OrderReject::UnknownOrder) => stop_book
+                            .cancel_for(&cancel_msg.order_id, &cancel_msg.sender)
+                            .map(|_| None),
+                        other => other.map(Some),
+                    };
+                match cancelled {
                     Ok(md_update) => {
                         // Order found and cancelled — send EXEC_CANCELED report
                         let state = states.remove(&cancel_msg.order_id);
@@ -212,33 +225,10 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             build_report(&cancel_msg.order_id, &symbol, state.as_ref(), ev, &ts);
                         let _ = cancel_msg.output_tx.send(report).await;
 
-                        // Broadcast cancel incremental to market data subscribers
-                        let md_frame = frame_message(&fxp::FxpMessage {
-                            payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
-                                fxp::MarketDataIncrementalUpdate {
-                                    symbol: symbol.clone(),
-                                    header: Some(fxp::FxpHeader {
-                                        protocol_version: crate::PROTOCOL_VERSION.to_string(),
-                                        sequence_number: 1,
-                                    }),
-                                    timestamp: ts.clone(),
-                                    changes: md_update
-                                        .changes
-                                        .iter()
-                                        .map(|c| fxp::MarketOrderUpdate {
-                                            update_type: match c.update_type {
-                                                MarketUpdateType::NewOrder => 0,
-                                                MarketUpdateType::ModifyOrder => 1,
-                                                MarketUpdateType::CancelOrder => 2,
-                                            },
-                                            price: c.price,
-                                            quantity: c.quantity as i32,
-                                        })
-                                        .collect(),
-                                },
-                            )),
-                        });
-                        broadcast_md(&mut subscribers, md_frame).await;
+                        // Parked stops are not on the book: no market data to broadcast
+                        if let Some(md_update) = md_update {
+                            broadcast_md(&mut subscribers, md_frame(&md_update, &ts)).await;
+                        }
                         println!("🗑️ Cancelled order {} on {}", cancel_msg.order_id, symbol);
                     }
                     Err(reject) => {
@@ -283,6 +273,72 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     }
                 };
 
+                if stop_book.contains(&cr_msg.order_id) {
+                    let id_in_use = book.order_lookup.contains_key(&cr_msg.new_order_id);
+                    let changes = StopReplace {
+                        new_price: cr_msg.new_price,
+                        new_stop_price: cr_msg.new_stop_price,
+                        new_quantity: cr_msg.new_quantity.max(0) as u32,
+                        new_time_in_force,
+                        client_order_id: &cr_msg.client_replace_id,
+                        timestamp: now.as_millis() as u64,
+                    };
+                    match stop_book.replace_for(
+                        &cr_msg.order_id,
+                        &cr_msg.new_order_id,
+                        changes,
+                        &cr_msg.sender,
+                        id_in_use,
+                    ) {
+                        Err(reject) => {
+                            let report = make_reject_report(
+                                &cr_msg.order_id,
+                                &symbol,
+                                &cr_msg.client_replace_id,
+                                reject.reason(),
+                                &ts,
+                            );
+                            let _ = cr_msg.output_tx.send(report).await;
+                        }
+                        Ok(replacement) => {
+                            states.remove(&cr_msg.order_id);
+                            let new_state = OrderState {
+                                side: side_to_proto(replacement.side),
+                                order_qty: replacement.quantity,
+                                cum_qty: 0,
+                                notional: 0,
+                                account: replacement.account.clone(),
+                                client_order_id: cr_msg.client_replace_id.clone(),
+                                output_tx: cr_msg.output_tx.clone(),
+                            };
+                            send_replace_reports(&cr_msg, &symbol, &new_state, &ts).await;
+                            states.insert(cr_msg.new_order_id.clone(), new_state);
+                            // A new stop price may already be through the last print
+                            if last_trade_price.is_some_and(|p| stop_fires(&replacement, p)) {
+                                let order = stop_book
+                                    .cancel_for(&replacement.order_id, &replacement.trader_id)
+                                    .expect("replacement was just parked");
+                                let mut exec = Execution::default();
+                                exec.triggered.push(order.order_id.clone());
+                                book.execute_into(order, &mut exec);
+                                run_stop_cascade(
+                                    &mut book,
+                                    &mut stop_book,
+                                    &mut last_trade_price,
+                                    &mut exec,
+                                );
+                                report_execution(exec, &mut states, &mut subscribers, &symbol, &ts)
+                                    .await;
+                            }
+                            println!(
+                                "🔄 CancelReplaced parked stop {} → {} on {}",
+                                cr_msg.order_id, cr_msg.new_order_id, symbol
+                            );
+                        }
+                    }
+                    continue;
+                }
+
                 let result = book.replace_order(
                     &cr_msg.order_id,
                     &cr_msg.new_order_id,
@@ -322,106 +378,25 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             client_order_id: cr_msg.client_replace_id.clone(),
                             output_tx: cr_msg.output_tx.clone(),
                         };
-                        let leaves = new_state.leaves();
 
-                        // EXEC_REPLACED for the original order, EXEC_NEW for the replacement
-                        for (id, et, os) in [
-                            (
-                                &cr_msg.order_id,
-                                fxp::ExecutionType::ExecReplaced,
-                                fxp::OrderStatus::OrderReplaced,
-                            ),
-                            (
-                                &cr_msg.new_order_id,
-                                fxp::ExecutionType::ExecNew,
-                                fxp::OrderStatus::OrderNew,
-                            ),
-                        ] {
-                            let ev = ReportEvent {
-                                leaves,
-                                orig_order_id: &cr_msg.order_id,
-                                ..ReportEvent::new(et, os)
-                            };
-                            let _ = cr_msg
-                                .output_tx
-                                .send(build_report(id, &symbol, Some(&new_state), ev, &ts))
-                                .await;
-                        }
+                        send_replace_reports(&cr_msg, &symbol, &new_state, &ts).await;
                         states.insert(cr_msg.new_order_id.clone(), new_state);
 
-                        // Send any immediate fills from the replacement
-                        let (passive_fills, fill_updates) = book.match_orders();
-                        for exec in &passive_fills {
-                            for id in [&exec.buy_order_id, &exec.sell_order_id] {
-                                if let Some((frame, tx)) = apply_fill(
-                                    &mut states,
-                                    id,
-                                    &symbol,
-                                    exec.trade_price,
-                                    exec.trade_quantity,
-                                    &ts,
-                                ) {
-                                    let _ = tx.send(frame).await;
-                                }
-                            }
-                        }
-
-                        // Broadcast incremental updates
-                        let md_frame = frame_message(&fxp::FxpMessage {
-                            payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
-                                fxp::MarketDataIncrementalUpdate {
-                                    symbol: symbol.clone(),
-                                    header: Some(fxp::FxpHeader {
-                                        protocol_version: crate::PROTOCOL_VERSION.to_string(),
-                                        sequence_number: 1,
-                                    }),
-                                    timestamp: ts.clone(),
-                                    changes: inc
-                                        .changes
-                                        .iter()
-                                        .map(|c| fxp::MarketOrderUpdate {
-                                            update_type: match c.update_type {
-                                                MarketUpdateType::NewOrder => 0,
-                                                MarketUpdateType::ModifyOrder => 1,
-                                                MarketUpdateType::CancelOrder => 2,
-                                            },
-                                            price: c.price,
-                                            quantity: c.quantity as i32,
-                                        })
-                                        .collect(),
-                                },
-                            )),
-                        });
-                        broadcast_md(&mut subscribers, md_frame).await;
-
-                        for fill in fill_updates {
-                            let fill_frame = frame_message(&fxp::FxpMessage {
-                                payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
-                                    fxp::MarketDataIncrementalUpdate {
-                                        symbol: fill.symbol.clone(),
-                                        header: Some(fxp::FxpHeader {
-                                            protocol_version: crate::PROTOCOL_VERSION.to_string(),
-                                            sequence_number: 1,
-                                        }),
-                                        timestamp: ts.clone(),
-                                        changes: fill
-                                            .changes
-                                            .iter()
-                                            .map(|c| fxp::MarketOrderUpdate {
-                                                update_type: match c.update_type {
-                                                    MarketUpdateType::NewOrder => 0,
-                                                    MarketUpdateType::ModifyOrder => 1,
-                                                    MarketUpdateType::CancelOrder => 2,
-                                                },
-                                                price: c.price,
-                                                quantity: c.quantity as i32,
-                                            })
-                                            .collect(),
-                                    },
-                                )),
-                            });
-                            broadcast_md(&mut subscribers, fill_frame).await;
-                        }
+                        // Immediate fills from the replacement can trigger parked stops
+                        let (fills, fill_updates) = book.match_orders();
+                        let mut exec = Execution {
+                            fills,
+                            fill_updates,
+                            ..Default::default()
+                        };
+                        run_stop_cascade(
+                            &mut book,
+                            &mut stop_book,
+                            &mut last_trade_price,
+                            &mut exec,
+                        );
+                        broadcast_md(&mut subscribers, md_frame(&inc, &ts)).await;
+                        report_execution(exec, &mut states, &mut subscribers, &symbol, &ts).await;
 
                         println!(
                             "🔄 CancelReplaced {} → {} on {}",
@@ -525,16 +500,12 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         continue;
                     }
 
-                    let fires_immediately = last_trade_price > 0
-                        && match order_obj.side {
-                            OrderSide::Buy => last_trade_price >= order_obj.stop_price,
-                            OrderSide::Sell => last_trade_price <= order_obj.stop_price,
-                        };
+                    let fires_immediately =
+                        last_trade_price.is_some_and(|p| stop_fires(&order_obj, p));
 
                     if fires_immediately {
-                        // Trigger immediately — fall through to normal processing below
                         println!(
-                            "⚡ Stop {} triggered immediately at last_trade={}",
+                            "⚡ Stop {} triggered immediately at last_trade={:?}",
                             order_obj.order_id, last_trade_price
                         );
                     } else {
@@ -549,26 +520,19 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         let ack = build_report(&order_obj.order_id, &symbol, Some(&state), ev, &ts);
                         let _ = output_tx.send(ack).await;
                         println!(
-                            "🛑 Stop {} parked on {} (stop={} last_trade={})",
+                            "🛑 Stop {} parked on {} (stop={} last_trade={:?})",
                             order.order_id, symbol, order_obj.stop_price, last_trade_price
                         );
                         states.insert(order_obj.order_id.clone(), state);
-                        stop_book.push(order_obj);
+                        stop_book.park(order_obj);
                         continue;
                     }
                 }
 
                 // Process the order (non-stop, or stop that triggered immediately)
                 states.insert(order_obj.order_id.clone(), state);
-                let aggressive = book.process_aggressive(order_obj.clone());
-                // Market/IOC/FOK remainders, cancelled after their fills are reported
-                let mut pending_cancels: Vec<String> = Vec::new();
-
-                let mut all_fills = aggressive.fills;
-                let mut all_fill_updates = aggressive.fill_updates;
-                let mut incremental_opt = None;
-
-                if aggressive.rest_on_book && aggressive.unfilled_qty > 0 {
+                let mut exec = Execution::default();
+                if book.execute_into(order_obj.clone(), &mut exec) {
                     if let Some(st) = states.get(&order_obj.order_id) {
                         let ev = ReportEvent {
                             leaves: st.leaves(),
@@ -587,184 +551,9 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             ))
                             .await;
                     }
-                    let mut resting = order_obj.clone();
-                    resting.quantity = aggressive.unfilled_qty;
-                    let inc = book.add_order(resting);
-                    incremental_opt = Some(inc);
-                    let (passive_fills, passive_updates) = book.match_orders();
-                    all_fills.extend(passive_fills);
-                    all_fill_updates.extend(passive_updates);
-                } else if !aggressive.rest_on_book && aggressive.unfilled_qty > 0 {
-                    pending_cancels.push(order.order_id.clone());
                 }
-
-                // Update last_trade_price from fills and check stop triggers.
-                // Loop handles cascading stops (a triggered stop may itself cause
-                // fills that trigger more stops).
-                if !all_fills.is_empty() {
-                    // Use the last fill price as the new last_trade_price
-                    last_trade_price = all_fills.last().unwrap().trade_price;
-
-                    // Check stop triggers — may produce additional fills
-                    loop {
-                        let triggered =
-                            OrderBook::drain_triggered_stops(&mut stop_book, last_trade_price);
-                        if triggered.is_empty() {
-                            break;
-                        }
-
-                        println!(
-                            "⚡ {} stop(s) triggered at price {}",
-                            triggered.len(),
-                            last_trade_price
-                        );
-
-                        for stop_order in triggered {
-                            let stop_result = book.process_aggressive(stop_order.clone());
-                            // Save last fill price before consuming the vecs
-                            let stop_last_price = stop_result.fills.last().map(|f| f.trade_price);
-                            all_fills.extend(stop_result.fills.into_iter());
-                            all_fill_updates.extend(stop_result.fill_updates.into_iter());
-
-                            if stop_result.rest_on_book && stop_result.unfilled_qty > 0 {
-                                // StopLimit triggered — add as resting limit
-                                let mut resting = stop_order.clone();
-                                resting.order_type = OrderType::Limit;
-                                resting.quantity = stop_result.unfilled_qty;
-                                let inc = book.add_order(resting);
-                                // Broadcast the new resting limit's incremental
-                                let md = frame_message(&fxp::FxpMessage {
-                                    payload: Some(
-                                        fxp::fxp_message::Payload::MarketDataIncremental(
-                                            fxp::MarketDataIncrementalUpdate {
-                                                symbol: symbol.clone(),
-                                                header: Some(fxp::FxpHeader {
-                                                    protocol_version: crate::PROTOCOL_VERSION
-                                                        .to_string(),
-                                                    sequence_number: 1,
-                                                }),
-                                                timestamp: ts.clone(),
-                                                changes: inc
-                                                    .changes
-                                                    .iter()
-                                                    .map(|c| fxp::MarketOrderUpdate {
-                                                        update_type: match c.update_type {
-                                                            MarketUpdateType::NewOrder => 0,
-                                                            MarketUpdateType::ModifyOrder => 1,
-                                                            MarketUpdateType::CancelOrder => 2,
-                                                        },
-                                                        price: c.price,
-                                                        quantity: c.quantity as i32,
-                                                    })
-                                                    .collect(),
-                                            },
-                                        ),
-                                    ),
-                                });
-                                broadcast_md(&mut subscribers, md).await;
-                                let (extra_fills, extra_updates) = book.match_orders();
-                                all_fills.extend(extra_fills.into_iter());
-                                all_fill_updates.extend(extra_updates);
-                            } else if stop_result.unfilled_qty > 0 {
-                                pending_cancels.push(stop_order.order_id.clone());
-                            }
-
-                            // Update last_trade_price if stop produced fills
-                            if let Some(p) = stop_last_price {
-                                last_trade_price = p;
-                            }
-                        }
-                    }
-                }
-
-                // Fill reports go to each order's own connection; remainder
-                // cancels follow the fills they complete.
-                for exec in &all_fills {
-                    for id in [&exec.buy_order_id, &exec.sell_order_id] {
-                        if let Some((frame, tx)) = apply_fill(
-                            &mut states,
-                            id,
-                            &symbol,
-                            exec.trade_price,
-                            exec.trade_quantity,
-                            &ts,
-                        ) {
-                            let _ = tx.send(frame).await;
-                        }
-                    }
-                }
-                for id in pending_cancels {
-                    if let Some(st) = states.remove(&id) {
-                        let ev = ReportEvent::new(
-                            fxp::ExecutionType::ExecCanceled,
-                            fxp::OrderStatus::OrderCanceled,
-                        );
-                        let _ = st
-                            .output_tx
-                            .send(build_report(&id, &symbol, Some(&st), ev, &ts))
-                            .await;
-                    }
-                }
-
-                // Broadcast add-order incremental (only for orders that rested on the book)
-                if let Some(incremental) = incremental_opt {
-                    let md_add_frame = frame_message(&fxp::FxpMessage {
-                        payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
-                            fxp::MarketDataIncrementalUpdate {
-                                symbol: symbol.clone(),
-                                header: Some(fxp::FxpHeader {
-                                    protocol_version: crate::PROTOCOL_VERSION.to_string(),
-                                    sequence_number: 1,
-                                }),
-                                timestamp: ts.clone(),
-                                changes: incremental
-                                    .changes
-                                    .iter()
-                                    .map(|c| fxp::MarketOrderUpdate {
-                                        update_type: match c.update_type {
-                                            MarketUpdateType::NewOrder => 0,
-                                            MarketUpdateType::ModifyOrder => 1,
-                                            MarketUpdateType::CancelOrder => 2,
-                                        },
-                                        price: c.price,
-                                        quantity: c.quantity as i32,
-                                    })
-                                    .collect(),
-                            },
-                        )),
-                    });
-                    broadcast_md(&mut subscribers, md_add_frame).await;
-                }
-
-                // Broadcast fill incremental updates
-                for fill in all_fill_updates {
-                    let md_fill_frame = frame_message(&fxp::FxpMessage {
-                        payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
-                            fxp::MarketDataIncrementalUpdate {
-                                symbol: fill.symbol.clone(),
-                                header: Some(fxp::FxpHeader {
-                                    protocol_version: crate::PROTOCOL_VERSION.to_string(),
-                                    sequence_number: 1,
-                                }),
-                                timestamp: ts.clone(),
-                                changes: fill
-                                    .changes
-                                    .iter()
-                                    .map(|c| fxp::MarketOrderUpdate {
-                                        update_type: match c.update_type {
-                                            MarketUpdateType::NewOrder => 0,
-                                            MarketUpdateType::ModifyOrder => 1,
-                                            MarketUpdateType::CancelOrder => 2,
-                                        },
-                                        price: c.price,
-                                        quantity: c.quantity as i32,
-                                    })
-                                    .collect(),
-                            },
-                        )),
-                    });
-                    broadcast_md(&mut subscribers, md_fill_frame).await;
-                }
+                run_stop_cascade(&mut book, &mut stop_book, &mut last_trade_price, &mut exec);
+                report_execution(exec, &mut states, &mut subscribers, &symbol, &ts).await;
             }
         }
     }
@@ -988,6 +777,140 @@ fn frame_message(msg: &fxp::FxpMessage) -> Vec<u8> {
     framed
 }
 
+fn md_side(side: &OrderSide) -> i32 {
+    match side {
+        OrderSide::Buy => fxp::OrderSide::Buy as i32,
+        OrderSide::Sell => fxp::OrderSide::Sell as i32,
+    }
+}
+
+/// EXEC_REPLACED for the original order, EXEC_NEW for the replacement.
+async fn send_replace_reports(
+    cr_msg: &CancelReplaceMsg,
+    symbol: &str,
+    new_state: &OrderState,
+    ts: &Option<Timestamp>,
+) {
+    let leaves = new_state.leaves();
+    for (id, et, os) in [
+        (
+            &cr_msg.order_id,
+            fxp::ExecutionType::ExecReplaced,
+            fxp::OrderStatus::OrderReplaced,
+        ),
+        (
+            &cr_msg.new_order_id,
+            fxp::ExecutionType::ExecNew,
+            fxp::OrderStatus::OrderNew,
+        ),
+    ] {
+        let ev = ReportEvent {
+            leaves,
+            orig_order_id: &cr_msg.order_id,
+            ..ReportEvent::new(et, os)
+        };
+        let _ = cr_msg
+            .output_tx
+            .send(build_report(id, &symbol, Some(new_state), ev, ts))
+            .await;
+    }
+}
+
+fn md_frame(inc: &MarketDataIncrementalUpdate, ts: &Option<Timestamp>) -> Vec<u8> {
+    frame_message(&fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(
+            fxp::MarketDataIncrementalUpdate {
+                symbol: inc.symbol.clone(),
+                header: Some(fxp::FxpHeader {
+                    protocol_version: crate::PROTOCOL_VERSION.to_string(),
+                    sequence_number: 1,
+                }),
+                timestamp: ts.clone(),
+                changes: inc
+                    .changes
+                    .iter()
+                    .map(|c| fxp::MarketOrderUpdate {
+                        update_type: match c.update_type {
+                            MarketUpdateType::NewOrder => 0,
+                            MarketUpdateType::ModifyOrder => 1,
+                            MarketUpdateType::CancelOrder => 2,
+                        },
+                        price: c.price,
+                        quantity: c.quantity as i32,
+                        side: md_side(&c.side),
+                    })
+                    .collect(),
+            },
+        )),
+    })
+}
+
+/// Fill reports to each order's own connection, then remainder cancels (after
+/// the fills they complete), then market data for rested orders and fills.
+async fn report_execution(
+    exec: Execution,
+    states: &mut HashMap<String, OrderState>,
+    subscribers: &mut Vec<mpsc::Sender<Vec<u8>>>,
+    symbol: &str,
+    ts: &Option<Timestamp>,
+) {
+    for f in &exec.fills {
+        for id in [&f.buy_order_id, &f.sell_order_id] {
+            if let Some((frame, tx)) =
+                apply_fill(states, id, symbol, f.trade_price, f.trade_quantity, ts)
+            {
+                let _ = tx.send(frame).await;
+            }
+        }
+    }
+    for id in &exec.cancels {
+        if let Some(st) = states.remove(id) {
+            let ev = ReportEvent::new(
+                fxp::ExecutionType::ExecCanceled,
+                fxp::OrderStatus::OrderCanceled,
+            );
+            let _ = st
+                .output_tx
+                .send(build_report(id, symbol, Some(&st), ev, ts))
+                .await;
+        }
+    }
+    for inc in exec.rested.iter().chain(&exec.fill_updates) {
+        broadcast_md(subscribers, md_frame(inc, ts)).await;
+    }
+}
+
+/// Full-depth snapshot: bids best (highest) first, asks best (lowest) first.
+fn snapshot_frame(book: &OrderBook) -> Vec<u8> {
+    let snap = book.get_market_snapshot();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let level = |side: OrderSide| {
+        move |&(price, size): &(i64, u32)| fxp::MarketOrderBookEntry {
+            price,
+            size: size as i32,
+            side: md_side(&side),
+        }
+    };
+    frame_message(&fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::MarketDataSnapshot(
+            fxp::MarketDataSnapshot {
+                header: Some(fxp::FxpHeader {
+                    protocol_version: crate::PROTOCOL_VERSION.to_string(),
+                    sequence_number: 1,
+                }),
+                symbol: snap.symbol.clone(),
+                bid_levels: snap.bids.iter().rev().map(level(OrderSide::Buy)).collect(),
+                ask_levels: snap.asks.iter().map(level(OrderSide::Sell)).collect(),
+                timestamp: Some(Timestamp {
+                    seconds: now.as_secs() as i64,
+                    nanos: now.subsec_nanos() as i32,
+                }),
+                ..Default::default()
+            },
+        )),
+    })
+}
+
 // ── TCP connection handler ────────────────────────────────────────────────────
 
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
@@ -1021,6 +944,9 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
     // When the client leaves, drop its receiver so reports for its resting
     // orders fail fast instead of filling a channel nobody drains.
     let _writer = AbortOnDrop(writer);
+    // One market-data channel per symbol for this connection, so subscribing
+    // to a symbol again does not stream each update twice.
+    let mut md_channels: HashMap<String, mpsc::Sender<Vec<u8>>> = HashMap::new();
 
     // Read loop: dispatches frames to symbol tasks, never blocks on processing.
     loop {
@@ -1082,6 +1008,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                             new_price: cr.new_price,
                             new_quantity: cr.new_quantity,
                             new_time_in_force: cr.new_time_in_force,
+                            new_stop_price: cr.new_stop_price,
                             output_tx: output_tx.clone(),
                         }))
                         .await
@@ -1094,23 +1021,28 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     println!("📡 MarketDataRequest for {:?}", request.symbols);
                     for symbol in &request.symbols {
-                        // Per-subscriber market data channel
-                        let (md_tx, mut md_rx) = mpsc::channel::<Vec<u8>>(256);
+                        let md_tx = match md_channels.get(symbol) {
+                            Some(tx) if !tx.is_closed() => tx.clone(),
+                            _ => {
+                                let (md_tx, mut md_rx) = mpsc::channel::<Vec<u8>>(256);
+                                // Forward market data frames into the connection's output channel.
+                                // No lock needed — output_tx is just an mpsc sender clone.
+                                let out = output_tx.clone();
+                                tokio::spawn(async move {
+                                    while let Some(frame) = md_rx.recv().await {
+                                        if out.send(frame).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                });
+                                md_channels.insert(symbol.clone(), md_tx.clone());
+                                md_tx
+                            }
+                        };
                         let sym_tx = router.get_or_create(symbol).await;
                         let _ = sym_tx
                             .send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx }))
                             .await;
-
-                        // Forward market data frames into the connection's output channel.
-                        // No lock needed — output_tx is just an mpsc sender clone.
-                        let out = output_tx.clone();
-                        tokio::spawn(async move {
-                            while let Some(frame) = md_rx.recv().await {
-                                if out.send(frame).await.is_err() {
-                                    break;
-                                }
-                            }
-                        });
                     }
                     println!("🧼 Subscription setup complete — continuing to accept orders.");
                 }
@@ -1174,6 +1106,37 @@ mod report_tests {
 
     fn conn() -> (OutputTx, Rx) {
         mpsc::channel(64)
+    }
+
+    #[tokio::test]
+    async fn resubscribing_one_channel_streams_market_data_once() {
+        let book = spawn_book();
+        let (md_tx, mut md_rx) = conn();
+        for _ in 0..2 {
+            book.send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx.clone() }))
+                .await
+                .unwrap();
+        }
+        let (a, mut a_rx) = conn();
+        send_order(&book, nos("B1", "A", BUY, 100_00, 5, LIMIT, GTC), &a).await;
+        next(&mut a_rx).await;
+        let mut kinds = Vec::new();
+        while let Ok(Some(frame)) =
+            tokio::time::timeout(Duration::from_millis(200), md_rx.recv()).await
+        {
+            kinds.push(
+                match fxp::FxpMessage::decode(&frame[4..]).unwrap().payload {
+                    Some(fxp::fxp_message::Payload::MarketDataSnapshot(_)) => "W",
+                    Some(fxp::fxp_message::Payload::MarketDataIncremental(_)) => "X",
+                    _ => "?",
+                },
+            );
+        }
+        assert_eq!(
+            kinds,
+            ["W", "W", "X"],
+            "one snapshot per request, one stream"
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1608,6 +1571,7 @@ mod report_tests {
             new_price: 0,
             new_quantity: 0,
             new_time_in_force: 99,
+            new_stop_price: 0,
             output_tx: out,
         }))
         .await
@@ -1632,6 +1596,7 @@ mod report_tests {
             new_price: 0,
             new_quantity: 0,
             new_time_in_force: 0,
+            new_stop_price: 0,
             output_tx: out,
         }))
         .await
@@ -1671,5 +1636,349 @@ mod report_tests {
         assert_eq!(seen[1], ACCEPT_BACKOFF_MIN * 2);
         assert!(seen.windows(2).all(|w| w[1] >= w[0]));
         assert_eq!(*seen.last().unwrap(), ACCEPT_BACKOFF_MAX);
+    }
+
+    // ── Stop orders ──────────────────────────────────────────────────────────
+
+    const STOP_LIMIT: i32 = 4;
+    const FOK: i32 = 4;
+
+    fn stop(id: &str, trader: &str, side: i32, stop_px: i64, qty: i32) -> fxp::NewOrderSingle {
+        fxp::NewOrderSingle {
+            stop_price: stop_px,
+            ..nos(id, trader, side, 0, qty, STOP, DAY)
+        }
+    }
+
+    async fn rest(
+        book: &mpsc::Sender<SymbolMsg>,
+        out: &OutputTx,
+        rx: &mut Rx,
+        o: fxp::NewOrderSingle,
+    ) {
+        send_order(book, o, out).await;
+        assert_eq!(et(&next(rx).await), fxp::ExecutionType::ExecNew);
+    }
+
+    /// Next `n` fill reports as (order_id, execution_price), skipping other reports.
+    async fn fills(rx: &mut Rx, n: usize) -> Vec<(String, i64)> {
+        let mut v = Vec::new();
+        while v.len() < n {
+            let r = next(rx).await;
+            if et(&r) == fxp::ExecutionType::ExecFilled {
+                v.push((r.order_id, r.execution_price));
+            }
+        }
+        v
+    }
+
+    #[tokio::test]
+    async fn stop_fires_on_intermediate_print_of_sweep() {
+        let book = spawn_book();
+        let (m, mut m_rx) = conn();
+        let (t, mut t_rx) = conn();
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MB1", "M", BUY, 102_00, 5, LIMIT, GTC),
+        )
+        .await;
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MB2", "M", BUY, 100_00, 5, LIMIT, GTC),
+        )
+        .await;
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MA1", "M", SELL, 105_00, 5, LIMIT, GTC),
+        )
+        .await;
+        rest(&book, &t, &mut t_rx, stop("S", "T", BUY, 102_00, 2)).await;
+        // Sell sweep prints 102 then 100: the 102 print must trigger the buy stop.
+        send_order(&book, nos("AG", "A", SELL, 0, 10, MARKET, DAY), &conn().0).await;
+        assert_eq!(fills(&mut t_rx, 1).await, vec![("S".to_string(), 105_00)]);
+    }
+
+    #[tokio::test]
+    async fn triggered_stops_fire_by_stop_price_then_arrival() {
+        let book = spawn_book();
+        let (m, mut m_rx) = conn();
+        let (t, mut t_rx) = conn();
+        for (id, px) in [
+            ("MA4", 104_00),
+            ("MA5", 105_00),
+            ("MA6", 106_00),
+            ("MA7", 107_00),
+        ] {
+            rest(&book, &m, &mut m_rx, nos(id, "M", SELL, px, 1, LIMIT, GTC)).await;
+        }
+        for (id, px) in [
+            ("S103", 103_00),
+            ("S101", 101_00),
+            ("S102a", 102_00),
+            ("S102b", 102_00),
+        ] {
+            rest(&book, &t, &mut t_rx, stop(id, "T", BUY, px, 1)).await;
+        }
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MA3", "M", SELL, 103_00, 1, LIMIT, GTC),
+        )
+        .await;
+        send_order(&book, nos("AG", "A", BUY, 103_00, 1, LIMIT, IOC), &conn().0).await;
+        let want = [
+            ("S101", 104_00),
+            ("S102a", 105_00),
+            ("S102b", 106_00),
+            ("S103", 107_00),
+        ];
+        let want: Vec<_> = want.iter().map(|(i, p)| (i.to_string(), *p)).collect();
+        assert_eq!(fills(&mut t_rx, 4).await, want);
+    }
+
+    #[tokio::test]
+    async fn three_stop_cascade_orders_reports_and_last_trade_price() {
+        let book = spawn_book();
+        let (m, mut m_rx) = conn();
+        let (t, mut t_rx) = conn();
+        for (id, px) in [
+            ("MA104", 104_00),
+            ("MA105", 105_00),
+            ("MA106", 106_00),
+            ("MA107", 107_00),
+        ] {
+            rest(&book, &m, &mut m_rx, nos(id, "M", SELL, px, 1, LIMIT, GTC)).await;
+        }
+        rest(&book, &t, &mut t_rx, stop("S1", "T", BUY, 101_00, 1)).await;
+        rest(&book, &t, &mut t_rx, stop("S2", "T", BUY, 104_00, 1)).await;
+        rest(&book, &t, &mut t_rx, stop("S3", "T", BUY, 105_00, 1)).await;
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MA101", "M", SELL, 101_00, 1, LIMIT, GTC),
+        )
+        .await;
+        send_order(&book, nos("AG", "A", BUY, 101_00, 1, LIMIT, IOC), &conn().0).await;
+        let want: Vec<_> = [("S1", 104_00), ("S2", 105_00), ("S3", 106_00)]
+            .iter()
+            .map(|(i, p)| (i.to_string(), *p))
+            .collect();
+        assert_eq!(fills(&mut t_rx, 3).await, want);
+        // last_trade_price is now 106: a buy stop at 106 fires on arrival, one at 108 parks.
+        send_order(&book, stop("S4", "T", BUY, 106_00, 1), &t).await;
+        assert_eq!(fills(&mut t_rx, 1).await, vec![("S4".to_string(), 107_00)]);
+        send_order(&book, stop("S5", "T", BUY, 108_00, 1), &t).await;
+        let r = next(&mut t_rx).await;
+        assert_eq!(
+            (r.order_id.as_str(), et(&r)),
+            ("S5", fxp::ExecutionType::ExecNew)
+        );
+    }
+
+    #[tokio::test]
+    async fn sell_stop_parks_before_first_trade() {
+        let book = spawn_book();
+        let (t, mut t_rx) = conn();
+        rest(&book, &t, &mut t_rx, stop("S", "T", SELL, 100_00, 1)).await;
+        assert_quiet(&mut t_rx).await;
+    }
+
+    #[tokio::test]
+    async fn parked_stop_can_be_cancelled_only_by_owner() {
+        let book = spawn_book();
+        let (m, mut m_rx) = conn();
+        let (t, mut t_rx) = conn();
+        let (x, mut x_rx) = conn();
+        rest(&book, &t, &mut t_rx, stop("S", "T", BUY, 100_00, 1)).await;
+        for (sender, out) in [("X", &x), ("T", &t)] {
+            book.send(SymbolMsg::Cancel(CancelMsg {
+                order_id: "S".into(),
+                sender: sender.into(),
+                client_cancel_id: format!("C-{sender}"),
+                output_tx: out.clone(),
+            }))
+            .await
+            .unwrap();
+        }
+        assert_eq!(et(&next(&mut x_rx).await), fxp::ExecutionType::ExecRejected);
+        let r = next(&mut t_rx).await;
+        assert_eq!(
+            (r.order_id.as_str(), et(&r)),
+            ("S", fxp::ExecutionType::ExecCanceled)
+        );
+        // A trigger print afterwards must not execute the cancelled stop.
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MA", "M", SELL, 100_00, 2, LIMIT, GTC),
+        )
+        .await;
+        send_order(&book, nos("AG", "A", BUY, 100_00, 1, LIMIT, IOC), &conn().0).await;
+        assert_quiet(&mut t_rx).await;
+    }
+
+    async fn stop_limit_tif_after_trigger(tif: i32) -> Vec<fxp::ExecutionType> {
+        let book = spawn_book();
+        let (m, mut m_rx) = conn();
+        let (t, mut t_rx) = conn();
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MA101", "M", SELL, 101_00, 2, LIMIT, GTC),
+        )
+        .await;
+        let sl = fxp::NewOrderSingle {
+            stop_price: 100_00,
+            ..nos("SL", "T", BUY, 101_00, 5, STOP_LIMIT, tif)
+        };
+        rest(&book, &t, &mut t_rx, sl).await;
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MA100", "M", SELL, 100_00, 1, LIMIT, GTC),
+        )
+        .await;
+        send_order(&book, nos("AG", "A", BUY, 100_00, 1, LIMIT, IOC), &conn().0).await;
+        let mut seen = Vec::new();
+        while let Ok(Some(frame)) =
+            tokio::time::timeout(Duration::from_millis(200), t_rx.recv()).await
+        {
+            if let Some(fxp::fxp_message::Payload::ExecutionReport(r)) =
+                fxp::FxpMessage::decode(&frame[4..]).unwrap().payload
+            {
+                seen.push(et(&r));
+            }
+        }
+        // Nothing of T's may rest: a sell at 99 must rest rather than fill against it.
+        let (q, mut q_rx) = conn();
+        send_order(&book, nos("MS", "Q", SELL, 99_00, 1, LIMIT, GTC), &q).await;
+        assert_eq!(et(&next(&mut q_rx).await), fxp::ExecutionType::ExecNew);
+        assert_quiet(&mut q_rx).await;
+        seen
+    }
+
+    #[tokio::test]
+    async fn stop_limit_ioc_cancels_remainder_after_trigger() {
+        let seen = stop_limit_tif_after_trigger(IOC).await;
+        assert_eq!(
+            seen,
+            vec![
+                fxp::ExecutionType::ExecFilled,
+                fxp::ExecutionType::ExecCanceled
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_limit_fok_is_killed_after_trigger_without_liquidity() {
+        let seen = stop_limit_tif_after_trigger(FOK).await;
+        assert_eq!(seen, vec![fxp::ExecutionType::ExecCanceled]);
+    }
+
+    #[tokio::test]
+    async fn replacing_parked_stop_price_reorders_triggers() {
+        let book = spawn_book();
+        let (m, mut m_rx) = conn();
+        let (t, mut t_rx) = conn();
+        let (x, mut x_rx) = conn();
+        for (id, px) in [("MA110", 110_00), ("MA111", 111_00)] {
+            rest(&book, &m, &mut m_rx, nos(id, "M", SELL, px, 1, LIMIT, GTC)).await;
+        }
+        rest(&book, &t, &mut t_rx, stop("S1", "T", BUY, 105_00, 1)).await;
+        rest(&book, &t, &mut t_rx, stop("S2", "T", BUY, 103_00, 1)).await;
+        let replace = |sender: &str, out: &OutputTx| {
+            SymbolMsg::CancelReplace(CancelReplaceMsg {
+                order_id: "S1".into(),
+                sender: sender.into(),
+                new_order_id: "S1R".into(),
+                client_replace_id: format!("CR-{sender}"),
+                new_price: 0,
+                new_quantity: 0,
+                new_time_in_force: 0,
+                new_stop_price: 101_00,
+                output_tx: out.clone(),
+            })
+        };
+        book.send(replace("X", &x)).await.unwrap();
+        assert_eq!(et(&next(&mut x_rx).await), fxp::ExecutionType::ExecRejected);
+        book.send(replace("T", &t)).await.unwrap();
+        let (r1, r2) = (next(&mut t_rx).await, next(&mut t_rx).await);
+        assert_eq!(
+            [
+                (r1.order_id.as_str(), et(&r1)),
+                (r2.order_id.as_str(), et(&r2))
+            ],
+            [
+                ("S1", fxp::ExecutionType::ExecReplaced),
+                ("S1R", fxp::ExecutionType::ExecNew)
+            ]
+        );
+        // A 103 print triggers both; S1R (stop 101) now fires before S2 (stop 103).
+        rest(
+            &book,
+            &m,
+            &mut m_rx,
+            nos("MA103", "M", SELL, 103_00, 1, LIMIT, GTC),
+        )
+        .await;
+        send_order(&book, nos("AG", "A", BUY, 103_00, 1, LIMIT, IOC), &conn().0).await;
+        let want: Vec<_> = [("S1R", 110_00), ("S2", 111_00)]
+            .iter()
+            .map(|(i, p)| (i.to_string(), *p))
+            .collect();
+        assert_eq!(fills(&mut t_rx, 2).await, want);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_frame_carries_every_level_best_first() {
+        let mut book = OrderBook::new("SNAP", Arc::new(MarketDataBroadcaster::new()));
+        for (id, px, qty, side) in [
+            ("b1", 990, 20, OrderSide::Buy),
+            ("b2", 1000, 10, OrderSide::Buy),
+            ("a1", 1020, 40, OrderSide::Sell),
+            ("a2", 1010, 30, OrderSide::Sell),
+        ] {
+            book.add_order(Order::simple(
+                id.into(),
+                "T".into(),
+                "SNAP".into(),
+                px,
+                qty,
+                side,
+                OrderType::Limit,
+                TimeInForce::GTC,
+                0,
+            ));
+        }
+        let frame = snapshot_frame(&book);
+        let Some(fxp::fxp_message::Payload::MarketDataSnapshot(snap)) =
+            fxp::FxpMessage::decode(&frame[4..]).unwrap().payload
+        else {
+            panic!("not a snapshot");
+        };
+        let lv = |v: &[fxp::MarketOrderBookEntry]| {
+            v.iter()
+                .map(|e| (e.price, e.size, e.side))
+                .collect::<Vec<_>>()
+        };
+        let (b, s) = (fxp::OrderSide::Buy as i32, fxp::OrderSide::Sell as i32);
+        assert_eq!(lv(&snap.bid_levels), vec![(1000, 10, b), (990, 20, b)]);
+        assert_eq!(lv(&snap.ask_levels), vec![(1010, 30, s), (1020, 40, s)]);
     }
 }

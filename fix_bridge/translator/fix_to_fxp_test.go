@@ -120,3 +120,20 @@ func TestParseFixedPoint(t *testing.T) {
 		})
 	}
 }
+
+func TestCancelReplaceStopPx(t *testing.T) {
+	replace, err := TranslateFIXtoFXP(buildInbound(t, codec.MsgTypeOrderCancelReplaceRequest, map[int]string{
+		codec.TagClOrdID: "N2", codec.TagOrigClOrdID: "N1", codec.TagSymbol: "AAPL", codec.TagStopPx: "101.50",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := replace.GetOrderCancelReplace().NewStopPrice; got != 10150 {
+		t.Fatalf("NewStopPrice = %d, want 10150", got)
+	}
+	if _, err := TranslateFIXtoFXP(buildInbound(t, codec.MsgTypeOrderCancelReplaceRequest, map[int]string{
+		codec.TagClOrdID: "N2", codec.TagOrigClOrdID: "N1", codec.TagSymbol: "AAPL", codec.TagStopPx: "-1",
+	})); err == nil {
+		t.Fatal("negative StopPx accepted")
+	}
+}

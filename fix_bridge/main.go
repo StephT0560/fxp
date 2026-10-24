@@ -77,6 +77,11 @@ func main() {
 		log.Fatalf("FXP_FIX_CREDENTIALS: %v", err)
 	}
 	auth := session.NewCredentialAuth(creds)
+	registry, err := newSessionRegistry()
+	if err != nil {
+		log.Fatalf("FIX session store: %v", err)
+	}
+	defer func() { _ = registry.Close() }()
 
 	listener, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
@@ -92,8 +97,50 @@ func main() {
 
 	acceptFIXClients(listener, fixMaxConnections(), func(conn net.Conn) {
 		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
-		handleFIXClient(conn, *bridgeCompID, jwtSecret, auth)
+		handleFIXClient(conn, *bridgeCompID, jwtSecret, auth, registry)
 	})
+}
+
+// newSessionRegistry keeps FIX session state (sequence numbers, sent messages)
+// per (BeginString, SenderCompID, TargetCompID) across reconnects and restarts.
+//
+//	FXP_FIX_STORE_DIR            directory (default "fix_store"; set empty for in-memory)
+//	FXP_FIX_STORE_FSYNC          strict (default) | group | async
+//	FXP_FIX_STORE_GROUP_INTERVAL group fsync interval (default 10ms)
+//	FXP_FIX_STORE_MAX_MESSAGES   outbound messages retained for resend (default 100000)
+func newSessionRegistry() (*session.Registry, error) {
+	dir, ok := os.LookupEnv("FXP_FIX_STORE_DIR")
+	if !ok {
+		dir = "fix_store"
+	}
+	if dir == "" {
+		log.Printf("⚠️ FXP_FIX_STORE_DIR is empty — FIX session state is lost on restart")
+		return session.NewRegistry(session.MemoryStoreFactory), nil
+	}
+	mode, err := session.ParseFsyncMode(os.Getenv("FXP_FIX_STORE_FSYNC"))
+	if err != nil {
+		return nil, err
+	}
+	opts := session.FileStoreOptions{
+		Fsync:         mode,
+		GroupInterval: sessionDurationEnv("FXP_FIX_STORE_GROUP_INTERVAL", 0),
+		MaxMessages:   positiveIntEnv("FXP_FIX_STORE_MAX_MESSAGES", 100_000),
+	}
+	log.Printf("   FIX store: %s (fsync=%s, retain %d messages)", dir, mode, opts.MaxMessages)
+	return session.NewRegistry(session.FileStoreFactory(dir, opts)), nil
+}
+
+func positiveIntEnv(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		log.Printf("⚠️ ignoring invalid %s=%q, using %d", name, value, fallback)
+		return fallback
+	}
+	return n
 }
 
 func fixMaxConnections() int {
@@ -142,7 +189,7 @@ func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net
 // handleFIXClient runs the full lifecycle for one FIX client connection.
 // Creates a session, a gateway client, wires them together, and blocks
 // until the FIX session ends.
-func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session.Authenticator) {
+func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session.Authenticator, registry *session.Registry) {
 	// The bridge handler implements session.Handler.
 	// It holds references to both the session (to send FIX frames back)
 	// and the gateway client (to forward orders).
@@ -157,6 +204,7 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 	sess.LogoutTimeout = sessionDurationEnv("FXP_FIX_LOGOUT_TIMEOUT", sess.LogoutTimeout)
 	sess.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", sess.MaxLatency)
 	sess.Auth = auth
+	sess.Registry = registry
 	h.sess = sess
 
 	// Run the session (blocks until disconnect)
@@ -174,6 +222,7 @@ type bridgeHandler struct {
 	sess         *session.Session
 	gwClient     *gateway.Client
 	pending      pendingRequests
+	md           mdSubscriptions
 }
 
 // OnLogon is called by the session after Logon is accepted.
@@ -233,11 +282,23 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		return
 	}
 
+	if msg.MsgType() == codec.MsgTypeMarketDataRequest && msg.Get(codec.TagSubscriptionRequestType) == "2" {
+		h.md.unsubscribe(msg.Get(codec.TagMDReqID), mdSymbols(msg))
+		return // nothing to forward upstream
+	}
+
 	fxpMsg, err := translator.TranslateFIXtoFXP(msg)
 	if err != nil {
 		log.Printf("[%s] translation error for %s: %v", sess.TargetCompID, msg.MsgType(), err)
 		h.sendBusinessReject(msg, sess, err.Error())
 		return
+	}
+
+	// Recorded before sending so the snapshot cannot outrun it; undone on failure.
+	var undoMD func()
+	if mdReq := fxpMsg.GetMarketDataRequest(); mdReq != nil {
+		stream := msg.Get(codec.TagSubscriptionRequestType) == "1"
+		undoMD = h.md.subscribe(msg.Get(codec.TagMDReqID), stream, mdReq.Symbols)
 	}
 
 	req := fixRequestFor(fxpMsg)
@@ -248,6 +309,9 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 	if err := h.gwClient.Send(fxpMsg); err != nil {
 		if tracked {
 			h.pending.take(req.Get(codec.TagClOrdID))
+		}
+		if undoMD != nil {
+			undoMD()
 		}
 		log.Printf("[%s] gateway send error: %v", sess.TargetCompID, err)
 		h.sendBusinessReject(msg, sess, "gateway unavailable: "+err.Error())
@@ -265,10 +329,33 @@ func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
 			return
 		}
 	}
+	if symbol, snapshot, ok := marketDataSymbol(msg); ok {
+		ids := h.md.incrementalTargets(symbol)
+		if snapshot {
+			ids = h.md.snapshotTargets(symbol)
+		}
+		for _, id := range ids {
+			h.sess.SendWithSeq(func(seq int) []byte {
+				return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq,
+					func(string) string { return id })
+			})
+		}
+		return
+	}
 	// Sequence numbers come from the session; untranslated types (nil) consume none.
 	h.sess.SendWithSeq(func(seq int) []byte {
-		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq)
+		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq, nil)
 	})
+}
+
+func marketDataSymbol(msg *protobuf.FXPMessage) (symbol string, snapshot, ok bool) {
+	switch p := msg.Payload.(type) {
+	case *protobuf.FXPMessage_MarketDataSnapshot:
+		return p.MarketDataSnapshot.Symbol, true, true
+	case *protobuf.FXPMessage_MarketDataIncremental:
+		return p.MarketDataIncremental.Symbol, false, true
+	}
+	return "", false, false
 }
 
 // sendBusinessReject sends a FIX ExecutionReport with OrdStatus=Rejected
@@ -332,4 +419,15 @@ func fixRequestFor(m *protobuf.FXPMessage) *codec.Message {
 		return nil
 	}
 	return &codec.Message{Fields: f}
+}
+
+// mdSymbols returns the Symbol(55) entries of a MarketDataRequest.
+func mdSymbols(msg *codec.Message) []string {
+	var symbols []string
+	for _, f := range msg.Tags {
+		if f.Tag == codec.TagSymbol && f.Value != "" {
+			symbols = append(symbols, f.Value)
+		}
+	}
+	return symbols
 }

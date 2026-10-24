@@ -115,7 +115,7 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 			return nil, fmt.Errorf("invalid Price %q: %w", priceStr, err)
 		}
 	} else if ordType == protobuf.OrderType_LIMIT || ordType == protobuf.OrderType_STOP_LIMIT {
-		return nil, fmt.Errorf("Price (tag 44) required for OrdType %q", ordTypeStr)
+		return nil, fmt.Errorf("price (tag 44) required for OrdType %q", ordTypeStr)
 	}
 
 	// Parse stop price (required for Stop and StopLimit)
@@ -229,6 +229,16 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		newQty = int32(qty)
 	}
 
+	// New stop price (optional — 0 means no change; parked stops only)
+	var newStopPrice int64
+	if stopStr := msg.Get(codec.TagStopPx); stopStr != "" {
+		var err error
+		newStopPrice, err = parseFixedPoint(stopStr)
+		if err != nil || newStopPrice <= 0 {
+			return nil, fmt.Errorf("invalid StopPx %q", stopStr)
+		}
+	}
+
 	var newTimeInForce protobuf.TimeInForce
 	if tifStr := msg.Get(codec.TagTimeInForce); tifStr != "" {
 		var err error
@@ -251,6 +261,7 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		NewPrice:        newPrice,
 		NewQuantity:     newQty,
 		NewTimeInForce:  newTimeInForce,
+		NewStopPrice:    newStopPrice,
 		Timestamp:       timestamppb.Now(),
 	}
 

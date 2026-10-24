@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: MIT
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fxp_core
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: fmt, test, clippy, bench build, audit
+        working-directory: fxp_core
+        run: |
+          cargo fmt --all -- --check
+          cargo test --all-targets --locked
+          # Warnings are reported but not fatal until the lint cleanup lands.
+          cargo clippy --all-targets --locked -- -W warnings
+          cargo bench --no-run --locked
+          cargo audit
+
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: fxp_core/Cargo.toml
+          command: check
+
+  go:
+    name: go (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [go_gateway, fix_bridge]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: "**/go.sum"
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: bash scripts/gen_proto.sh
+      - name: gofmt
+        run: test -z "$(gofmt -l ${{ matrix.module }})" || { gofmt -l ${{ matrix.module }}; exit 1; }
+      - name: vet, test, staticcheck, govulncheck
+        working-directory: ${{ matrix.module }}
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+          go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  e2e:
+    name: e2e
+    needs: [rust, go]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fxp_core
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go_gateway/go.mod
+          cache-dependency-path: "**/go.sum"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: bash scripts/gen_proto.sh && bash scripts/e2e.sh
+        env:
+          E2E_LOG_DIR: ${{ runner.temp }}/e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-logs
+          path: ${{ runner.temp }}/e2e
+
+  proto:
+    name: proto
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-action@v1
+        with:
+          input: fxp_core/proto
+          lint: true
+          format: false
+          push: false
+          # Lint/breaking results go to the job log; commenting needs pull-requests: write.
+          pr_comment: false
+          breaking: ${{ github.event_name == 'pull_request' }}
+          breaking_against: "${{ github.event.repository.clone_url }}#branch=${{ github.base_ref }},subdir=fxp_core/proto"

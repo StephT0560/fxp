@@ -223,6 +223,24 @@ NVDA   open=$875.00  last=$875.15  vol=38,359
 
 ---
 
+## FIX Session Store
+
+The FIX bridge keeps each session's sequence numbers and sent messages per
+`(BeginString, SenderCompID, TargetCompID)`, so a client that reconnects — or
+logs on again after a bridge restart — resumes where it left off and can
+ResendRequest earlier messages. Each session has a directory holding a
+CRC-protected append-only `outbound.log` (a torn tail is truncated on start)
+and a `seqnums` file replaced atomically on every change.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FXP_FIX_STORE_DIR` | `fix_store` | Store root; set empty for in-memory state (lost on restart) |
+| `FXP_FIX_STORE_FSYNC` | `strict` | `strict`: fsync every write; `group`: fsync every `FXP_FIX_STORE_GROUP_INTERVAL` (default `10ms`); `async`: never fsync. All modes survive a killed process; they differ only on power loss |
+| `FXP_FIX_STORE_MAX_MESSAGES` | `100000` | Outbound messages retained for resend; older ones are answered with SequenceReset-GapFill |
+
+A second Logon for a session that is already logged on is rejected. Session
+schedules / daily reset are not implemented; use `ResetSeqNumFlag=Y` (141=Y).
+
 ## Tests
 
 Counts observed at this revision:
@@ -329,7 +347,7 @@ fxp/
 - [ ] Stop/StopLimit trigger on live last-trade-price feed
 - [ ] `OrderCancelRequest` / `OrderCancelReplaceRequest` full round-trip in simulation
 - [x] Release build benchmarks
-- [ ] CI/CD pipeline
+- [x] CI/CD pipeline (GitHub Actions: `.github/workflows/ci.yml`)
 - [ ] TLS support (infrastructure exists in proto; not yet wired)
 - [x] FIX 4.x bridge (inbound FIX → FXP translation layer)
 
