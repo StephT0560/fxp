@@ -290,7 +290,7 @@ func mapMDUpdateAction(updateType int32) string {
 // 18542 → "185.42", 18500 → "185.00", 50 → "0.50"
 func formatFixedPoint(cents int64) string {
 	if cents == 0 {
-		return "0"
+		return "0.00"
 	}
 	neg := ""
 	if cents < 0 {

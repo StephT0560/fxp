@@ -78,3 +78,43 @@ func TestFixEnumUnknownValuesAreRejected(t *testing.T) {
 		t.Fatal("unknown cancel/replace tag 59 value was accepted")
 	}
 }
+
+func TestParseFixedPoint(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    int64
+		wantErr bool
+	}{
+		{"two decimal places", "185.42", 18542, false},
+		{"whole number", "185", 18500, false},
+		{"one decimal place", "185.4", 18540, false},
+		{"round up", "1.005", 101, false},
+		{"round down", "1.004", 100, false},
+		{"round to next dollar", "0.999", 100, false},
+		{"negative sub-unit", "-0.50", -50, false},
+		{"negative half cent", "-0.005", -1, false},
+		{"negative half away from zero", "-1.235", -124, false},
+		{"empty", "", 0, true},
+		{"sign only", "-", 0, true},
+		{"garbage", "abc", 0, true},
+		{"non-digit decimal", "1.2x", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseFixedPoint(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseFixedPoint(%q) succeeded with %d", tc.input, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseFixedPoint(%q): %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Fatalf("parseFixedPoint(%q) = %d, want %d", tc.input, got, tc.want)
+			}
+		})
+	}
+}
