@@ -225,6 +225,8 @@ enum SymbolMsg {
 struct SymbolRouter {
     channels: Arc<Mutex<HashMap<String, mpsc::Sender<SymbolMsg>>>>,
     tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    #[cfg(test)]
+    test_symbol_gate: Option<Arc<tokio::sync::Semaphore>>,
     schedule: Option<SessionSchedule>,
     stp_default: StpMode,
     persistence: Option<Persistence>,
@@ -237,6 +239,8 @@ impl SymbolRouter {
         Self {
             channels: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            #[cfg(test)]
+            test_symbol_gate: None,
             schedule,
             stp_default: StpMode::None,
             persistence: None,
@@ -319,14 +323,38 @@ impl SymbolRouter {
         let (tx, rx) = mpsc::channel::<SymbolMsg>(4096);
         map.insert(symbol.to_string(), tx.clone());
         let sym = symbol.to_string();
+        let schedule = self.schedule;
+        let stp_default = self.stp_default;
+        let persistence = self.persistence.clone();
         // Spawn while holding the lock to guarantee the entry is visible
         // before any message can be dispatched to this symbol.
+        #[cfg(test)]
+        let task = {
+            if let Some(gate) = self.test_symbol_gate.clone() {
+                tokio::spawn(async move {
+                    gate.acquire()
+                        .await
+                        .expect("test symbol gate closed")
+                        .forget();
+                    scheduled_order_book_task(sym, rx, schedule, stp_default, persistence).await;
+                })
+            } else {
+                tokio::spawn(scheduled_order_book_task(
+                    sym,
+                    rx,
+                    schedule,
+                    stp_default,
+                    persistence,
+                ))
+            }
+        };
+        #[cfg(not(test))]
         let task = tokio::spawn(scheduled_order_book_task(
             sym,
             rx,
-            self.schedule,
-            self.stp_default,
-            self.persistence.clone(),
+            schedule,
+            stp_default,
+            persistence,
         ));
         self.tasks
             .lock()
@@ -597,7 +625,8 @@ impl AbortOnDrop {
 async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) {
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (writer_tx, mut writer_rx) = mpsc::unbounded_channel();
-    handle_tcp_client_with_shutdown(stream, router, shutdown_rx, writer_tx).await;
+    handle_tcp_client_with_shutdown(stream, router, shutdown_rx.clone(), shutdown_rx, writer_tx)
+        .await;
     while let Ok(writer) = writer_rx.try_recv() {
         writer.abort();
     }
@@ -607,6 +636,7 @@ async fn handle_tcp_client_with_shutdown(
     stream: tokio::net::TcpStream,
     router: SymbolRouter,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    mut writer_drain: tokio::sync::watch::Receiver<bool>,
     writer_tasks: mpsc::UnboundedSender<tokio::task::JoinHandle<()>>,
 ) {
     tracing::info!("New TCP client connected.");
@@ -616,15 +646,14 @@ async fn handle_tcp_client_with_shutdown(
     let (output_tx, mut output_rx, mut md_rx) = ClientTx::channel(8192, 4096);
 
     // One writer serializes frames and prioritizes critical reports over MD.
-    let mut writer_shutdown = shutdown.clone();
     let writer = tokio::spawn(async move {
         let mut w = write_half;
         let (mut frames_open, mut md_open) = (true, true);
         while frames_open || md_open {
             let frame = tokio::select! {
                 biased;
-                changed = writer_shutdown.changed() => {
-                    if changed.is_err() || *writer_shutdown.borrow() {
+                changed = writer_drain.changed() => {
+                    if changed.is_err() || *writer_drain.borrow() {
                         while let Ok(frame) = output_rx.try_recv() {
                             if w.write_all(&frame).await.is_err() {
                                 break;
@@ -1088,6 +1117,7 @@ where
     F: Future<Output = ()> + Send,
 {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (writer_drain_tx, writer_drain_rx) = tokio::sync::watch::channel(false);
     let (writer_tx, mut writer_rx) = mpsc::unbounded_channel();
     let mut handlers = tokio::task::JoinSet::new();
     tokio::pin!(shutdown);
@@ -1101,9 +1131,17 @@ where
                     backoff = ACCEPT_BACKOFF_MIN;
                     let router_clone = router.clone();
                     let shutdown = shutdown_rx.clone();
+                    let writer_drain = writer_drain_rx.clone();
                     let writers = writer_tx.clone();
                     handlers.spawn(async move {
-                        handle_tcp_client_with_shutdown(stream, router_clone, shutdown, writers).await;
+                        handle_tcp_client_with_shutdown(
+                            stream,
+                            router_clone,
+                            shutdown,
+                            writer_drain,
+                            writers,
+                        )
+                        .await;
                     });
                 }
                 // Transient errors (EMFILE, ECONNABORTED, ...) do not kill the server.
@@ -1130,6 +1168,7 @@ where
                 tracing::error!("symbol task failed during shutdown: {error}");
             }
         }
+        let _ = writer_drain_tx.send(true);
         let mut writers = Vec::new();
         while let Some(writer) = writer_rx.recv().await {
             writers.push(writer);
@@ -2822,5 +2861,101 @@ mod shutdown_tests {
             )),
             "resting order was not restored from the journal"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn shutdown_drains_reports_after_symbol_tasks_finish() {
+        use tokio::io::AsyncReadExt;
+
+        const ORDER_COUNT: usize = 200;
+
+        let mut router = SymbolRouter::new(None);
+        let symbol_gate = Arc::new(tokio::sync::Semaphore::new(0));
+        router.test_symbol_gate = Some(symbol_gate.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(run_server_with_router(
+            listener,
+            router.clone(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+            Duration::from_secs(2),
+        ));
+        let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+        for index in 0..ORDER_COUNT {
+            let order = fxp::FxpMessage {
+                payload: Some(fxp::fxp_message::Payload::NewOrder(fxp::NewOrderSingle {
+                    symbol: "SHUTDOWN-DRAIN".into(),
+                    sender: "owner".into(),
+                    order_id: format!("resting-{index}"),
+                    price: 12_345,
+                    quantity: 7,
+                    side: 1,
+                    order_type: 2,
+                    time_in_force: 2,
+                    ..Default::default()
+                })),
+            };
+            client.write_all(&frame_message(&order)).await.unwrap();
+        }
+
+        let queued_sender = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(sender) = router.get_existing("SHUTDOWN-DRAIN").await {
+                    if sender.capacity() == sender.max_capacity() - ORDER_COUNT {
+                        break sender;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("symbol task did not queue all resting orders");
+
+        drop(queued_sender);
+        let _ = shutdown_tx.send(());
+        let mut probe = [0; 1];
+        let writer_closed_early =
+            match tokio::time::timeout(Duration::from_millis(100), client.read(&mut probe)).await {
+                Ok(Ok(0)) | Ok(Err(_)) => true,
+                Ok(Ok(_)) => false,
+                Err(_) => false,
+            };
+        symbol_gate.add_permits(1);
+
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .expect("server shutdown hung")
+            .expect("server task panicked")
+            .expect("server shutdown failed");
+
+        for index in 0..ORDER_COUNT {
+            let mut length = [0; 4];
+            tokio::time::timeout(Duration::from_secs(1), client.read_exact(&mut length))
+                .await
+                .unwrap_or_else(|_| panic!("timed out waiting for report {index}"))
+                .unwrap_or_else(|error| panic!("missing report {index}: {error}"));
+            let mut body = vec![0; u32::from_be_bytes(length) as usize];
+            client.read_exact(&mut body).await.unwrap();
+            let response = fxp::FxpMessage::decode(body.as_slice()).unwrap();
+            let Some(fxp::fxp_message::Payload::ExecutionReport(report)) = response.payload else {
+                panic!("response {index} was not an ExecutionReport");
+            };
+            assert_eq!(report.order_id, format!("resting-{index}"));
+            assert_eq!(report.execution_type, fxp::ExecutionType::ExecNew as i32);
+        }
+
+        assert!(
+            !writer_closed_early,
+            "client writer closed before symbol tasks finished"
+        );
+        let eof = tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0; 1]))
+            .await
+            .expect("client did not observe EOF")
+            .unwrap();
+        assert_eq!(eof, 0);
     }
 }
