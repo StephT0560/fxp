@@ -174,9 +174,10 @@ func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net
 		select {
 		case slots <- struct{}{}:
 			go func(conn net.Conn) {
+				// Free the slot before closing so a client that sees EOF can reconnect immediately.
 				defer func() {
-					_ = conn.Close()
 					<-slots
+					_ = conn.Close()
 				}()
 				handle(conn)
 			}(conn)
