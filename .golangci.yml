@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+
+formatters:
+  enable:
+    - gofmt
+
+run:
+  tests: true
