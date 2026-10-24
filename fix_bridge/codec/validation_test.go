@@ -23,7 +23,7 @@ func validationMessage(t *testing.T, typ string, body ...Field) *Message {
 	}
 	for _, f := range body {
 		if f.Value == "" {
-			m.Tags = append(m.Tags, f)
+			m.Tags = append(m.Tags[:len(m.Tags)-1], f, m.Tags[len(m.Tags)-1])
 			m.Fields[f.Tag] = ""
 		}
 	}
@@ -114,5 +114,30 @@ func TestParserRetainsEmptyValueForDictionaryReject(t *testing.T) {
 	v := DefaultDictionary.Validate(m, false)
 	if v == nil || v.Reason != "4" || v.Tag != 55 {
 		t.Fatalf("got %+v", v)
+	}
+}
+
+func TestDictionaryHeaderOrderAndFIXDecimalSyntax(t *testing.T) {
+	for _, value := range []string{"+200.00", "2e2", "NaN", "Inf"} {
+		body := validOrder()
+		body = append(body, Field{99, value})
+		v := DefaultDictionary.Validate(validationMessage(t, "D", body...), false)
+		if v == nil || v.Tag != 99 || v.Reason != "6" {
+			t.Errorf("value %q: %+v", value, v)
+		}
+	}
+	m := validationMessage(t, "D", validOrder()...)
+	var moved Field
+	for i, f := range m.Tags {
+		if f.Tag == 34 {
+			moved = f
+			m.Tags = append(m.Tags[:i], m.Tags[i+1:]...)
+			break
+		}
+	}
+	m.Tags = append(m.Tags, moved)
+	v := DefaultDictionary.Validate(m, false)
+	if v == nil || v.Reason != "14" || v.Tag != 34 {
+		t.Fatalf("header after body: %+v", v)
 	}
 }

@@ -48,8 +48,12 @@ type messageDef struct {
 	Nodes []xmlNode `xml:",any"`
 }
 type dictionaryXML struct {
-	Header     []xmlNode    `xml:"header>field"`
-	Trailer    []xmlNode    `xml:"trailer>field"`
+	Header struct {
+		Nodes []xmlNode `xml:",any"`
+	} `xml:"header"`
+	Trailer struct {
+		Nodes []xmlNode `xml:",any"`
+	} `xml:"trailer"`
 	Fields     []fieldDef   `xml:"fields>field"`
 	Messages   []messageDef `xml:"messages>message"`
 	Components []struct {
@@ -142,15 +146,8 @@ func loadDictionary() *Dictionary {
 		}
 		d.messages[m.Type] = compile(m.Nodes)
 	}
-	// Header/trailer XML >field paths discard element names; restore them.
-	for i := range source.Header {
-		source.Header[i].Kind.Local = "field"
-	}
-	for i := range source.Trailer {
-		source.Trailer[i].Kind.Local = "field"
-	}
-	d.header = compile(source.Header)
-	d.trailer = compile(source.Trailer)
+	d.header = compile(source.Header.Nodes)
+	d.trailer = compile(source.Trailer.Nodes)
 	return d
 }
 
@@ -230,6 +227,32 @@ func (d *Dictionary) Validate(m *Message, strict bool) *ValidationError {
 			tags = append(tags, Field{k, m.Fields[k]})
 		}
 	}
+	header, trailer := map[int]bool{}, map[int]bool{}
+	var mark func([]*rule, map[int]bool)
+	mark = func(rs []*rule, m map[int]bool) {
+		for _, r := range flatten(rs) {
+			m[r.tag] = true
+			mark(r.children, m)
+		}
+	}
+	mark(d.header, header)
+	mark(d.trailer, trailer)
+	zone := 0
+	for _, f := range tags {
+		if header[f.Tag] {
+			if zone > 0 {
+				return d.failure(f.Tag, "14", "Tag specified out of required order")
+			}
+		} else if trailer[f.Tag] {
+			zone = 2
+		} else {
+			if zone == 2 {
+				return d.failure(f.Tag, "14", "Body field after trailer")
+			}
+			zone = 1
+		}
+	}
+
 	for _, f := range tags {
 		def, ok := d.fields[f.Tag]
 		if !ok {
@@ -350,6 +373,20 @@ func validType(typ, v string) bool {
 		n, e := strconv.ParseInt(v, 10, 64)
 		return e == nil && (typ == "INT" || n >= 0)
 	case "PRICE", "AMT", "QTY", "FLOAT", "PRICEOFFSET", "PERCENTAGE":
+		decimal := strings.TrimPrefix(v, "-")
+		dots, digits := 0, 0
+		for _, c := range decimal {
+			if c == '.' {
+				dots++
+			} else if c >= '0' && c <= '9' {
+				digits++
+			} else {
+				return false
+			}
+		}
+		if dots > 1 || digits == 0 {
+			return false
+		}
 		n, e := strconv.ParseFloat(v, 64)
 		return e == nil && !math.IsNaN(n) && !math.IsInf(n, 0)
 	case "CHAR":
@@ -409,4 +446,19 @@ func MissingRequired(m *Message) (RequiredField, bool) {
 		}
 	}
 	return RequiredField{}, false
+}
+
+// ValidateIdentity distinguishes missing/empty identifiers from a nonempty
+// authenticated identity mismatch before routing to CompID enforcement.
+func (d *Dictionary) ValidateIdentity(m *Message) *ValidationError {
+	for _, tag := range []int{49, 56} {
+		value, ok := m.Fields[tag]
+		if !ok {
+			return d.failure(tag, "1", "Required tag missing")
+		}
+		if value == "" {
+			return d.failure(tag, "4", "Tag specified without a value")
+		}
+	}
+	return nil
 }

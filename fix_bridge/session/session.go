@@ -357,8 +357,18 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		return s.handleLogon(msg, seq)
 	}
 
+	if v := codec.DefaultDictionary.ValidateIdentity(msg); v != nil {
+		if seq == s.inSeqNum {
+			if err := s.setInSeq(seq + 1); err != nil {
+				return err
+			}
+		}
+		s.sendRejectRef(seq, v.Tag, msgType, v.Reason, v.Text)
+		return nil
+	}
+
 	if msg.Get(codec.TagSenderCompID) != s.target() || msg.Get(codec.TagTargetCompID) != s.SenderCompID {
-		s.sendReject(seq, codec.RejectCompIDProblem, "CompID problem")
+		s.sendRejectRef(seq, 0, msgType, codec.RejectCompIDProblem, "CompID problem")
 		return fmt.Errorf("CompID problem: 49=%q 56=%q", msg.Get(codec.TagSenderCompID), msg.Get(codec.TagTargetCompID))
 	}
 
@@ -419,7 +429,7 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		return nil
 	}
 	if !validMsgType(msgType) {
-		s.sendReject(seq, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
+		s.sendRejectRef(seq, 0, msgType, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
 		return nil
 	}
 	if v := codec.DefaultDictionary.Validate(msg, s.StrictDictionary); v != nil {

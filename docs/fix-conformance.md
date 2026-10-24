@@ -40,7 +40,7 @@ quickfixengine.org (http://www.quickfixengine.org/). See the preserved
 Required fields in present optional components are checked too. Each group has
 its own duplicate/order/required-field scope. Missing tags use reason 1,
 undefined tags 0, tags from a different message type 2, empty values 4,
-invalid enums 5, incorrect datatypes 6, duplicate tags 13, group order 15 and
+invalid enums 5, incorrect datatypes 6, duplicate tags 13, misplaced header/trailer fields 14, group order 15 and
 incorrect NumInGroup counts 16. Replies include RefTagID/RefMsgType and consume
 the invalid message's inbound sequence number. Garbled framing/checksum is
 still ignored without consuming a sequence number. Unknown application types
@@ -83,3 +83,8 @@ are retained in memory. Older terminal orders become unknown. Input-log replay
 reconstructs status history with the same bound when FXP_EVENT_LOG is enabled;
 without that log, core restart loses status history. FIX FileStore durability
 alone persists FIX sequence/resend state, not matching-engine history.
+
+Acceptance probes also cover empty/missing CompIDs (dictionary reasons 4/1,
+before identity mismatch), optional header placement, and FIX decimal lexical
+syntax (no leading plus, exponent, NaN or infinity). Session test fixtures now
+place PossDupFlag/OrigSendingTime in StandardHeader, before body fields.
