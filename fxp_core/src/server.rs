@@ -245,7 +245,9 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         let _ = cancel_msg.output_tx.send(report).await;
                         tracing::debug!(
                             "Cancel rejected: order {} on {}: {:?}",
-                            cancel_msg.order_id, symbol, reject
+                            cancel_msg.order_id,
+                            symbol,
+                            reject
                         );
                     }
                 }
@@ -334,7 +336,9 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             }
                             tracing::debug!(
                                 "CancelReplaced parked stop {} → {} on {}",
-                                cr_msg.order_id, cr_msg.new_order_id, symbol
+                                cr_msg.order_id,
+                                cr_msg.new_order_id,
+                                symbol
                             );
                         }
                     }
@@ -366,7 +370,9 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         let _ = cr_msg.output_tx.send(report).await;
                         tracing::debug!(
                             "CancelReplace rejected: order {} on {}: {:?}",
-                            cr_msg.order_id, symbol, reject
+                            cr_msg.order_id,
+                            symbol,
+                            reject
                         );
                     }
                     Ok((replacement, inc)) => {
@@ -404,7 +410,9 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
 
                         tracing::debug!(
                             "CancelReplaced {} → {} on {}",
-                            cr_msg.order_id, cr_msg.new_order_id, symbol
+                            cr_msg.order_id,
+                            cr_msg.new_order_id,
+                            symbol
                         );
                     }
                 }
@@ -510,7 +518,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     if fires_immediately {
                         tracing::debug!(
                             "Stop {} triggered immediately at last_trade={:?}",
-                            order_obj.order_id, last_trade_price
+                            order_obj.order_id,
+                            last_trade_price
                         );
                     } else {
                         // Park in stop_book — send EXEC_NEW acknowledgement
@@ -525,7 +534,10 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         let _ = output_tx.send(ack).await;
                         tracing::debug!(
                             "Stop {} parked on {} (stop={} last_trade={:?})",
-                            order.order_id, symbol, order_obj.stop_price, last_trade_price
+                            order.order_id,
+                            symbol,
+                            order_obj.stop_price,
+                            last_trade_price
                         );
                         states.insert(order_obj.order_id.clone(), state);
                         stop_book.park(order_obj);
@@ -544,7 +556,13 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         ..ReportEvent::new(fxp::ExecutionType::ExecNew, fxp::OrderStatus::OrderNew)
                     };
                     let _ = output_tx
-                        .send(build_report(&order_obj.order_id, &symbol, Some(st), ev, &ts))
+                        .send(build_report(
+                            &order_obj.order_id,
+                            &symbol,
+                            Some(st),
+                            ev,
+                            &ts,
+                        ))
                         .await;
                 }
                 run_stop_cascade(&mut book, &mut stop_book, &mut last_trade_price, &mut exec);
@@ -1623,7 +1641,18 @@ mod report_tests {
             crate::order_book::order::TimeInForce::GTC,
         ));
         let (kept, _) = standalone
-            .replace_order("P0", "P1", OrderReplace { new_price: 0, new_total_qty: 0, new_time_in_force: None, client_order_id: "CR2", timestamp: 1 }, "T")
+            .replace_order(
+                "P0",
+                "P1",
+                OrderReplace {
+                    new_price: 0,
+                    new_total_qty: 0,
+                    new_time_in_force: None,
+                    client_order_id: "CR2",
+                    timestamp: 1,
+                },
+                "T",
+            )
             .unwrap();
         assert_eq!(
             kept.time_in_force,

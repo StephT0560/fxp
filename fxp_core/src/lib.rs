@@ -1090,8 +1090,19 @@ mod critical_tests {
             TimeInForce::IOC,
         ));
         assert_eq!(
-            book.replace_order("S", "S2", OrderReplace { new_price: 0, new_total_qty: 0, new_time_in_force: None, client_order_id: "S2", timestamp: 0 }, "T")
-                .unwrap_err(),
+            book.replace_order(
+                "S",
+                "S2",
+                OrderReplace {
+                    new_price: 0,
+                    new_total_qty: 0,
+                    new_time_in_force: None,
+                    client_order_id: "S2",
+                    timestamp: 0
+                },
+                "T"
+            )
+            .unwrap_err(),
             OrderReject::UnknownOrder
         );
         assert!(book.order_lookup.is_empty() && book.sell_orders.is_empty());
@@ -1121,18 +1132,51 @@ mod critical_tests {
 
         // Price-only amend: remaining 6 carries over.
         let (r, _) = book
-            .replace_order("S", "S2", OrderReplace { new_price: 10_100, new_total_qty: 0, new_time_in_force: None, client_order_id: "S2", timestamp: 0 }, "T")
+            .replace_order(
+                "S",
+                "S2",
+                OrderReplace {
+                    new_price: 10_100,
+                    new_total_qty: 0,
+                    new_time_in_force: None,
+                    client_order_id: "S2",
+                    timestamp: 0,
+                },
+                "T",
+            )
             .unwrap();
         assert_eq!(r.quantity, 6);
         // Re-stating the original total (10) leaves 10 - 4 filled = 6 open.
         let (r, _) = book
-            .replace_order("S2", "S3", OrderReplace { new_price: 0, new_total_qty: 10, new_time_in_force: None, client_order_id: "S3", timestamp: 0 }, "T")
+            .replace_order(
+                "S2",
+                "S3",
+                OrderReplace {
+                    new_price: 0,
+                    new_total_qty: 10,
+                    new_time_in_force: None,
+                    client_order_id: "S3",
+                    timestamp: 0,
+                },
+                "T",
+            )
             .unwrap();
         assert_eq!(r.quantity, 6);
         // A total at or below the filled quantity is rejected.
         assert_eq!(
-            book.replace_order("S3", "S4", OrderReplace { new_price: 0, new_total_qty: 4, new_time_in_force: None, client_order_id: "S4", timestamp: 0 }, "T")
-                .unwrap_err(),
+            book.replace_order(
+                "S3",
+                "S4",
+                OrderReplace {
+                    new_price: 0,
+                    new_total_qty: 4,
+                    new_time_in_force: None,
+                    client_order_id: "S4",
+                    timestamp: 0
+                },
+                "T"
+            )
+            .unwrap_err(),
             OrderReject::QuantityNotAboveFilled
         );
         assert_eq!(book.order_lookup.len(), 1);
@@ -1214,14 +1258,36 @@ mod critical_tests {
         book.add_order(o);
 
         assert_eq!(
-            book.replace_order("ORD-1", "ORD-2", OrderReplace { new_price: 1_00, new_total_qty: 0, new_time_in_force: None, client_order_id: "ORD-2", timestamp: 0 }, "ATTACKER")
-                .unwrap_err(),
+            book.replace_order(
+                "ORD-1",
+                "ORD-2",
+                OrderReplace {
+                    new_price: 1_00,
+                    new_total_qty: 0,
+                    new_time_in_force: None,
+                    client_order_id: "ORD-2",
+                    timestamp: 0
+                },
+                "ATTACKER"
+            )
+            .unwrap_err(),
             OrderReject::NotOwner
         );
         assert_eq!(book.buy_orders[&10_000][0].order_id, "ORD-1");
 
         let (r, _) = book
-            .replace_order("ORD-1", "ORD-2", OrderReplace { new_price: 10_100, new_total_qty: 0, new_time_in_force: None, client_order_id: "ORD-2", timestamp: 0 }, "VICTIM")
+            .replace_order(
+                "ORD-1",
+                "ORD-2",
+                OrderReplace {
+                    new_price: 10_100,
+                    new_total_qty: 0,
+                    new_time_in_force: None,
+                    client_order_id: "ORD-2",
+                    timestamp: 0,
+                },
+                "VICTIM",
+            )
             .unwrap();
         assert_eq!(
             (r.trader_id.as_str(), r.price, r.quantity),

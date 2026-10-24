@@ -76,14 +76,8 @@ impl OrderBook {
     /// ✅ Notify clients when adding an order
     pub fn add_order(&mut self, order: Order) -> MarketDataIncrementalUpdate {
         let price_level = match order.side {
-            OrderSide::Buy => self
-                .buy_orders
-                .entry(order.price)
-                .or_default(),
-            OrderSide::Sell => self
-                .sell_orders
-                .entry(order.price)
-                .or_default(),
+            OrderSide::Buy => self.buy_orders.entry(order.price).or_default(),
+            OrderSide::Sell => self.sell_orders.entry(order.price).or_default(),
         };
         price_level.push_back(order.clone());
         self.order_lookup

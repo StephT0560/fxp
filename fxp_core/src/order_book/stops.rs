@@ -207,8 +207,8 @@ pub fn run_stop_cascade(
 mod property_tests {
     use super::*;
     use crate::order_book::broadcaster::MarketDataBroadcaster;
-    use std::sync::Arc;
     use crate::order_book::order_book::OrderReplace;
+    use std::sync::Arc;
 
     type Fill = (String, String, i64, u32);
 
@@ -411,7 +411,18 @@ mod property_tests {
                 }
             } else if self
                 .book
-                .replace_order(id, new_id, OrderReplace { new_price: px, new_total_qty: 0, new_time_in_force: None, client_order_id: "", timestamp: 0 }, "T")
+                .replace_order(
+                    id,
+                    new_id,
+                    OrderReplace {
+                        new_price: px,
+                        new_total_qty: 0,
+                        new_time_in_force: None,
+                        client_order_id: "",
+                        timestamp: 0,
+                    },
+                    "T",
+                )
                 .is_ok()
             {
                 let (fills, fill_updates) = self.book.match_orders();
