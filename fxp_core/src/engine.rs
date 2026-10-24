@@ -10,6 +10,10 @@ use prost_types::Timestamp;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod session;
+use session::expiry_instant;
+pub use session::{SessionSchedule, UtcTimeOfDay};
+
 struct OrderMsg<R> {
     pub order: fxp::NewOrderSingle,
     pub output_tx: R,
@@ -89,7 +93,7 @@ pub trait Clock {
     fn now(&self) -> Time;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Time {
     pub seconds: i64,
     pub nanos: i32,
@@ -119,10 +123,14 @@ pub struct Engine<R, C, I> {
     states: HashMap<String, OrderState<R>>,
     clock: C,
     ids: I,
+    schedule: Option<SessionSchedule>,
+    last_seen: Time,
+    next_arrival: u64,
 }
 
 impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
-    pub fn new(symbol: &str, clock: C, ids: I) -> Self {
+    pub fn new(symbol: &str, clock: C, ids: I, schedule: Option<SessionSchedule>) -> Self {
+        let last_seen = clock.now();
         Self {
             symbol: symbol.into(),
             book: OrderBook::new(symbol, Arc::new(MarketDataBroadcaster::new())),
@@ -131,6 +139,9 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             states: HashMap::new(),
             clock,
             ids,
+            schedule,
+            last_seen,
+            next_arrival: 0,
         }
     }
     pub fn new_order(&mut self, order: fxp::NewOrderSingle, owner: R) -> Vec<Output<R>> {
@@ -145,20 +156,77 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
     pub fn cancel_replace(&mut self, request: CancelReplaceMsg<R>) -> Vec<Output<R>> {
         self.process(SymbolMsg::CancelReplace(request))
     }
-    pub fn subscribe(&self, owner: R) -> Vec<Output<R>> {
-        vec![Output::Snapshot(
+    pub fn subscribe(&mut self, owner: R) -> Vec<Output<R>> {
+        let mut outputs = self.tick();
+        outputs.push(Output::Snapshot(
             owner,
             snapshot(&self.book, self.clock.now()),
-        )]
+        ));
+        outputs
+    }
+    pub fn tick(&mut self) -> Vec<Output<R>> {
+        let now = self.clock.now();
+        if now <= self.last_seen {
+            return Vec::new();
+        }
+        let mut due = Vec::new();
+        for (id, state) in &self.states {
+            let boundary = match state.time_in_force {
+                TimeInForce::Day => self.schedule.map(|s| s.next_close(self.last_seen.seconds)),
+                TimeInForce::Gtd => expiry_instant(&state.expire_date).ok(),
+                _ => None,
+            };
+            if let Some(seconds) = boundary {
+                let boundary = Time { seconds, nanos: 0 };
+                if boundary > self.last_seen && boundary <= now {
+                    due.push((boundary, state.arrival, id.clone()));
+                }
+            }
+        }
+        due.sort();
+        let mut outputs = Vec::new();
+        for (boundary, _, id) in due {
+            let state = self.states.remove(&id).expect("live expiry state");
+            let md = match self.book.cancel_order_for(&id, &state.sender) {
+                Ok(md) => Some(md),
+                Err(OrderReject::UnknownOrder) => {
+                    self.stop_book
+                        .cancel_for(&id, &state.sender)
+                        .expect("live parked expiry");
+                    None
+                }
+                Err(_) => unreachable!("expiry uses the order owner"),
+            };
+            let ts = Some(Timestamp {
+                seconds: boundary.seconds,
+                nanos: boundary.nanos,
+            });
+            let ev = ReportEvent {
+                orig_order_id: &id,
+                ..ReportEvent::new(
+                    fxp::ExecutionType::ExecExpired,
+                    fxp::OrderStatus::OrderExpired,
+                )
+            };
+            let report = build_report(&mut self.ids, &id, &self.symbol, Some(&state), ev, &ts);
+            outputs.push(Output::ExecutionReport(state.output_tx, report));
+            if let Some(md) = md {
+                outputs.push(Output::MarketData(build_md_update(&md, &ts)));
+            }
+        }
+        self.last_seen = now;
+        outputs
     }
     fn process(&mut self, msg: SymbolMsg<R>) -> Vec<Output<R>> {
+        let mut outputs = self.tick();
+        self.next_arrival += 1;
+        let arrival = self.next_arrival;
         let symbol = &self.symbol;
         let book = &mut self.book;
         let stop_book = &mut self.stop_book;
         let last_trade_price = &mut self.last_trade_price;
         let states = &mut self.states;
         let ids = &mut self.ids;
-        let mut outputs = Vec::new();
         'request: {
             match msg {
                 SymbolMsg::Cancel(cancel_msg) => {
@@ -251,6 +319,23 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             }
                         };
 
+                    if new_time_in_force == Some(TimeInForce::Gtd)
+                        && let Some(state) = states.get(&cr_msg.order_id)
+                        && state.sender == cr_msg.sender
+                        && let Err(reason) = validate_expiry(&state.expire_date, now)
+                    {
+                        let report = make_reject_report(
+                            ids,
+                            &cr_msg.order_id,
+                            symbol,
+                            &cr_msg.client_replace_id,
+                            &reason,
+                            &ts,
+                        );
+                        outputs.push(Output::ExecutionReport(cr_msg.output_tx, report));
+                        break 'request;
+                    }
+
                     if stop_book.contains(&cr_msg.order_id) {
                         let id_in_use = book.order_lookup.contains_key(&cr_msg.new_order_id);
                         let changes = StopReplace {
@@ -285,6 +370,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             Ok(replacement) => {
                                 states.remove(&cr_msg.order_id);
                                 let new_state = OrderState {
+                                    sender: replacement.trader_id.clone(),
+                                    time_in_force: replacement.time_in_force,
+                                    expire_date: replacement.expire_date.clone(),
+                                    arrival,
                                     side: side_to_proto(replacement.side),
                                     order_qty: replacement.quantity,
                                     cum_qty: 0,
@@ -348,6 +437,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 .remove(&cr_msg.order_id)
                                 .map_or((0, 0), |s| (s.cum_qty, s.notional));
                             let new_state = OrderState {
+                                sender: replacement.trader_id.clone(),
+                                time_in_force: replacement.time_in_force,
+                                expire_date: replacement.expire_date.clone(),
+                                arrival,
                                 side: side_to_proto(replacement.side),
                                 order_qty: cum_qty + replacement.quantity,
                                 cum_qty,
@@ -401,6 +494,9 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         Ok(_) if is_limit && order.price <= 0 => {
                             Some("limit price must be positive".to_string())
                         }
+                        Ok((_, _, TimeInForce::Gtd)) => {
+                            validate_expiry(&order.expire_date, now).err()
+                        }
                         _ => None,
                     };
                     if let Some(reason) = invalid {
@@ -412,6 +508,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             &order,
                             order.quantity.max(0) as u32,
                             output_tx.clone(),
+                            arrival,
                         );
                         let ev = ReportEvent {
                             reject_reason: &reason,
@@ -446,7 +543,8 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         client_order_id: order.client_order_id.clone(),
                     };
 
-                    let state = OrderState::new(&order, order_obj.quantity, output_tx.clone());
+                    let state =
+                        OrderState::new(&order, order_obj.quantity, output_tx.clone(), arrival);
                     let ts = Some(Timestamp {
                         seconds: now.seconds,
                         nanos: now.nanos,
@@ -532,6 +630,15 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         outputs
     }
 }
+
+fn validate_expiry(date: &str, now: Time) -> Result<(), String> {
+    let seconds = expiry_instant(date)?;
+    if (Time { seconds, nanos: 0 }) <= now {
+        return Err("expire_date is in the past".into());
+    }
+    Ok(())
+}
+
 fn side_to_proto(side: OrderSide) -> i32 {
     match side {
         OrderSide::Buy => fxp::OrderSide::Buy as i32,
@@ -542,6 +649,10 @@ fn side_to_proto(side: OrderSide) -> i32 {
 /// Report state of a live order: original quantity, running fills and the
 /// connection of its owner.
 struct OrderState<R> {
+    sender: String,
+    time_in_force: TimeInForce,
+    expire_date: String,
+    arrival: u64,
     side: i32,
     order_qty: u32,
     cum_qty: u32,
@@ -552,8 +663,12 @@ struct OrderState<R> {
 }
 
 impl<R: Clone> OrderState<R> {
-    fn new(order: &fxp::NewOrderSingle, order_qty: u32, output_tx: R) -> Self {
+    fn new(order: &fxp::NewOrderSingle, order_qty: u32, output_tx: R, arrival: u64) -> Self {
         Self {
+            sender: order.sender.clone(),
+            time_in_force: parse_order_enums(order).map_or(TimeInForce::GTC, |(_, _, tif)| tif),
+            expire_date: order.expire_date.clone(),
+            arrival,
             side: order.side,
             order_qty,
             cum_qty: 0,
@@ -831,6 +946,355 @@ pub(crate) fn snapshot(book: &OrderBook, now: Time) -> fxp::MarketDataSnapshot {
 }
 
 #[cfg(test)]
+mod expiry_tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    #[derive(Clone)]
+    struct FakeClock(Rc<Cell<Time>>);
+    impl Clock for FakeClock {
+        fn now(&self) -> Time {
+            self.0.get()
+        }
+    }
+    struct Ids(u64);
+    impl ExecIds for Ids {
+        fn next_id(&mut self) -> String {
+            self.0 += 1;
+            format!("X{}", self.0)
+        }
+    }
+    fn order(id: &str, tif: fxp::TimeInForce, date: &str) -> fxp::NewOrderSingle {
+        fxp::NewOrderSingle {
+            order_id: id.into(),
+            sender: "owner".into(),
+            symbol: "TEST".into(),
+            client_order_id: format!("client-{id}"),
+            account: "account".into(),
+            side: fxp::OrderSide::Buy as i32,
+            order_type: fxp::OrderType::Limit as i32,
+            time_in_force: tif as i32,
+            expire_date: date.into(),
+            price: 100,
+            quantity: 10,
+            ..Default::default()
+        }
+    }
+    fn reports(outputs: &[Output<u32>]) -> Vec<&fxp::ExecutionReport> {
+        outputs
+            .iter()
+            .filter_map(|o| match o {
+                Output::ExecutionReport(owner, r) => {
+                    assert_eq!(*owner, 7);
+                    Some(r)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+    #[test]
+    fn gtd_rejects_past_missing_and_malformed_dates() {
+        let clock = FakeClock(Rc::new(Cell::new(Time {
+            seconds: 86_400,
+            nanos: 0,
+        })));
+        let mut engine = Engine::new("TEST", clock, Ids(0), None);
+        for date in [
+            "1970-01-01",
+            "",
+            "2025-02-29",
+            "2024-2-01",
+            "2024-01-01junk",
+            "0000-01-01",
+        ] {
+            let outputs = engine.new_order(order("bad", fxp::TimeInForce::Gtd, date), 7);
+            let r = reports(&outputs);
+            assert_eq!(r.len(), 1);
+            assert_eq!(
+                r[0].execution_type,
+                fxp::ExecutionType::ExecRejected as i32,
+                "{date}"
+            );
+            assert!(!r[0].reject_reason.is_empty());
+            assert!(engine.states.is_empty());
+            assert!(engine.book.order_lookup.is_empty());
+        }
+    }
+
+    fn setup(schedule: Option<&str>) -> (Engine<u32, FakeClock, Ids>, FakeClock) {
+        let clock = FakeClock(Rc::new(Cell::new(Time {
+            seconds: 0,
+            nanos: 0,
+        })));
+        let engine = Engine::new(
+            "TEST",
+            clock.clone(),
+            Ids(0),
+            schedule.map(|s| s.parse().unwrap()),
+        );
+        (engine, clock)
+    }
+    fn advance(clock: &FakeClock, seconds: i64, nanos: i32) {
+        clock.0.set(Time { seconds, nanos });
+    }
+    fn expired(outputs: &[Output<u32>], ids: &[&str]) {
+        let r = reports(outputs);
+        assert_eq!(
+            r.iter().map(|r| r.order_id.as_str()).collect::<Vec<_>>(),
+            ids
+        );
+        for report in r {
+            assert_eq!(
+                report.execution_type,
+                fxp::ExecutionType::ExecExpired as i32
+            );
+            assert_eq!(report.order_status, fxp::OrderStatus::OrderExpired as i32);
+            assert_eq!(report.leaves_quantity, 0);
+        }
+    }
+    #[test]
+    fn day_expires_at_close_with_cancel_market_data() {
+        let (mut engine, clock) = setup(Some("close=00:01:00"));
+        engine.new_order(order("D", fxp::TimeInForce::Day, ""), 7);
+        advance(&clock, 59, 999_999_999);
+        assert!(engine.tick().is_empty());
+        advance(&clock, 60, 0);
+        let outputs = engine.tick();
+        expired(&outputs, &["D"]);
+        assert_eq!(outputs.len(), 2);
+        let Output::MarketData(md) = &outputs[1] else {
+            panic!("missing MD");
+        };
+        assert_eq!(md.changes.len(), 1);
+        assert_eq!(
+            (
+                md.changes[0].update_type,
+                md.changes[0].price,
+                md.changes[0].quantity
+            ),
+            (2, 100, 10)
+        );
+        assert_eq!(
+            md.timestamp,
+            Some(Timestamp {
+                seconds: 60,
+                nanos: 0
+            })
+        );
+        assert!(engine.book.order_lookup.is_empty());
+        assert!(engine.states.is_empty());
+    }
+    #[test]
+    fn partial_fill_expiry_preserves_cumulative_fields() {
+        let (mut engine, clock) = setup(Some("close=00:01"));
+        engine.new_order(order("D", fxp::TimeInForce::Day, ""), 7);
+        let sell = fxp::NewOrderSingle {
+            side: fxp::OrderSide::Sell as i32,
+            quantity: 4,
+            order_type: fxp::OrderType::Market as i32,
+            ..order("S", fxp::TimeInForce::Day, "")
+        };
+        engine.new_order(sell, 7);
+        advance(&clock, 60, 0);
+        let outputs = engine.tick();
+        expired(&outputs, &["D"]);
+        let r = reports(&outputs)[0];
+        assert_eq!((r.cum_quantity, r.avg_px, r.order_quantity), (4, 100, 10));
+        assert_eq!(
+            (r.client_order_id.as_str(), r.account.as_str()),
+            ("client-D", "account")
+        );
+        assert_eq!(r.side, fxp::OrderSide::Buy as i32);
+    }
+    #[test]
+    fn gtd_expires_at_next_midnight_without_schedule() {
+        let (mut engine, clock) = setup(None);
+        engine.new_order(order("G", fxp::TimeInForce::Gtd, "1970-01-01"), 7);
+        advance(&clock, 86_399, 999_999_999);
+        assert!(engine.tick().is_empty());
+        advance(&clock, 86_400, 0);
+        expired(&engine.tick(), &["G"]);
+        assert!(engine.tick().is_empty());
+    }
+    #[test]
+    fn parked_day_and_gtd_stops_expire_without_market_data() {
+        let (mut engine, clock) = setup(Some("close=00:01"));
+        for (id, tif, date, ty) in [
+            ("D", fxp::TimeInForce::Day, "", fxp::OrderType::Stop),
+            (
+                "G",
+                fxp::TimeInForce::Gtd,
+                "1970-01-01",
+                fxp::OrderType::StopLimit,
+            ),
+        ] {
+            engine.new_order(
+                fxp::NewOrderSingle {
+                    order_type: ty as i32,
+                    stop_price: 150,
+                    ..order(id, tif, date)
+                },
+                7,
+            );
+        }
+        advance(&clock, 60, 0);
+        let outputs = engine.tick();
+        expired(&outputs, &["D"]);
+        assert_eq!(outputs.len(), 1);
+        advance(&clock, 86_400, 0);
+        let outputs = engine.tick();
+        expired(&outputs, &["G"]);
+        assert_eq!(outputs.len(), 1);
+        assert!(engine.stop_book.is_empty());
+        assert!(engine.states.is_empty());
+    }
+    #[test]
+    fn jump_orders_boundaries_then_arrivals_and_expires_only_once() {
+        let (mut engine, clock) = setup(Some("close=01:00"));
+        for (id, tif, date) in [
+            ("G2", fxp::TimeInForce::Gtd, "1970-01-02"),
+            ("D2", fxp::TimeInForce::Day, ""),
+            ("D1", fxp::TimeInForce::Day, ""),
+            ("G1", fxp::TimeInForce::Gtd, "1970-01-01"),
+            ("GTC", fxp::TimeInForce::Gtc, "garbage"),
+        ] {
+            engine.new_order(order(id, tif, date), 7);
+        }
+        advance(&clock, 4 * 86_400, 0);
+        expired(&engine.tick(), &["D2", "D1", "G1", "G2"]);
+        assert!(engine.tick().is_empty());
+        assert_eq!(engine.states.len(), 1);
+        assert!(engine.book.order_lookup.contains_key("GTC"));
+    }
+    #[test]
+    fn day_without_schedule_never_expires() {
+        let (mut engine, clock) = setup(None);
+        engine.new_order(order("D", fxp::TimeInForce::Day, "garbage"), 7);
+        advance(&clock, 30 * 86_400, 0);
+        assert!(engine.tick().is_empty());
+        assert!(engine.states.contains_key("D"));
+    }
+    fn replace(id: &str, new_id: &str, tif: fxp::TimeInForce) -> CancelReplaceMsg<u32> {
+        CancelReplaceMsg {
+            order_id: id.into(),
+            sender: "owner".into(),
+            new_order_id: new_id.into(),
+            client_replace_id: "R".into(),
+            new_price: 0,
+            new_quantity: 0,
+            new_time_in_force: tif as i32,
+            new_stop_price: 0,
+            output_tx: 7,
+        }
+    }
+    #[test]
+    fn replace_preserves_date_and_validates_gtd_transition() {
+        let (mut engine, clock) = setup(None);
+        engine.new_order(order("G", fxp::TimeInForce::Gtd, "1970-01-01"), 7);
+        engine.cancel_replace(replace("G", "GR", fxp::TimeInForce::Unspecified));
+        engine.new_order(order("D", fxp::TimeInForce::Day, ""), 7);
+        let outputs = engine.cancel_replace(replace("D", "DR", fxp::TimeInForce::Gtd));
+        assert_eq!(
+            reports(&outputs)[0].execution_type,
+            fxp::ExecutionType::ExecRejected as i32
+        );
+        assert!(engine.book.order_lookup.contains_key("D"));
+        advance(&clock, 86_400, 0);
+        expired(&engine.tick(), &["GR"]);
+    }
+    #[test]
+    fn every_input_advances_before_handling_request() {
+        for kind in 0..4 {
+            let (mut engine, clock) = setup(Some("close=00:01"));
+            engine.new_order(order("D", fxp::TimeInForce::Day, ""), 7);
+            advance(&clock, 60, 0);
+            let outputs = match kind {
+                0 => engine.new_order(order("N", fxp::TimeInForce::Gtc, ""), 7),
+                1 => engine.cancel(CancelMsg {
+                    order_id: "D".into(),
+                    sender: "owner".into(),
+                    client_cancel_id: "C".into(),
+                    output_tx: 7,
+                }),
+                2 => engine.cancel_replace(replace("D", "DR", fxp::TimeInForce::Unspecified)),
+                _ => engine.subscribe(7),
+            };
+            expired(&outputs[..2], &["D"]);
+            assert!(!engine.book.order_lookup.contains_key("D"));
+            if kind == 3 {
+                let Output::Snapshot(_, snap) = &outputs[2] else {
+                    panic!("snapshot missing");
+                };
+                assert!(snap.bid_levels.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn schedule_parsing_is_strict() {
+        for valid in ["close=00:00", "close=23:59:59", "close=16:30"] {
+            assert!(valid.parse::<SessionSchedule>().is_ok(), "{valid}");
+        }
+        for invalid in [
+            "",
+            "close=24:00",
+            "close=12:60",
+            "close=12:00:60",
+            "close=1:00",
+            "close=12:00,",
+            "close=12:00,close=13:00",
+            "open=09:00",
+            "close=12:00junk",
+            "close =12:00",
+            "close=12:00=13:00",
+            "close=+1:00",
+        ] {
+            assert!(invalid.parse::<SessionSchedule>().is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn expiry_dates_use_gregorian_utc_midnights() {
+        assert_eq!(expiry_instant("1970-01-01").unwrap(), 86_400);
+        assert_eq!(expiry_instant("2000-02-29").unwrap(), 951_868_800);
+        assert_eq!(expiry_instant("2024-02-29").unwrap(), 1_709_251_200);
+        assert!(expiry_instant("1900-02-29").is_err());
+        assert!(expiry_instant("2100-02-29").is_err());
+        assert!(expiry_instant("2024-04-31").is_err());
+        assert!(expiry_instant("2024-00-01").is_err());
+    }
+
+    #[test]
+    fn parked_replacement_retains_date_and_arrives_after_older_orders() {
+        let (mut engine, clock) = setup(None);
+        for id in ["first", "second"] {
+            engine.new_order(
+                fxp::NewOrderSingle {
+                    order_type: fxp::OrderType::Stop as i32,
+                    stop_price: 150,
+                    ..order(
+                        id,
+                        if id == "first" {
+                            fxp::TimeInForce::Day
+                        } else {
+                            fxp::TimeInForce::Gtd
+                        },
+                        "1970-01-01",
+                    )
+                },
+                7,
+            );
+        }
+        engine.cancel_replace(replace("first", "replaced", fxp::TimeInForce::Gtd));
+        advance(&clock, 86_400, 0);
+        let outputs = engine.tick();
+        expired(&outputs, &["second", "replaced"]);
+        assert_eq!(outputs.len(), 2);
+        assert!(engine.stop_book.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -851,7 +1315,7 @@ mod tests {
         }
     }
     fn engine() -> Engine<u32, FakeClock, TestIds> {
-        Engine::new("TEST", FakeClock, TestIds(0))
+        Engine::new("TEST", FakeClock, TestIds(0), None)
     }
     fn order(id: &str, side: fxp::OrderSide) -> fxp::NewOrderSingle {
         fxp::NewOrderSingle {

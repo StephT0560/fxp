@@ -608,6 +608,18 @@ def test_ioc_partial(s, r):
     s.drain()
 
 
+def test_gtd_past_expire_date(s, r):
+    """A GTD date in the past must reach the core and be rejected."""
+    print('\n─── test_gtd_past_expire_date ────────────────────────────────')
+    oid = order_id('GTDPAST')
+    s.send('D', [(11, oid), (55, 'GTDEXP'), (54, '1'), (38, '10'),
+                 (40, '2'), (44, '100.00'), (59, '6'), (432, '20000101'),
+                 (60, utc_now())], 'GTD with past ExpireDate')
+    msg = s.wait_for(order_id=oid, exec_type='8', timeout=3.0)
+    r.assert_exec('past GTD rejected', msg, '8', '8')
+    s.drain()
+
+
 def test_fok_no_liquidity(s, r):
     """FOK with no matching liquidity → immediate kill, no fill."""
     print('\n─── test_fok_no_liquidity ───────────────────────────────────')
@@ -826,6 +838,7 @@ TESTS = {
     'stop_order':          test_stop_order,
     'ioc_partial':         test_ioc_partial,
     'fok_no_liquidity':    test_fok_no_liquidity,
+    'gtd_past_expire_date': test_gtd_past_expire_date,
     'cancel_filled_order': test_cancel_filled_order,
     'cross_session_cancel': test_cross_session_cancel,
     'outbound_sequence':   test_outbound_sequence,

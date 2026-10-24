@@ -173,7 +173,22 @@ Logs go to stderr. Per-order, per-fill and per-message events are logged at debu
 | Component | Variable | Default | Example |
 |---|---|---|---|
 | `fxp_core` | `RUST_LOG` ([`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax) | `info` | `RUST_LOG=fxp_core=debug` |
+| `fxp_core` | `FXP_SESSION_SCHEDULE` | unset (no Day expiry) | `close=16:30:00` |
 | `go_gateway`, `fix_bridge` | `FXP_LOG_LEVEL` (`debug`, `info`, `warn`, `error`) | `info` | `FXP_LOG_LEVEL=debug` |
+
+The optional core session schedule is a strict comma-separated `key=value`
+list. Currently only `close=HH:MM[:SS]` is supported, in UTC every day;
+unknown or duplicate keys, invalid times and an explicitly empty value prevent
+startup. Unset means Day orders never expire. With a schedule, resting Day
+orders and parked Day stops expire at each close. The core advances expiry
+before each request and on a one-second timer, including missed boundaries
+after a time jump.
+
+GTD orders require `expire_date=YYYY-MM-DD` (FIX `59=6`, `432=YYYYMMDD`).
+They expire at midnight UTC following that date, independently of the session
+schedule. Missing, malformed and already-expired dates are rejected. Dates on
+non-GTD orders are ignored. Cancel/replace retains the original date; changing
+to GTD requires that retained date to be valid and not already expired.
 
 ### Docker
 

@@ -31,6 +31,7 @@ use tokio::net::tcp::OwnedReadHalf;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
+use crate::engine::SessionSchedule;
 use crate::fxp;
 
 #[cfg(test)]
@@ -87,12 +88,14 @@ enum SymbolMsg {
 #[derive(Clone)]
 struct SymbolRouter {
     channels: Arc<Mutex<HashMap<String, mpsc::Sender<SymbolMsg>>>>,
+    schedule: Option<SessionSchedule>,
 }
 
 impl SymbolRouter {
-    fn new() -> Self {
+    fn new(schedule: Option<SessionSchedule>) -> Self {
         Self {
             channels: Arc::new(Mutex::new(HashMap::new())),
+            schedule,
         }
     }
 
@@ -115,7 +118,7 @@ impl SymbolRouter {
         let sym = symbol.to_string();
         // Spawn while holding the lock to guarantee the entry is visible
         // before any message can be dispatched to this symbol.
-        tokio::spawn(order_book_task(sym, rx));
+        tokio::spawn(scheduled_order_book_task(sym, rx, self.schedule));
         tx // return cloned sender directly — no need to re-acquire
     }
 }
@@ -136,38 +139,48 @@ impl crate::engine::ExecIds for GlobalExecIds {
         next_exec_id()
     }
 }
-async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
+#[cfg(test)]
+async fn order_book_task(symbol: String, rx: mpsc::Receiver<SymbolMsg>) {
+    scheduled_order_book_task(symbol, rx, None).await;
+}
+
+async fn scheduled_order_book_task(
+    symbol: String,
+    mut rx: mpsc::Receiver<SymbolMsg>,
+    schedule: Option<SessionSchedule>,
+) {
     use crate::engine::{
         CancelMsg as EngineCancel, CancelReplaceMsg as EngineReplace, Engine, Output,
     };
-    let mut engine = Engine::new(&symbol, WallClock, GlobalExecIds);
+    let mut engine = Engine::new(&symbol, WallClock, GlobalExecIds, schedule);
     let mut subscribers: Vec<OutputTx> = Vec::new();
-    while let Some(msg) = rx.recv().await {
-        let outputs = match msg {
-            SymbolMsg::Order(m) => engine.new_order(m.order, m.output_tx),
-            SymbolMsg::Cancel(m) => engine.cancel(EngineCancel {
-                order_id: m.order_id,
-                sender: m.sender,
-                client_cancel_id: m.client_cancel_id,
-                output_tx: m.output_tx,
-            }),
-            SymbolMsg::CancelReplace(m) => engine.cancel_replace(EngineReplace {
-                order_id: m.order_id,
-                sender: m.sender,
-                new_order_id: m.new_order_id,
-                client_replace_id: m.client_replace_id,
-                new_price: m.new_price,
-                new_quantity: m.new_quantity,
-                new_time_in_force: m.new_time_in_force,
-                new_stop_price: m.new_stop_price,
-                output_tx: m.output_tx,
-            }),
-            SymbolMsg::Subscribe(m) => {
-                let outputs = engine.subscribe(m.tx.clone());
-                if !subscribers.iter().any(|tx| tx.same_channel(&m.tx)) {
-                    subscribers.push(m.tx);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    loop {
+        let outputs = tokio::select! {
+            _ = interval.tick() => engine.tick(),
+            msg = rx.recv() => {
+                let Some(msg) = msg else { break; };
+                match msg {
+                    SymbolMsg::Order(m) => engine.new_order(m.order, m.output_tx),
+                    SymbolMsg::Cancel(m) => engine.cancel(EngineCancel {
+                        order_id: m.order_id,
+                        sender: m.sender,
+                        client_cancel_id: m.client_cancel_id,
+                        output_tx: m.output_tx,
+                    }),
+                    SymbolMsg::CancelReplace(m) => engine.cancel_replace(EngineReplace {
+                        order_id: m.order_id,
+                        sender: m.sender,
+                        new_order_id: m.new_order_id,
+                        client_replace_id: m.client_replace_id,
+                        new_price: m.new_price,
+                        new_quantity: m.new_quantity,
+                        new_time_in_force: m.new_time_in_force,
+                        new_stop_price: m.new_stop_price,
+                        output_tx: m.output_tx,
+                    }),
+                    SymbolMsg::Subscribe(m) => engine.subscribe(m.tx),
                 }
-                outputs
             }
         };
         for output in outputs {
@@ -185,6 +198,9 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                             payload: Some(fxp::fxp_message::Payload::MarketDataSnapshot(snapshot)),
                         }))
                         .await;
+                    if !subscribers.iter().any(|sub| sub.same_channel(&tx)) {
+                        subscribers.push(tx);
+                    }
                 }
                 Output::MarketData(update) => {
                     broadcast_md(
@@ -421,8 +437,17 @@ async fn accept_client(listener: &TcpListener) -> std::io::Result<tokio::net::Tc
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub async fn start_server() {
+    let schedule = match std::env::var("FXP_SESSION_SCHEDULE") {
+        Ok(value) => parse_session_schedule(Some(&value)),
+        Err(std::env::VarError::NotPresent) => parse_session_schedule(None),
+        Err(error) => Err(error.to_string()),
+    }
+    .unwrap_or_else(|error| {
+        tracing::error!("invalid FXP_SESSION_SCHEDULE: {error}");
+        std::process::exit(1);
+    });
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
-    let router = SymbolRouter::new();
+    let router = SymbolRouter::new(schedule);
 
     tracing::info!("FXP Core running on 127.0.0.1:8080");
     tracing::info!("Architecture: per-symbol tasks + lock-free output channels");
@@ -443,6 +468,28 @@ pub async fn start_server() {
                 tokio::time::sleep(backoff).await;
                 backoff = next_accept_backoff(backoff);
             }
+        }
+    }
+}
+
+fn parse_session_schedule(value: Option<&str>) -> Result<Option<SessionSchedule>, String> {
+    value.map(str::parse).transpose()
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+
+    #[test]
+    fn optional_schedule_config() {
+        assert_eq!(parse_session_schedule(None).unwrap(), None);
+        assert!(
+            parse_session_schedule(Some("close=16:00:00"))
+                .unwrap()
+                .is_some()
+        );
+        for garbage in ["", "close=24:00", "close=16:00,garbage=1"] {
+            assert!(parse_session_schedule(Some(garbage)).is_err());
         }
     }
 }
