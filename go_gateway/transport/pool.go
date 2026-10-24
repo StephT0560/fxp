@@ -46,8 +46,23 @@ type pooledConn struct {
 	id   int
 }
 
+// dialCore opens a core connection with Nagle disabled. Go already defaults
+// TCP_NODELAY to on; it is set explicitly so the latency contract is visible
+// and covered by TestDialCoreSetsNoDelay.
+func dialCore(addr string) (net.Conn, error) {
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.(*net.TCPConn).SetNoDelay(true); err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
 func newPooledConn(id int) (*pooledConn, error) {
-	c, err := net.Dial("tcp", rustCoreAddr)
+	c, err := dialCore(rustCoreAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +85,7 @@ func (p *pooledConn) reconnect() error {
 		p.conn.Close()
 		p.conn = nil
 	}
-	c, err := net.Dial("tcp", rustCoreAddr)
+	c, err := dialCore(rustCoreAddr)
 	if err != nil {
 		return err
 	}

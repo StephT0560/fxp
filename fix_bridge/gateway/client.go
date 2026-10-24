@@ -88,10 +88,25 @@ func NewClient(traderID, jwtSecret string, onReceive OnReceive) *Client {
 	}
 }
 
+// dialGateway opens the gateway connection with Nagle disabled. Go already
+// defaults TCP_NODELAY to on; it is set explicitly so the latency contract is
+// visible and covered by TestDialGatewaySetsNoDelay.
+func dialGateway(addr string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.(*net.TCPConn).SetNoDelay(true); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
 // Connect dials the gateway, sends the Logon frame, and starts the read/write loops.
 // Blocks until the connection is closed.
 func (c *Client) Connect() error {
-	conn, err := net.DialTimeout("tcp", gatewayAddr, 5*time.Second)
+	conn, err := dialGateway(gatewayAddr)
 	if err != nil {
 		return fmt.Errorf("dial gateway %s: %w", gatewayAddr, err)
 	}

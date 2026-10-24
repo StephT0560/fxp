@@ -1062,6 +1062,17 @@ fn next_accept_backoff(current: std::time::Duration) -> std::time::Duration {
     (current * 2).min(ACCEPT_BACKOFF_MAX)
 }
 
+/// Accepts one connection and tunes it for low latency.
+async fn accept_client(listener: &TcpListener) -> std::io::Result<tokio::net::TcpStream> {
+    let (stream, peer) = listener.accept().await?;
+    // Reports are small frames written back-to-back; with Nagle on, the second
+    // one waits for the peer's delayed ACK (~40 ms on Linux).
+    if let Err(e) = stream.set_nodelay(true) {
+        eprintln!("⚠️ set_nodelay failed for {peer}: {e}");
+    }
+    Ok(stream)
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub async fn start_server() {
@@ -1073,8 +1084,8 @@ pub async fn start_server() {
 
     let mut backoff = ACCEPT_BACKOFF_MIN;
     loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
+        match accept_client(&listener).await {
+            Ok(stream) => {
                 backoff = ACCEPT_BACKOFF_MIN;
                 let router_clone = router.clone();
                 tokio::spawn(async move {
@@ -1636,6 +1647,19 @@ mod report_tests {
         assert_eq!(seen[1], ACCEPT_BACKOFF_MIN * 2);
         assert!(seen.windows(2).all(|w| w[1] >= w[0]));
         assert_eq!(*seen.last().unwrap(), ACCEPT_BACKOFF_MAX);
+    }
+
+    #[tokio::test]
+    async fn accepted_sockets_disable_nagle() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let server = accept_client(&listener).await.unwrap();
+        assert!(
+            server.nodelay().unwrap(),
+            "accepted socket must set TCP_NODELAY"
+        );
+        drop(client);
     }
 
     // ── Stop orders ──────────────────────────────────────────────────────────
