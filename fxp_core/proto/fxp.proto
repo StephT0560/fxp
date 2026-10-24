@@ -9,7 +9,8 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.1 (additive auction/session messages).
+// FXP Protocol — v2.2 (additive: self-trade prevention, cancel-on-disconnect,
+// mass cancel). v2.1 added auction/session messages.
 // Version 2.0 shifts all enum numbers and is wire-breaking with v1.x.
 //
 // Design principles:
@@ -50,6 +51,9 @@ message Logon {
   string                    session_id      = 2;
   EncryptionType            encryption_type = 3;
   google.protobuf.Timestamp timestamp       = 4;
+  // v2.2: cancel every live order of this owner (including parked stops)
+  // when the session ends for any reason. Default off.
+  bool                      cancel_on_disconnect = 5;
 }
 
 // LogonAck: sent by gateway after validating the Logon token.
@@ -137,6 +141,25 @@ enum ExecutionType {
   EXEC_EXPIRED               = 6; // order expired at session end or GTD date
   EXEC_PENDING_CANCEL        = 7; // cancel pending confirmation
   EXEC_PENDING_REPLACE       = 8; // replace pending confirmation
+  EXEC_RESTATED              = 9; // v2.2: quantity reduced by self-trade prevention
+}
+
+// Self-trade prevention instruction (v2.2). The aggressing (newest) order's
+// instruction governs a match against a resting order with the same STP key
+// (stp_group if set, otherwise the owner).
+enum SelfTradePrevention {
+  SELF_TRADE_PREVENTION_UNSPECIFIED          = 0; // use the engine default (FXP_STP_DEFAULT)
+  SELF_TRADE_PREVENTION_NONE                 = 1; // explicitly disabled for this order
+  SELF_TRADE_PREVENTION_CANCEL_NEWEST        = 2; // cancel the aggressor's remaining quantity
+  SELF_TRADE_PREVENTION_CANCEL_OLDEST        = 3; // cancel the resting order, keep matching
+  SELF_TRADE_PREVENTION_CANCEL_BOTH          = 4; // cancel both orders
+  SELF_TRADE_PREVENTION_DECREMENT_AND_CANCEL = 5; // reduce both by the smaller qty; cancel the smaller
+}
+
+enum MassCancelReason {
+  MASS_CANCEL_REASON_UNSPECIFIED = 0;
+  MASS_CANCEL_REASON_REQUEST            = 1; // explicit OrderMassCancelRequest
+  MASS_CANCEL_REASON_DISCONNECT         = 2; // cancel-on-disconnect
 }
 
 enum TradingPhase {
@@ -167,6 +190,8 @@ message NewOrderSingle {
   string                    expire_date     = 13; // required for GTD (format: YYYY-MM-DD)
   string                    account         = 14; // clearing account identifier
   string                    client_order_id = 15; // optional secondary client reference
+  SelfTradePrevention       stp_mode        = 16; // v2.2
+  string                    stp_group       = 17; // v2.2: optional; namespaced per owner by the gateway
 
   // Field numbers 1000–1999 reserved for firm-specific extensions.
   // Example: int32 short_sale_indicator = 1000;
@@ -245,12 +270,37 @@ message ExecutionReport {
   string                    account           = 13; // clearing account (echoed from NewOrder)
   string                    client_order_id   = 14; // echoed from NewOrderSingle if set
   string                    orig_order_id     = 15; // original order_id (on REPLACED reports)
-  string                    reject_reason     = 16; // human-readable (on EXEC_REJECTED)
+  string                    reject_reason     = 16; // human-readable reason (EXEC_REJECTED; STP / mass cancels)
   OrderSide                 side              = 17; // side of the order
   int32                     order_quantity    = 18; // total order quantity (FIX OrderQty)
   bool                      auction           = 19;
 
   // Field numbers 1000–1999 reserved for firm-specific extensions.
+}
+
+// OrderMassCancelRequest (v2.2): cancel every live order of `sender`
+// (including parked stops), optionally filtered by symbol and side. The
+// gateway overwrites `sender` with the authenticated owner.
+message OrderMassCancelRequest {
+  FXPHeader                 header            = 1;
+  string                    sender            = 2;
+  string                    symbol            = 3; // empty = all symbols
+  OrderSide                 side              = 4; // UNSPECIFIED = both sides
+  string                    client_request_id = 5;
+  MassCancelReason          reason            = 6;
+  google.protobuf.Timestamp timestamp         = 7;
+}
+
+// OrderMassCancelReport (v2.2): sent after the individual EXEC_CANCELED reports.
+message OrderMassCancelReport {
+  FXPHeader                 header            = 1;
+  string                    client_request_id = 2;
+  string                    symbol            = 3;
+  OrderSide                 side              = 4;
+  uint32                    total_affected    = 5;
+  MassCancelReason          reason            = 6;
+  string                    reject_reason     = 7; // non-empty when rejected
+  google.protobuf.Timestamp timestamp         = 8;
 }
 
 // ============================================================
@@ -373,5 +423,7 @@ message FXPMessage {
     OrderCancelReplaceRequest   order_cancel_replace   = 15;
     TradingSessionStatus        trading_session_status = 16;
     AuctionInfo                 auction_info           = 17;
+    OrderMassCancelRequest      order_mass_cancel      = 18;
+    OrderMassCancelReport       order_mass_cancel_report = 19;
   }
 }

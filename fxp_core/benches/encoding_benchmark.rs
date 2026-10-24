@@ -89,6 +89,8 @@ fn make_fxp_new_order() -> fxp::FxpMessage {
             expire_date: String::new(),
             account: String::new(),
             client_order_id: String::new(),
+            stp_mode: 0,
+            stp_group: String::new(),
         })),
     }
 }
