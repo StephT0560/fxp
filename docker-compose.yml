@@ -22,6 +22,8 @@ services:
       - FXP_SESSION_SCHEDULE
       - FXP_EVENT_LOG
       - FXP_STP_DEFAULT
+      - FXP_SYMBOLS
+      - FXP_MAX_SYMBOLS
     volumes:
       - core_store:/data/core_store
     ports:

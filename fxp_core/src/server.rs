@@ -21,7 +21,7 @@
 //           ordering, zero contention.
 
 use prost::Message;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -227,6 +227,8 @@ struct SymbolRouter {
     schedule: Option<SessionSchedule>,
     stp_default: StpMode,
     persistence: Option<Persistence>,
+    allowed_symbols: Option<Arc<HashSet<String>>>,
+    max_symbols: Option<usize>,
 }
 
 impl SymbolRouter {
@@ -236,6 +238,8 @@ impl SymbolRouter {
             schedule,
             stp_default: StpMode::None,
             persistence: None,
+            allowed_symbols: None,
+            max_symbols: None,
         }
     }
 
@@ -245,20 +249,66 @@ impl SymbolRouter {
         symbols
     }
 
-    async fn get_or_create(&self, symbol: &str) -> mpsc::Sender<SymbolMsg> {
+    async fn get_existing(&self, symbol: &str) -> Option<mpsc::Sender<SymbolMsg>> {
+        self.channels.lock().await.get(symbol).cloned()
+    }
+
+    async fn get_or_admit(&self, symbol: &str) -> Result<mpsc::Sender<SymbolMsg>, &'static str> {
+        if symbol.is_empty() {
+            return Err("symbol must not be empty");
+        }
         // Fast path: symbol already exists.
         {
             let map = self.channels.lock().await;
             if let Some(tx) = map.get(symbol) {
-                return tx.clone();
+                return Ok(tx.clone());
             }
         }
         // Slow path: first time seeing this symbol.
         let mut map = self.channels.lock().await;
         // Re-check after acquiring write lock — another task may have raced us.
         if let Some(tx) = map.get(symbol) {
-            return tx.clone();
+            return Ok(tx.clone());
         }
+        if self
+            .allowed_symbols
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(symbol))
+        {
+            return Err("symbol is not allowed");
+        }
+        if self.max_symbols.is_some_and(|limit| map.len() >= limit) {
+            return Err("maximum symbol count reached");
+        }
+        Ok(self.create_symbol_locked(&mut map, symbol))
+    }
+
+    async fn restore_symbol(&self, symbol: &str) {
+        let mut map = self.channels.lock().await;
+        if map.contains_key(symbol) {
+            return;
+        }
+        let disallowed = self
+            .allowed_symbols
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(symbol));
+        let over_limit = self.max_symbols.is_some_and(|limit| map.len() >= limit);
+        if disallowed || over_limit || symbol.is_empty() {
+            tracing::warn!(
+                symbol,
+                disallowed,
+                over_limit,
+                "restoring persisted symbol outside admission settings"
+            );
+        }
+        self.create_symbol_locked(&mut map, symbol);
+    }
+
+    fn create_symbol_locked(
+        &self,
+        map: &mut HashMap<String, mpsc::Sender<SymbolMsg>>,
+        symbol: &str,
+    ) -> mpsc::Sender<SymbolMsg> {
         let (tx, rx) = mpsc::channel::<SymbolMsg>(4096);
         map.insert(symbol.to_string(), tx.clone());
         let sym = symbol.to_string();
@@ -271,7 +321,7 @@ impl SymbolRouter {
             self.stp_default,
             self.persistence.clone(),
         ));
-        tx // return cloned sender directly — no need to re-acquire
+        tx
     }
 }
 
@@ -293,7 +343,10 @@ pub mod bench_support {
             );
             let router = SymbolRouter::new(None);
             for symbol in symbols.iter() {
-                router.get_or_create(symbol).await;
+                router
+                    .get_or_admit(symbol)
+                    .await
+                    .expect("bench symbols are pre-admitted");
             }
             Self { router, symbols }
         }
@@ -306,7 +359,10 @@ pub mod bench_support {
                 tasks.spawn(async move {
                     for lookup_index in 0..lookups_per_task {
                         let symbol = &symbols[(lookup_index + task_index) % symbols.len()];
-                        router.get_or_create(symbol).await;
+                        router
+                            .get_or_admit(symbol)
+                            .await
+                            .expect("bench symbols are pre-admitted");
                     }
                 });
             }
@@ -584,7 +640,34 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
             Ok(msg) => match msg.payload {
                 Some(fxp::fxp_message::Payload::NewOrder(order)) => {
                     let symbol = order.symbol.clone();
-                    let tx = router.get_or_create(&symbol).await;
+                    let tx = match router.get_or_admit(&symbol).await {
+                        Ok(tx) => tx,
+                        Err(reason) => {
+                            tracing::warn!(
+                                order_id = %order.order_id,
+                                symbol,
+                                side = order.side,
+                                sender = %order.sender,
+                                reason,
+                                "rejecting order during symbol admission"
+                            );
+                            output_tx.try_send_frame(frame_message(&fxp::FxpMessage {
+                                payload: Some(fxp::fxp_message::Payload::ExecutionReport(
+                                    server_reject(
+                                        &order.order_id,
+                                        &symbol,
+                                        &order.client_order_id,
+                                        "",
+                                        order.side,
+                                        order.quantity,
+                                        &order.account,
+                                        reason,
+                                    ),
+                                )),
+                            }));
+                            continue;
+                        }
+                    };
                     if tx
                         .send(SymbolMsg::Order(OrderMsg {
                             order,
@@ -599,7 +682,28 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
 
                 Some(fxp::fxp_message::Payload::OrderCancel(cancel)) => {
                     let symbol = cancel.symbol.clone();
-                    let tx = router.get_or_create(&symbol).await;
+                    let Some(tx) = router.get_existing(&symbol).await else {
+                        let reason = if symbol.is_empty() {
+                            "symbol must not be empty"
+                        } else {
+                            "unknown symbol"
+                        };
+                        output_tx.try_send_frame(frame_message(&fxp::FxpMessage {
+                            payload: Some(fxp::fxp_message::Payload::ExecutionReport(
+                                server_reject(
+                                    &cancel.order_id,
+                                    &symbol,
+                                    &cancel.client_cancel_id,
+                                    &cancel.order_id,
+                                    0,
+                                    0,
+                                    "",
+                                    reason,
+                                ),
+                            )),
+                        }));
+                        continue;
+                    };
                     if tx
                         .send(SymbolMsg::Cancel(CancelMsg {
                             order_id: cancel.order_id.clone(),
@@ -616,7 +720,28 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
 
                 Some(fxp::fxp_message::Payload::OrderCancelReplace(cr)) => {
                     let symbol = cr.symbol.clone();
-                    let tx = router.get_or_create(&symbol).await;
+                    let Some(tx) = router.get_existing(&symbol).await else {
+                        let reason = if symbol.is_empty() {
+                            "symbol must not be empty"
+                        } else {
+                            "unknown symbol"
+                        };
+                        output_tx.try_send_frame(frame_message(&fxp::FxpMessage {
+                            payload: Some(fxp::fxp_message::Payload::ExecutionReport(
+                                server_reject(
+                                    &cr.order_id,
+                                    &symbol,
+                                    &cr.client_replace_id,
+                                    &cr.order_id,
+                                    0,
+                                    0,
+                                    "",
+                                    reason,
+                                ),
+                            )),
+                        }));
+                        continue;
+                    };
                     if tx
                         .send(SymbolMsg::CancelReplace(CancelReplaceMsg {
                             order_id: cr.order_id.clone(),
@@ -643,7 +768,13 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     tracing::debug!("MarketDataRequest for {:?}", request.symbols);
                     for symbol in &request.symbols {
-                        let sym_tx = router.get_or_create(symbol).await;
+                        let Some(sym_tx) = router.get_existing(symbol).await else {
+                            tracing::warn!(
+                                symbol,
+                                "ignoring market-data request for unknown symbol"
+                            );
+                            continue;
+                        };
                         let _ = sym_tx
                             .send(SymbolMsg::Subscribe(SubscribeMsg {
                                 tx: output_tx.clone(),
@@ -661,6 +792,46 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
     }
 }
 
+fn server_reject(
+    order_id: &str,
+    symbol: &str,
+    client_order_id: &str,
+    orig_order_id: &str,
+    side: i32,
+    order_quantity: i32,
+    account: &str,
+    reject_reason: &str,
+) -> fxp::ExecutionReport {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    fxp::ExecutionReport {
+        header: Some(fxp::FxpHeader {
+            protocol_version: crate::PROTOCOL_VERSION.to_string(),
+            sequence_number: 0,
+        }),
+        execution_id: String::new(),
+        order_id: order_id.to_string(),
+        symbol: symbol.to_string(),
+        execution_type: fxp::ExecutionType::ExecRejected as i32,
+        order_status: fxp::OrderStatus::OrderRejected as i32,
+        execution_price: 0,
+        executed_quantity: 0,
+        timestamp: Some(prost_types::Timestamp {
+            seconds: now.as_secs() as i64,
+            nanos: now.subsec_nanos() as i32,
+        }),
+        leaves_quantity: 0,
+        avg_px: 0,
+        cum_quantity: 0,
+        account: account.to_string(),
+        client_order_id: client_order_id.to_string(),
+        orig_order_id: orig_order_id.to_string(),
+        reject_reason: reject_reason.to_string(),
+        side,
+        order_quantity,
+        auction: false,
+    }
+}
+
 /// Fans an owner-scoped mass cancel out to the requested symbol (or every
 /// symbol) and answers with one OrderMassCancelReport after all symbols have
 /// sent their EXEC_CANCELED reports.
@@ -669,7 +840,7 @@ async fn mass_cancel(
     request: fxp::OrderMassCancelRequest,
     output_tx: &OutputTx,
 ) {
-    let reject = if request.sender.is_empty() {
+    let mut reject = if request.sender.is_empty() {
         "mass cancel requires a sender"
     } else if fxp::OrderSide::try_from(request.side).is_err() {
         "unsupported side"
@@ -687,7 +858,10 @@ async fn mass_cancel(
         };
         for symbol in symbols {
             let (reply, done) = tokio::sync::oneshot::channel();
-            let tx = router.get_or_create(&symbol).await;
+            let Some(tx) = router.get_existing(&symbol).await else {
+                reject = "unknown symbol";
+                break;
+            };
             let msg = SymbolMsg::MassCancel(MassCancelMsg {
                 request: request.clone(),
                 output_tx: output_tx.clone(),
@@ -762,8 +936,25 @@ pub async fn start_server() {
             tracing::error!("invalid FXP_STP_DEFAULT: {error}");
             std::process::exit(1);
         });
+    let allowed_symbols = read_optional_env("FXP_SYMBOLS").unwrap_or_else(|error| {
+        tracing::error!("{error}");
+        std::process::exit(1);
+    });
+    let max_symbols = read_optional_env("FXP_MAX_SYMBOLS").unwrap_or_else(|error| {
+        tracing::error!("{error}");
+        std::process::exit(1);
+    });
+    let (allowed_symbols, max_symbols) =
+        parse_symbol_admission(allowed_symbols.as_deref(), max_symbols.as_deref()).unwrap_or_else(
+            |error| {
+                tracing::error!("invalid symbol admission configuration: {error}");
+                std::process::exit(1);
+            },
+        );
     let mut router = SymbolRouter::new(schedule);
     router.stp_default = stp_default;
+    router.allowed_symbols = allowed_symbols.map(Arc::new);
+    router.max_symbols = max_symbols;
     if let Some(path) = std::env::var_os("FXP_EVENT_LOG") {
         use crate::engine::Clock;
         if path.is_empty() {
@@ -784,7 +975,7 @@ pub async fn start_server() {
         }
         router.persistence = Some(Arc::new(std::sync::Mutex::new(journal)));
         for symbol in symbols {
-            router.get_or_create(&symbol).await;
+            router.restore_symbol(&symbol).await;
         }
     }
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
@@ -809,6 +1000,267 @@ pub async fn start_server() {
                 backoff = next_accept_backoff(backoff);
             }
         }
+    }
+}
+
+fn parse_symbol_admission(
+    allowed_symbols: Option<&str>,
+    max_symbols: Option<&str>,
+) -> Result<(Option<HashSet<String>>, Option<usize>), String> {
+    let allowed_symbols = allowed_symbols
+        .map(|value| {
+            let symbols: HashSet<_> = value
+                .split(',')
+                .map(str::trim)
+                .filter(|symbol| !symbol.is_empty())
+                .map(str::to_string)
+                .collect();
+            if symbols.is_empty() {
+                Err("FXP_SYMBOLS must contain at least one nonempty symbol".to_string())
+            } else {
+                Ok(symbols)
+            }
+        })
+        .transpose()?;
+    let max_symbols = max_symbols
+        .map(|value| {
+            let limit = value
+                .parse::<usize>()
+                .map_err(|_| "FXP_MAX_SYMBOLS must be a positive integer".to_string())?;
+            if limit == 0 {
+                return Err("FXP_MAX_SYMBOLS must be greater than zero".to_string());
+            }
+            Ok(limit)
+        })
+        .transpose()?;
+    Ok((allowed_symbols, max_symbols))
+}
+
+fn read_optional_env(name: &str) -> Result<Option<String>, String> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(format!("invalid {name}: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod symbol_admission_tests {
+    use super::*;
+    use std::time::Duration;
+
+    async fn round_trip(
+        router: &SymbolRouter,
+        payload: fxp::fxp_message::Payload,
+    ) -> fxp::fxp_message::Payload {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let server = accept_client(&listener).await.unwrap();
+        let handler = tokio::spawn(handle_tcp_client(server, router.clone()));
+        let (mut read, mut write) = client.into_split();
+        write
+            .write_all(&frame_message(&fxp::FxpMessage {
+                payload: Some(payload),
+            }))
+            .await
+            .unwrap();
+        let body = read_framed_message(&mut read).await.unwrap();
+        drop(write);
+        tokio::time::timeout(Duration::from_secs(2), handler)
+            .await
+            .unwrap()
+            .unwrap();
+        fxp::FxpMessage::decode(body.as_slice())
+            .unwrap()
+            .payload
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn max_symbols_rejects_new_symbols_without_starting_tasks() {
+        let mut router = SymbolRouter::new(None);
+        router.max_symbols = Some(2);
+        router.get_or_admit("A").await.unwrap();
+        router.get_or_admit("B").await.unwrap();
+        assert_eq!(
+            router.get_or_admit("C").await.unwrap_err(),
+            "maximum symbol count reached"
+        );
+        assert_eq!(router.symbols().await, ["A", "B"]);
+        assert_eq!(router.channels.lock().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn third_new_order_is_rejected_without_creating_a_symbol_task() {
+        let mut router = SymbolRouter::new(None);
+        router.max_symbols = Some(2);
+        for symbol in ["A", "B"] {
+            round_trip(
+                &router,
+                fxp::fxp_message::Payload::NewOrder(fxp::NewOrderSingle {
+                    order_id: format!("O{symbol}"),
+                    sender: "T".into(),
+                    symbol: symbol.into(),
+                    side: 0,
+                    quantity: 1,
+                    ..Default::default()
+                }),
+            )
+            .await;
+        }
+        let response = round_trip(
+            &router,
+            fxp::fxp_message::Payload::NewOrder(fxp::NewOrderSingle {
+                order_id: "OC".into(),
+                sender: "T".into(),
+                symbol: "C".into(),
+                side: fxp::OrderSide::Buy as i32,
+                quantity: 1,
+                ..Default::default()
+            }),
+        )
+        .await;
+        let fxp::fxp_message::Payload::ExecutionReport(report) = response else {
+            panic!("expected admission rejection");
+        };
+        assert_eq!(report.reject_reason, "maximum symbol count reached");
+        assert_eq!(report.order_id, "OC");
+        assert_eq!(report.symbol, "C");
+        assert_eq!(report.side, fxp::OrderSide::Buy as i32);
+        assert!(report.execution_id.is_empty());
+        assert_eq!(router.symbols().await, ["A", "B"]);
+        assert_eq!(router.channels.lock().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn allowlist_rejects_nonlisted_symbols() {
+        let mut router = SymbolRouter::new(None);
+        router.allowed_symbols = Some(Arc::new(HashSet::from(["ALLOWED".to_string()])));
+        router.get_or_admit("ALLOWED").await.unwrap();
+        assert_eq!(
+            router.get_or_admit("OTHER").await.unwrap_err(),
+            "symbol is not allowed"
+        );
+        assert_eq!(router.symbols().await, ["ALLOWED"]);
+    }
+
+    #[tokio::test]
+    async fn unknown_cancel_replace_and_mass_cancel_reject_without_admission() {
+        let router = SymbolRouter::new(None);
+        for (payload, request_id) in [
+            (
+                fxp::fxp_message::Payload::OrderCancel(fxp::OrderCancelRequest {
+                    order_id: "O1".into(),
+                    client_cancel_id: "C1".into(),
+                    sender: "T".into(),
+                    symbol: "UNKNOWN".into(),
+                    ..Default::default()
+                }),
+                "C1",
+            ),
+            (
+                fxp::fxp_message::Payload::OrderCancelReplace(fxp::OrderCancelReplaceRequest {
+                    order_id: "O2".into(),
+                    client_replace_id: "R2".into(),
+                    sender: "T".into(),
+                    symbol: "UNKNOWN".into(),
+                    ..Default::default()
+                }),
+                "R2",
+            ),
+        ] {
+            let fxp::fxp_message::Payload::ExecutionReport(report) =
+                round_trip(&router, payload).await
+            else {
+                panic!("expected cancel/replace rejection");
+            };
+            assert_eq!(report.reject_reason, "unknown symbol");
+            assert_eq!(report.client_order_id, request_id);
+            assert_eq!(report.orig_order_id, report.order_id);
+            assert!(report.execution_id.is_empty());
+        }
+
+        let (output_tx, mut frames, _md) = ClientTx::channel(64, 64);
+        mass_cancel(
+            &router,
+            fxp::OrderMassCancelRequest {
+                sender: "T".into(),
+                symbol: "UNKNOWN".into(),
+                ..Default::default()
+            },
+            &output_tx,
+        )
+        .await;
+        let frame = frames.recv().await.unwrap();
+        let fxp::fxp_message::Payload::OrderMassCancelReport(report) =
+            fxp::FxpMessage::decode(&frame[4..])
+                .unwrap()
+                .payload
+                .unwrap()
+        else {
+            panic!("expected mass-cancel rejection");
+        };
+        assert_eq!(report.reject_reason, "unknown symbol");
+        assert!(router.symbols().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_commands_do_not_create_symbols() {
+        let router = SymbolRouter::new(None);
+        for _ in ["cancel", "replace", "mass-cancel", "market-data"] {
+            assert!(router.get_existing("UNKNOWN").await.is_none());
+        }
+        assert!(router.symbols().await.is_empty());
+        assert_eq!(router.channels.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn persisted_symbols_are_restored_outside_admission_limits() {
+        let mut router = SymbolRouter::new(None);
+        router.allowed_symbols = Some(Arc::new(HashSet::from(["ALLOWED".to_string()])));
+        router.max_symbols = Some(1);
+        router.restore_symbol("PERSISTED").await;
+        assert_eq!(router.symbols().await, ["PERSISTED"]);
+    }
+
+    #[test]
+    fn parses_symbol_admission_settings() {
+        assert_eq!(parse_symbol_admission(None, None).unwrap(), (None, None));
+        let (symbols, maximum) = parse_symbol_admission(Some(" A, B ,A "), Some("2")).unwrap();
+        assert_eq!(symbols.unwrap(), HashSet::from(["A".into(), "B".into()]));
+        assert_eq!(maximum, Some(2));
+        assert!(parse_symbol_admission(Some(" , "), None).is_err());
+        assert!(parse_symbol_admission(None, Some("0")).is_err());
+        assert!(parse_symbol_admission(None, Some("bad")).is_err());
+    }
+
+    #[test]
+    fn admission_reject_has_engine_reject_fields_without_exec_id() {
+        let report = server_reject("O1", "S", "C1", "O1", 0, 0, "", "unknown symbol");
+        assert_eq!(
+            (
+                report.execution_type,
+                report.order_status,
+                report.order_id.as_str(),
+                report.symbol.as_str(),
+                report.client_order_id.as_str(),
+                report.orig_order_id.as_str(),
+                report.reject_reason.as_str(),
+                report.execution_id.as_str(),
+            ),
+            (
+                fxp::ExecutionType::ExecRejected as i32,
+                fxp::OrderStatus::OrderRejected as i32,
+                "O1",
+                "S",
+                "C1",
+                "O1",
+                "unknown symbol",
+                "",
+            )
+        );
     }
 }
 
@@ -1224,7 +1676,7 @@ mod report_tests {
         let router = SymbolRouter::new(None);
         let (a, mut a_rx) = conn();
         for (id, owner, symbol) in [("A1", "T", "AAA"), ("B1", "T", "BBB"), ("U1", "U", "AAA")] {
-            let tx = router.get_or_create(symbol).await;
+            let tx = router.get_or_admit(symbol).await.unwrap();
             let order = fxp::NewOrderSingle {
                 symbol: symbol.into(),
                 ..nos(id, owner, BUY, 100, 5, LIMIT, GTC)
@@ -1257,7 +1709,7 @@ mod report_tests {
     async fn mass_cancel_rejects_invalid_requests_without_canceling() {
         let router = SymbolRouter::new(None);
         let (a, mut a_rx) = conn();
-        let tx = router.get_or_create("TEST").await;
+        let tx = router.get_or_admit("TEST").await.unwrap();
         send_order(&tx, nos("A1", "T", BUY, 100, 5, LIMIT, GTC), &a).await;
         next(&mut a_rx).await;
         for (request, reason) in [
