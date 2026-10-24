@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 pub mod auction;
 #[cfg(test)]
+mod persistence_tests;
+#[cfg(test)]
 mod phase_tests;
 mod phases;
 mod session;

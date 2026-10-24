@@ -7,6 +7,9 @@ cut a release yet, so everything is under Unreleased.
 ## [Unreleased]
 
 ### Added
+- Opt-in core input-log persistence with synchronous write-ahead fsync, checksum
+  tail repair, deterministic replay and downtime catch-up, enabled by
+  `FXP_EVENT_LOG`; includes a core SIGKILL/restart E2E check (#8).
 - Engine auction phases and full daily UTC schedules: non-matching call books,
   held AT_CLOSE orders, opening/closing uncrosses, auction-flagged fills,
   indicative/session feeds, and opening-only stop election (#8).

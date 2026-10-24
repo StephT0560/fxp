@@ -204,6 +204,21 @@ to GTD requires that retained date to be valid and not already expired.
 
 ### Docker
 
+Optional single-node core persistence is enabled with `FXP_EVENT_LOG=<path>`.
+Unset means fully disabled, with the existing in-memory behavior. Every engine
+input is fsynced before application, and startup replays the input log before
+accepting clients. All live orders are restored, not just GTC; missed expiry and
+auction boundaries run on the first startup tick without subscribers.
+
+The parent directory must already exist. In Compose, use
+`FXP_EVENT_LOG=/data/core_store/events.log` for the named core volume.
+The log is exclusively locked, schedule/version mismatches fail startup, and
+torn/corrupt suffixes are truncated with a warning. **Gateway orderClientMap is
+not restored**, so reports for restored orders cannot be routed to old clients.
+There is no compaction, replication or exactly-once client delivery. Disabling
+the flag does not migrate state; re-enabling an old log restores its history.
+See [the persistence design and rollout guide](docs/gtc-persistence.md).
+
 ```bash
 export FXP_JWT_SECRET="$(openssl rand -hex 32)"
 export FXP_FIX_CREDENTIALS="FIRM01:$(openssl rand -hex 16)"

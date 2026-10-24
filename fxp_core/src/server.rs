@@ -32,7 +32,62 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
 use crate::engine::SessionSchedule;
+use crate::event_log::{Input, Journal};
 use crate::fxp;
+
+type Persistence = Arc<std::sync::Mutex<Journal<OutputTx>>>;
+
+fn persistence_failure(error: impl std::fmt::Display) -> ! {
+    tracing::error!("core event-log failure: {error}");
+    std::process::exit(1);
+}
+
+fn persisted_input(
+    runtime: &Persistence,
+    symbol: &str,
+    msg: Option<SymbolMsg>,
+) -> Vec<crate::engine::Output<OutputTx>> {
+    use crate::engine::Clock;
+    let mut journal = runtime
+        .lock()
+        .unwrap_or_else(|error| persistence_failure(error));
+    let at = WallClock.now();
+    let result = match msg {
+        None => journal.tick(symbol, at),
+        Some(SymbolMsg::Order(m)) => journal.apply(symbol, at, Input::New(m.order), m.output_tx),
+        Some(SymbolMsg::Subscribe(m)) => journal.apply(symbol, at, Input::Subscribe, m.tx),
+        Some(SymbolMsg::Cancel(m)) => journal.apply(
+            symbol,
+            at,
+            Input::Cancel(fxp::OrderCancelRequest {
+                symbol: symbol.into(),
+                order_id: m.order_id,
+                sender: m.sender,
+                client_cancel_id: m.client_cancel_id,
+                ..Default::default()
+            }),
+            m.output_tx,
+        ),
+        Some(SymbolMsg::CancelReplace(m)) => journal.apply(
+            symbol,
+            at,
+            Input::Replace(fxp::OrderCancelReplaceRequest {
+                symbol: symbol.into(),
+                order_id: m.order_id,
+                sender: m.sender,
+                new_order_id: m.new_order_id,
+                client_replace_id: m.client_replace_id,
+                new_price: m.new_price,
+                new_quantity: m.new_quantity,
+                new_time_in_force: m.new_time_in_force,
+                new_stop_price: m.new_stop_price,
+                ..Default::default()
+            }),
+            m.output_tx,
+        ),
+    };
+    result.unwrap_or_else(|error| persistence_failure(error))
+}
 
 #[cfg(test)]
 use crate::order_book::broadcaster::MarketDataBroadcaster;
@@ -89,6 +144,7 @@ enum SymbolMsg {
 struct SymbolRouter {
     channels: Arc<Mutex<HashMap<String, mpsc::Sender<SymbolMsg>>>>,
     schedule: Option<SessionSchedule>,
+    persistence: Option<Persistence>,
 }
 
 impl SymbolRouter {
@@ -96,6 +152,7 @@ impl SymbolRouter {
         Self {
             channels: Arc::new(Mutex::new(HashMap::new())),
             schedule,
+            persistence: None,
         }
     }
 
@@ -118,7 +175,12 @@ impl SymbolRouter {
         let sym = symbol.to_string();
         // Spawn while holding the lock to guarantee the entry is visible
         // before any message can be dispatched to this symbol.
-        tokio::spawn(scheduled_order_book_task(sym, rx, self.schedule));
+        tokio::spawn(scheduled_order_book_task(
+            sym,
+            rx,
+            self.schedule,
+            self.persistence.clone(),
+        ));
         tx // return cloned sender directly — no need to re-acquire
     }
 }
@@ -141,26 +203,38 @@ impl crate::engine::ExecIds for GlobalExecIds {
 }
 #[cfg(test)]
 async fn order_book_task(symbol: String, rx: mpsc::Receiver<SymbolMsg>) {
-    scheduled_order_book_task(symbol, rx, None).await;
+    scheduled_order_book_task(symbol, rx, None, None).await;
 }
 
 async fn scheduled_order_book_task(
     symbol: String,
     mut rx: mpsc::Receiver<SymbolMsg>,
     schedule: Option<SessionSchedule>,
+    persistence: Option<Persistence>,
 ) {
     use crate::engine::{
         CancelMsg as EngineCancel, CancelReplaceMsg as EngineReplace, Engine, Output,
     };
-    let mut engine = Engine::new(&symbol, WallClock, GlobalExecIds, schedule);
+    let mut engine = persistence
+        .is_none()
+        .then(|| Engine::new(&symbol, WallClock, GlobalExecIds, schedule));
     let mut subscribers: Vec<OutputTx> = Vec::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     loop {
-        let outputs = tokio::select! {
-            _ = interval.tick() => engine.tick(),
+        let msg = tokio::select! {
+            _ = interval.tick() => None,
             msg = rx.recv() => {
                 let Some(msg) = msg else { break; };
-                match msg {
+                Some(msg)
+            }
+        };
+        let outputs = if let Some(runtime) = &persistence {
+            persisted_input(runtime, &symbol, msg)
+        } else {
+            let engine = engine.as_mut().expect("unlogged engine");
+            match msg {
+                None => engine.tick(),
+                Some(msg) => match msg {
                     SymbolMsg::Order(m) => engine.new_order(m.order, m.output_tx),
                     SymbolMsg::Cancel(m) => engine.cancel(EngineCancel {
                         order_id: m.order_id,
@@ -180,7 +254,7 @@ async fn scheduled_order_book_task(
                         output_tx: m.output_tx,
                     }),
                     SymbolMsg::Subscribe(m) => engine.subscribe(m.tx),
-                }
+                },
             }
         };
         for output in outputs {
@@ -464,8 +538,29 @@ pub async fn start_server() {
         tracing::error!("invalid FXP_SESSION_SCHEDULE: {error}");
         std::process::exit(1);
     });
+    let mut router = SymbolRouter::new(schedule);
+    if let Some(path) = std::env::var_os("FXP_EVENT_LOG") {
+        use crate::engine::Clock;
+        if path.is_empty() {
+            persistence_failure("FXP_EVENT_LOG must be a nonempty path");
+        }
+        let (detached, receiver) = mpsc::channel(1);
+        drop(receiver);
+        let mut journal = Journal::open(std::path::Path::new(&path), schedule, detached)
+            .unwrap_or_else(|error| persistence_failure(error));
+        let symbols = journal.symbols();
+        let at = WallClock.now();
+        for symbol in &symbols {
+            journal
+                .tick(symbol, at)
+                .unwrap_or_else(|error| persistence_failure(error));
+        }
+        router.persistence = Some(Arc::new(std::sync::Mutex::new(journal)));
+        for symbol in symbols {
+            router.get_or_create(&symbol).await;
+        }
+    }
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
-    let router = SymbolRouter::new(schedule);
 
     tracing::info!("FXP Core running on 127.0.0.1:8080");
     tracing::info!("Architecture: per-symbol tasks + lock-free output channels");

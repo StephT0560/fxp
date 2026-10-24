@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 pub mod engine;
+mod event_log;
 pub mod order_book;
 pub mod server;
 

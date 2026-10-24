@@ -57,7 +57,7 @@ Each frame is:
 
 | Bytes | Meaning |
 |---|---|
-| 4 | unsigned big-endian protobuf body length, 1 through 1 MiB |
+| 4 | unsigned big-endian protobuf body length, 1 through 4 MiB |
 | length | private protobuf record body |
 | 4 | big-endian IEEE CRC-32 of the length prefix plus body |
 
