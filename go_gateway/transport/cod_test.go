@@ -33,7 +33,7 @@ func fakeCore(t *testing.T) <-chan *protobuf.FXPMessage {
 				return
 			}
 			go func() {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				for {
 					body, err := readFrame(c, 1<<20)
 					if err != nil {
