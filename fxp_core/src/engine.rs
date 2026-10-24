@@ -216,21 +216,13 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
     }
     pub fn new_order(&mut self, order: fxp::NewOrderSingle, owner: R) -> Vec<Output<R>> {
         let id = order.order_id.clone();
-        self.status_history
-            .entry(id.clone())
-            .or_insert_with(|| (order.sender.clone(), fxp::ExecutionReport::default()));
+        let sender = order.sender.clone();
         let outputs = self.process(SymbolMsg::Order(OrderMsg {
             order,
             output_tx: owner,
         }));
+        self.bind_status_owner(&id, sender, &outputs);
         self.remember_status(&outputs);
-        if self
-            .status_history
-            .get(&id)
-            .is_some_and(|(_, r)| r.order_id.is_empty())
-        {
-            self.status_history.remove(&id);
-        }
         outputs
     }
     pub fn cancel(&mut self, request: CancelMsg<R>) -> Vec<Output<R>> {
@@ -240,19 +232,29 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
     }
     pub fn cancel_replace(&mut self, request: CancelReplaceMsg<R>) -> Vec<Output<R>> {
         let id = request.new_order_id.clone();
-        self.status_history
-            .entry(id.clone())
-            .or_insert_with(|| (request.sender.clone(), fxp::ExecutionReport::default()));
+        let sender = request.sender.clone();
         let outputs = self.process(SymbolMsg::CancelReplace(request));
+        self.bind_status_owner(&id, sender, &outputs);
         self.remember_status(&outputs);
-        if self
-            .status_history
-            .get(&id)
-            .is_some_and(|(_, r)| r.order_id.is_empty())
-        {
-            self.status_history.remove(&id);
-        }
         outputs
+    }
+    fn bind_status_owner(&mut self, id: &str, sender: String, outputs: &[Output<R>]) {
+        let accepted = outputs
+            .iter()
+            .rev()
+            .find_map(|o| match o {
+                Output::ExecutionReport(_, r) if r.order_id == id => {
+                    Some(r.execution_type != fxp::ExecutionType::ExecRejected as i32)
+                }
+                _ => None,
+            })
+            .unwrap_or(false);
+        if accepted {
+            self.status_history
+                .entry(id.into())
+                .or_insert_with(|| (String::new(), fxp::ExecutionReport::default()))
+                .0 = sender;
+        }
     }
     /// Current order snapshots, including a bounded history of 100,000 terminal
     /// transitions per symbol. Never change live routing or expose other owners.

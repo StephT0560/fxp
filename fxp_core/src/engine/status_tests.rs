@@ -103,3 +103,25 @@ fn status_lifecycle_and_owner_isolation() {
             .all(|r| !r.order_id.starts_with('S') || r.order_id == "STOP")
     );
 }
+
+#[test]
+fn reused_terminal_id_does_not_retain_the_previous_owner() {
+    let clock = TestClock(Rc::new(Cell::new(Time {
+        seconds: 0,
+        nanos: 0,
+    })));
+    let mut e = Engine::new("TEST", clock, Ids(0), None);
+    e.new_order(order("REUSE", "T", fxp::OrderSide::Buy, 1), 1);
+    e.cancel(CancelMsg {
+        order_id: "REUSE".into(),
+        sender: "T".into(),
+        client_cancel_id: "C".into(),
+        output_tx: 1,
+    });
+    e.new_order(order("REUSE", "U", fxp::OrderSide::Buy, 9), 2);
+    assert!(
+        e.order_status("T", "REUSE", 0).is_empty(),
+        "previous owner can see the new order"
+    );
+    assert_eq!(e.order_status("U", "REUSE", 0)[0].order_quantity, 9);
+}

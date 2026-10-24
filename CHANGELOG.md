@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bind recycled terminal status IDs to their newly accepted owner, preserving owner isolation at the trusted core boundary (#2).
+
 - Keep empty-value and duplicate checks enabled for permitted user-defined FIX fields (#2).
 
 - Enforce MsgType as the third wire field and validate Reset-mode dictionary fields while ignoring its sequence number (#2).

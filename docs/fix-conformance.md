@@ -97,3 +97,7 @@ numbers. Rejects retain RefMsgType for the affected administrative message.
 
 Permitting undeclared user-defined tags does not permit empty values or duplicate
 fields: the validator still returns reasons 4 and 13 in the current scope.
+
+Reusing a terminal order ID at the trusted core boundary binds its new status
+record to the newly accepted owner. A rejected duplicate cannot change that
+ownership. Gateway namespacing continues to prevent cross-owner ID collisions.
