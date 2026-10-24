@@ -185,3 +185,67 @@ func TestSessionResetPolicies(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduleDSTTransitionInstants(t *testing.T) {
+	schedule, err := ParseSchedule("01:00:00", "03:00:00", "", "", "America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		at       string
+		open     bool
+		boundary string
+	}{
+		{"2026-03-08T06:00:00Z", true, "2026-03-07T08:00:00Z"},
+		{"2026-03-08T06:59:59Z", true, "2026-03-07T08:00:00Z"},
+		{"2026-03-08T07:00:00Z", false, "2026-03-08T07:00:00Z"},
+		{"2026-11-01T05:30:00Z", true, "2026-10-31T07:00:00Z"},
+		{"2026-11-01T06:30:00Z", true, "2026-10-31T07:00:00Z"},
+		{"2026-11-01T08:00:00Z", false, "2026-11-01T08:00:00Z"},
+	} {
+		at, _ := time.Parse(time.RFC3339, tc.at)
+		end, _ := time.Parse(time.RFC3339, tc.boundary)
+		if schedule.Contains(at) != tc.open || !schedule.ResetBoundary(at).Equal(end) {
+			t.Errorf("at %s: open %v boundary %s", at, schedule.Contains(at), schedule.ResetBoundary(at))
+		}
+	}
+}
+func TestPendingEpochResetCannotResurrectFrames(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenFileStore(dir, FileStoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Save(8, []byte("old"))
+	st.SetNextInSeq(9)
+	st.Close()
+	// Simulate a crash after archiving and recording the synced reset intent,
+	// before truncate/sequence replacement. The opener must finish the reset.
+	archive := filepath.Join(dir, "archive", "123")
+	if err := os.MkdirAll(archive, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{outboundLogName, seqNumsName} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := durableFile(filepath.Join(archive, name), data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := durableFile(filepath.Join(dir, "reset.pending"), []byte("123")); err != nil {
+		t.Fatal(err)
+	}
+	st, err = OpenFileStore(dir, FileStoreOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if in, out := st.SeqNums(); in != 1 || out != 1 {
+		t.Fatalf("resurrected %d %d", in, out)
+	}
+	if _, ok := st.Get(8); ok {
+		t.Fatal("resurrected old frame")
+	}
+}
