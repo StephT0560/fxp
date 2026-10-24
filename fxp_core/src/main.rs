@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+use std::io::IsTerminal;
+
 use fxp_core::server;
 use tracing_subscriber::EnvFilter;
 
@@ -11,6 +13,7 @@ async fn main() {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .init();
     // Start the FXP TCP server
     server::start_server().await;
