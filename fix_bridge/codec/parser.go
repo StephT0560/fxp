@@ -19,6 +19,7 @@ package codec
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -269,6 +270,25 @@ func parseFields(data []byte) ([]Field, error) {
 		}
 
 		fields = append(fields, Field{Tag: tag, Value: value})
+		if dataTag, ok := lengthDataTags[tag]; ok {
+			dataLength, err := strconv.Atoi(value)
+			if err != nil || dataLength < 0 {
+				return nil, fmt.Errorf("invalid length for tag %d: %q", tag, value)
+			}
+			prefix := []byte(strconv.Itoa(dataTag) + "=")
+			if !bytes.HasPrefix(remaining, prefix) {
+				return nil, fmt.Errorf("length tag %d must be followed by data tag %d", tag, dataTag)
+			}
+			dataAndDelimiter := remaining[len(prefix):]
+			if dataLength >= len(dataAndDelimiter) {
+				return nil, fmt.Errorf("data tag %d shorter than declared length %d", dataTag, dataLength)
+			}
+			if dataAndDelimiter[dataLength] != soh {
+				return nil, fmt.Errorf("data tag %d length %d does not end at SOH", dataTag, dataLength)
+			}
+			fields = append(fields, Field{Tag: dataTag, Value: string(dataAndDelimiter[:dataLength])})
+			remaining = dataAndDelimiter[dataLength+1:]
+		}
 	}
 
 	return fields, nil

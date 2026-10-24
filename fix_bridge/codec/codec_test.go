@@ -154,6 +154,53 @@ func TestParserRejectsMalformedChecksumFields(t *testing.T) {
 	}
 }
 
+func TestParserLengthPrefixedDataWithEmbeddedSOH(t *testing.T) {
+	data := "A\x01B=C"
+	builder := NewBuilder(MsgTypeNewOrderSingle, "CLIENT", "FXPBRIDGE", 1)
+	builder.Set(95, strconv.Itoa(len(data)))
+	builder.Set(96, data)
+	first := builder.Build()
+	second := NewBuilder(MsgTypeHeartbeat, "CLIENT", "FXPBRIDGE", 2).Build()
+	stream := append(append([]byte{}, first...), second...)
+
+	parser := NewParser(bytes.NewReader(stream))
+	msg, err := parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("message with RawData rejected: %v", err)
+	}
+	if got := msg.Get(96); got != data {
+		t.Fatalf("RawData = %q, want %q", got, data)
+	}
+	msg, err = parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("second message after RawData: %v", err)
+	}
+	if got := msg.MsgType(); got != MsgTypeHeartbeat {
+		t.Fatalf("second MsgType = %q, want %q", got, MsgTypeHeartbeat)
+	}
+}
+
+func TestParserRejectsWrongLengthAndResyncs(t *testing.T) {
+	data := "ABCDE"
+	builder := NewBuilder(MsgTypeNewOrderSingle, "CLIENT", "FXPBRIDGE", 1)
+	builder.Set(95, strconv.Itoa(len(data)-1))
+	builder.Set(96, data)
+	bad := builder.Build()
+	good := NewBuilder(MsgTypeHeartbeat, "CLIENT", "FXPBRIDGE", 2).Build()
+	parser := NewParser(bytes.NewReader(append(append([]byte{}, bad...), good...)))
+
+	if _, err := parser.ReadMessage(); !errors.Is(err, ErrGarbled) {
+		t.Fatalf("wrong data length error = %v, want ErrGarbled", err)
+	}
+	msg, err := parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("parser did not resync after wrong data length: %v", err)
+	}
+	if got := msg.MsgType(); got != MsgTypeHeartbeat {
+		t.Fatalf("resynced MsgType = %q, want %q", got, MsgTypeHeartbeat)
+	}
+}
+
 // §3.6 sample: LogonAck FXPBRIDGE -> VICTIM, seq 1, HeartBtInt 30:
 // 35=A(5) 49=FXPBRIDGE(13) 56=VICTIM(10) 34=1(5) 52=<21 chars>(25) 98=0(5) 108=30(7) = 70.
 func TestLogonAckBodyLength(t *testing.T) {
