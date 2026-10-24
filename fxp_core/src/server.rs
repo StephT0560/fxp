@@ -86,6 +86,17 @@ fn persisted_input(
             }),
             m.output_tx,
         ),
+        Some(SymbolMsg::MassCancel(m)) => journal.apply(
+            symbol,
+            at,
+            Input::MassCancel(fxp::OrderMassCancelRequest {
+                symbol: symbol.into(),
+                header: None,
+                timestamp: None,
+                ..m.request
+            }),
+            m.output_tx,
+        ),
     };
     result.unwrap_or_else(|error| persistence_failure(error))
 }
@@ -132,11 +143,18 @@ struct CancelReplaceMsg {
     output_tx: OutputTx,
 }
 
+struct MassCancelMsg {
+    request: fxp::OrderMassCancelRequest,
+    output_tx: OutputTx,
+    reply: Option<tokio::sync::oneshot::Sender<u32>>,
+}
+
 enum SymbolMsg {
     Order(OrderMsg),
     Subscribe(SubscribeMsg),
     Cancel(CancelMsg),
     CancelReplace(CancelReplaceMsg),
+    MassCancel(MassCancelMsg),
 }
 
 // ── Symbol router ─────────────────────────────────────────────────────────────
@@ -157,6 +175,12 @@ impl SymbolRouter {
             stp_default: StpMode::None,
             persistence: None,
         }
+    }
+
+    async fn symbols(&self) -> Vec<String> {
+        let mut symbols: Vec<_> = self.channels.lock().await.keys().cloned().collect();
+        symbols.sort();
+        symbols
     }
 
     async fn get_or_create(&self, symbol: &str) -> mpsc::Sender<SymbolMsg> {
@@ -218,7 +242,8 @@ async fn scheduled_order_book_task(
     persistence: Option<Persistence>,
 ) {
     use crate::engine::{
-        CancelMsg as EngineCancel, CancelReplaceMsg as EngineReplace, Engine, Output,
+        CancelMsg as EngineCancel, CancelReplaceMsg as EngineReplace, Engine,
+        MassCancelMsg as EngineMassCancel, Output,
     };
     let mut engine = persistence.is_none().then(|| {
         Engine::new(&symbol, WallClock, GlobalExecIds, schedule).with_stp_default(stp_default)
@@ -233,6 +258,14 @@ async fn scheduled_order_book_task(
                 Some(msg)
             }
         };
+        let mut reply = None;
+        let msg = msg.map(|msg| match msg {
+            SymbolMsg::MassCancel(mut m) => {
+                reply = m.reply.take();
+                SymbolMsg::MassCancel(m)
+            }
+            other => other,
+        });
         let outputs = if let Some(runtime) = &persistence {
             persisted_input(runtime, &symbol, msg)
         } else {
@@ -259,11 +292,22 @@ async fn scheduled_order_book_task(
                         output_tx: m.output_tx,
                     }),
                     SymbolMsg::Subscribe(m) => engine.subscribe(m.tx),
+                    SymbolMsg::MassCancel(m) => engine.mass_cancel(EngineMassCancel {
+                        sender: m.request.sender,
+                        side: m.request.side,
+                        client_request_id: m.request.client_request_id,
+                        reason: m.request.reason,
+                    }),
                 },
             }
         };
         for output in outputs {
             match output {
+                Output::MassCancelCount(n) => {
+                    if let Some(reply) = reply.take() {
+                        let _ = reply.send(n);
+                    }
+                }
                 Output::TradingSessionStatus(status) => {
                     broadcast_md(
                         &mut subscribers,
@@ -476,6 +520,10 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                     }
                 }
 
+                Some(fxp::fxp_message::Payload::OrderMassCancel(request)) => {
+                    mass_cancel(&router, request, &output_tx).await;
+                }
+
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     tracing::debug!("MarketDataRequest for {:?}", request.symbols);
                     for symbol in &request.symbols {
@@ -511,6 +559,73 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
             Err(e) => tracing::warn!("Decode failed: {:?}", e),
         }
     }
+}
+
+/// Fans an owner-scoped mass cancel out to the requested symbol (or every
+/// symbol) and answers with one OrderMassCancelReport after all symbols have
+/// sent their EXEC_CANCELED reports.
+async fn mass_cancel(
+    router: &SymbolRouter,
+    request: fxp::OrderMassCancelRequest,
+    output_tx: &OutputTx,
+) {
+    let reject = if request.sender.is_empty() {
+        "mass cancel requires a sender"
+    } else if fxp::OrderSide::try_from(request.side).is_err() {
+        "unsupported side"
+    } else if fxp::MassCancelReason::try_from(request.reason).is_err() {
+        "unsupported reason"
+    } else {
+        ""
+    };
+    let mut replies = Vec::new();
+    if reject.is_empty() {
+        let symbols = if request.symbol.is_empty() {
+            router.symbols().await
+        } else {
+            vec![request.symbol.clone()]
+        };
+        for symbol in symbols {
+            let (reply, done) = tokio::sync::oneshot::channel();
+            let tx = router.get_or_create(&symbol).await;
+            let msg = SymbolMsg::MassCancel(MassCancelMsg {
+                request: request.clone(),
+                output_tx: output_tx.clone(),
+                reply: Some(reply),
+            });
+            if tx.send(msg).await.is_ok() {
+                replies.push(done);
+            } else {
+                tracing::error!("Symbol task for {} dropped on mass cancel", symbol);
+            }
+        }
+    }
+    let out = output_tx.clone();
+    tokio::spawn(async move {
+        let mut total_affected = 0;
+        for done in replies {
+            total_affected += done.await.unwrap_or(0);
+        }
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let report = fxp::OrderMassCancelReport {
+            header: None,
+            client_request_id: request.client_request_id,
+            symbol: request.symbol,
+            side: request.side,
+            total_affected,
+            reason: request.reason,
+            reject_reason: reject.into(),
+            timestamp: Some(prost_types::Timestamp {
+                seconds: now.as_secs() as i64,
+                nanos: now.subsec_nanos() as i32,
+            }),
+        };
+        let _ = out
+            .send(frame_message(&fxp::FxpMessage {
+                payload: Some(fxp::fxp_message::Payload::OrderMassCancelReport(report)),
+            }))
+            .await;
+    });
 }
 
 const ACCEPT_BACKOFF_MIN: std::time::Duration = std::time::Duration::from_millis(5);
@@ -719,6 +834,82 @@ mod report_tests {
     async fn assert_quiet(rx: &mut Rx) {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(rx.try_recv().is_err(), "unexpected extra report");
+    }
+
+    async fn next_mass_report(rx: &mut Rx) -> fxp::OrderMassCancelReport {
+        let frame = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("timed out waiting for mass cancel report")
+            .expect("channel closed");
+        match fxp::FxpMessage::decode(&frame[4..]).unwrap().payload {
+            Some(fxp::fxp_message::Payload::OrderMassCancelReport(r)) => r,
+            other => panic!("expected OrderMassCancelReport, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn mass_cancel_fans_out_across_symbols_and_reports_after_the_cancels() {
+        let router = SymbolRouter::new(None);
+        let (a, mut a_rx) = conn();
+        for (id, owner, symbol) in [("A1", "T", "AAA"), ("B1", "T", "BBB"), ("U1", "U", "AAA")] {
+            let tx = router.get_or_create(symbol).await;
+            let order = fxp::NewOrderSingle {
+                symbol: symbol.into(),
+                ..nos(id, owner, BUY, 100, 5, LIMIT, GTC)
+            };
+            send_order(&tx, order, &a).await;
+            next(&mut a_rx).await;
+        }
+        let request = fxp::OrderMassCancelRequest {
+            sender: "T".into(),
+            client_request_id: "MC".into(),
+            ..Default::default()
+        };
+        mass_cancel(&router, request, &a).await;
+        let mut ids = vec![
+            next(&mut a_rx).await.order_id,
+            next(&mut a_rx).await.order_id,
+        ];
+        ids.sort();
+        assert_eq!(ids, ["A1", "B1"]);
+        let report = next_mass_report(&mut a_rx).await;
+        assert_eq!(
+            (report.client_request_id.as_str(), report.total_affected),
+            ("MC", 2)
+        );
+        assert!(report.reject_reason.is_empty());
+        assert_quiet(&mut a_rx).await;
+    }
+
+    #[tokio::test]
+    async fn mass_cancel_rejects_invalid_requests_without_canceling() {
+        let router = SymbolRouter::new(None);
+        let (a, mut a_rx) = conn();
+        let tx = router.get_or_create("TEST").await;
+        send_order(&tx, nos("A1", "T", BUY, 100, 5, LIMIT, GTC), &a).await;
+        next(&mut a_rx).await;
+        for (request, reason) in [
+            (
+                fxp::OrderMassCancelRequest {
+                    sender: "T".into(),
+                    side: 9,
+                    ..Default::default()
+                },
+                "unsupported side",
+            ),
+            (
+                fxp::OrderMassCancelRequest::default(),
+                "mass cancel requires a sender",
+            ),
+        ] {
+            mass_cancel(&router, request, &a).await;
+            let report = next_mass_report(&mut a_rx).await;
+            assert_eq!(
+                (report.total_affected, report.reject_reason.as_str()),
+                (0, reason)
+            );
+        }
+        assert_quiet(&mut a_rx).await;
     }
 
     const BUY: i32 = 1;

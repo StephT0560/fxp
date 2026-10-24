@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Opt-in synchronous, globally ordered input persistence.
 use crate::engine::{
-    CancelMsg, CancelReplaceMsg, Clock, Engine, ExecIds, Output, SessionSchedule, Time,
+    CancelMsg, CancelReplaceMsg, Clock, Engine, ExecIds, MassCancelMsg, Output, SessionSchedule,
+    Time,
 };
 use crate::fxp;
 use crate::order_book::order::StpMode;
@@ -39,6 +40,7 @@ pub(crate) enum Input {
     Replace(fxp::OrderCancelReplaceRequest),
     Tick,
     Subscribe,
+    MassCancel(fxp::OrderMassCancelRequest),
 }
 
 impl Input {
@@ -49,6 +51,7 @@ impl Input {
             Self::Replace(m) => (3, m.encode_to_vec()),
             Self::Tick => (4, Vec::new()),
             Self::Subscribe => (5, Vec::new()),
+            Self::MassCancel(m) => (6, m.encode_to_vec()),
         }
     }
 
@@ -70,6 +73,12 @@ impl Input {
                     .map_err(invalid)?;
                 let symbol = m.symbol.clone();
                 (Self::Replace(m), symbol)
+            }
+            6 => {
+                let m = fxp::OrderMassCancelRequest::decode(record.payload.as_slice())
+                    .map_err(invalid)?;
+                let symbol = m.symbol.clone();
+                (Self::MassCancel(m), symbol)
             }
             4 if record.payload.is_empty() => (Self::Tick, record.symbol.clone()),
             5 if record.payload.is_empty() => (Self::Subscribe, record.symbol.clone()),
@@ -373,6 +382,12 @@ impl<R: Clone> Journal<R> {
             }),
             Input::Tick => engine.tick(),
             Input::Subscribe => engine.subscribe(owner),
+            Input::MassCancel(m) => engine.mass_cancel(MassCancelMsg {
+                sender: m.sender,
+                side: m.side,
+                client_request_id: m.client_request_id,
+                reason: m.reason,
+            }),
         }
     }
 }

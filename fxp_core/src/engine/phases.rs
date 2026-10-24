@@ -35,7 +35,7 @@ pub(super) fn entry_reason(
     None
 }
 
-fn timestamp(now: Time) -> Option<Timestamp> {
+pub(super) fn timestamp(now: Time) -> Option<Timestamp> {
     Some(Timestamp {
         seconds: now.seconds,
         nanos: now.nanos,
@@ -244,7 +244,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         Some(result.price)
     }
 
-    fn remove_live(&mut self, id: &str) -> Option<MarketDataIncrementalUpdate> {
+    pub(super) fn remove_live(&mut self, id: &str) -> Option<MarketDataIncrementalUpdate> {
         if let Some(md) = self.book.cancel_order(id) {
             return Some(md);
         }
