@@ -65,6 +65,20 @@ func TestExecutionReportFieldMapping(t *testing.T) {
 	}
 }
 
+func TestExpiredExecutionReportMapping(t *testing.T) {
+	rep := &protobuf.ExecutionReport{
+		OrderId: "GTD", ExecutionId: "X1", Symbol: "AAPL", Side: protobuf.OrderSide_BUY,
+		ExecutionType: protobuf.ExecutionType_EXEC_EXPIRED, OrderStatus: protobuf.OrderStatus_ORDER_EXPIRED,
+		OrderQuantity: 10, CumQuantity: 4, AvgPx: 100, LeavesQuantity: 0,
+	}
+	msg := parseER(t, translateExecutionReport(rep, "FXPBRIDGE", "CLIENT", 2))
+	for tag, want := range map[int]string{150: "C", 39: "C", 151: "0", 14: "4", 6: "1.00"} {
+		if got := msg.Get(tag); got != want {
+			t.Errorf("tag %d=%q, want %q", tag, got, want)
+		}
+	}
+}
+
 func TestUnspecifiedExecutionReportEnumsAreDropped(t *testing.T) {
 	tests := []struct {
 		name string
