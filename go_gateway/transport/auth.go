@@ -266,7 +266,7 @@ func validateJWT(token string) (*jwtClaims, error) {
 		if claims.Jti == "" {
 			return nil, fmt.Errorf("JWT missing required claim: jti (replay cache is on)")
 		}
-		if !replayCache.firstUse(replayKey(claims.Iss, hdr.Kid, claims.Jti), claims.Exp, now) {
+		if !replayCache.firstUse(jtiKey{claims.Iss, hdr.Kid, claims.Jti}, claims.Exp, now) {
 			return nil, fmt.Errorf("JWT replay: jti %q was already used", claims.Jti)
 		}
 	}
@@ -279,12 +279,17 @@ func validateJWT(token string) (*jwtClaims, error) {
 // entries that have actually expired.
 type jtiCache struct {
 	mu    sync.Mutex
-	seen  map[string]int64 // replay key → exp
+	seen  map[jtiKey]int64 // → exp
 	byExp jtiHeap
 }
 
+// jtiKey scopes a jti to its issuer and signing key: RFC 7519 only requires
+// jti to be unique per issuer, and tokens under different keys are different
+// tokens. A struct (not a joined string) so no jti can collide across fields.
+type jtiKey struct{ iss, kid, jti string }
+
 type jtiEntry struct {
-	key string
+	key jtiKey
 	exp int64
 }
 
@@ -301,24 +306,17 @@ func (h *jtiHeap) Pop() any {
 	return e
 }
 
-var replayCache = &jtiCache{seen: map[string]int64{}}
+var replayCache = &jtiCache{seen: map[jtiKey]int64{}}
 
 func resetReplayCache() {
 	replayCache.mu.Lock()
-	replayCache.seen = map[string]int64{}
+	replayCache.seen = map[jtiKey]int64{}
 	replayCache.byExp = nil
 	replayCache.mu.Unlock()
 }
 
-// replayKey scopes a jti to its issuer and signing key: RFC 7519 only
-// requires jti to be unique per issuer, and tokens under different keys are
-// different tokens.
-func replayKey(iss, kid, jti string) string {
-	return iss + "\x00" + kid + "\x00" + jti
-}
-
 // firstUse records key and reports whether it had not been seen before.
-func (c *jtiCache) firstUse(key string, exp, now int64) bool {
+func (c *jtiCache) firstUse(key jtiKey, exp, now int64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for c.byExp.Len() > 0 && c.byExp[0].exp < now {

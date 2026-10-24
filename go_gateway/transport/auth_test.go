@@ -236,20 +236,29 @@ func TestReplayCachePrunesExpired(t *testing.T) {
 	resetReplayCache()
 	t.Cleanup(resetReplayCache)
 	c := replayCache
-	if !c.firstUse("a", 100, 50) || !c.firstUse("b", 300, 50) {
+	k := func(jti string) jtiKey { return jtiKey{"iss", "", jti} }
+	if !c.firstUse(k("a"), 100, 50) || !c.firstUse(k("b"), 300, 50) {
 		t.Fatal("fresh ids rejected")
 	}
-	if c.firstUse("a", 100, 60) {
+	if c.firstUse(k("a"), 100, 60) {
 		t.Fatal("replay of a live id accepted")
 	}
-	if !c.firstUse("c", 400, 150) {
+	if !c.firstUse(k("c"), 400, 150) {
 		t.Fatal("fresh id rejected")
 	}
-	if _, ok := c.seen["a"]; ok || len(c.seen) != 2 {
+	if _, ok := c.seen[k("a")]; ok || len(c.seen) != 2 {
 		t.Fatalf("expired entry not pruned: %v", c.seen)
 	}
-	if !c.firstUse("a", 500, 150) {
+	if !c.firstUse(k("a"), 500, 150) {
 		t.Fatal("id reuse after expiry rejected")
+	}
+}
+
+func TestReplayKeyFieldsDoNotCollide(t *testing.T) {
+	resetReplayCache()
+	t.Cleanup(resetReplayCache)
+	if !replayCache.firstUse(jtiKey{"iss", "", "k1\x00x"}, 100, 0) || !replayCache.firstUse(jtiKey{"iss", "k1", "x"}, 100, 0) {
+		t.Fatal("distinct (kid, jti) pairs collided")
 	}
 }
 
@@ -258,11 +267,11 @@ func BenchmarkReplayCacheFirstUse(b *testing.B) {
 	b.Cleanup(resetReplayCache)
 	now := time.Now().Unix()
 	for i := 0; i < 200_000; i++ {
-		replayCache.firstUse("warm-"+strconv.Itoa(i), now+86400, now)
+		replayCache.firstUse(jtiKey{"iss", "", "warm-" + strconv.Itoa(i)}, now+86400, now)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		replayCache.firstUse("b-"+strconv.Itoa(i), now+86400, now)
+		replayCache.firstUse(jtiKey{"iss", "", "b-" + strconv.Itoa(i)}, now+86400, now)
 	}
 }
 
