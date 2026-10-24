@@ -5,10 +5,12 @@ package transport
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -201,6 +203,94 @@ func TestWSCheckOrigin(t *testing.T) {
 			}
 			if !tc.ok && (err == nil || status != http.StatusForbidden) {
 				t.Fatalf("handshake: status %d, err %v; want 403", status, err)
+			}
+		})
+	}
+}
+
+func TestJWTReplayCacheScopedByKey(t *testing.T) {
+	t.Setenv("FXP_JWT_SECRET", "cur")
+	t.Setenv("FXP_JWT_PREVIOUS_KID", "k1")
+	t.Setenv("FXP_JWT_PREVIOUS_SECRET", "prev")
+	t.Setenv("FXP_JWT_REPLAY_CACHE", "on")
+	resetReplayCache()
+	t.Cleanup(resetReplayCache)
+	now := time.Now().Unix()
+	c := map[string]any{"sub": "T", "iss": DefaultJWTIssuer, "aud": DefaultJWTAudience, "iat": now, "exp": now + 60, "jti": "same"}
+	underPrev := signJWT(t, "prev", map[string]any{"alg": "HS256", "kid": "k1"}, c)
+	underCur := signJWT(t, "cur", map[string]any{"alg": "HS256"}, c)
+	if _, err := validateJWT(underPrev); err != nil {
+		t.Fatalf("previous-key token rejected: %v", err)
+	}
+	if _, err := validateJWT(underCur); err != nil {
+		t.Fatalf("current-key token with the same jti rejected: %v", err)
+	}
+	for _, tok := range []string{underPrev, underCur} {
+		if _, err := validateJWT(tok); err == nil || !strings.Contains(err.Error(), "replay") {
+			t.Fatalf("replay: got %v", err)
+		}
+	}
+}
+
+func TestReplayCachePrunesExpired(t *testing.T) {
+	resetReplayCache()
+	t.Cleanup(resetReplayCache)
+	c := replayCache
+	if !c.firstUse("a", 100, 50) || !c.firstUse("b", 300, 50) {
+		t.Fatal("fresh ids rejected")
+	}
+	if c.firstUse("a", 100, 60) {
+		t.Fatal("replay of a live id accepted")
+	}
+	if !c.firstUse("c", 400, 150) {
+		t.Fatal("fresh id rejected")
+	}
+	if _, ok := c.seen["a"]; ok || len(c.seen) != 2 {
+		t.Fatalf("expired entry not pruned: %v", c.seen)
+	}
+	if !c.firstUse("a", 500, 150) {
+		t.Fatal("id reuse after expiry rejected")
+	}
+}
+
+func BenchmarkReplayCacheFirstUse(b *testing.B) {
+	resetReplayCache()
+	b.Cleanup(resetReplayCache)
+	now := time.Now().Unix()
+	for i := 0; i < 200_000; i++ {
+		replayCache.firstUse("warm-"+strconv.Itoa(i), now+86400, now)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		replayCache.firstUse("b-"+strconv.Itoa(i), now+86400, now)
+	}
+}
+
+func TestCheckOriginScheme(t *testing.T) {
+	t.Setenv("FXP_GW_WS_ALLOWED_ORIGINS", "")
+	for _, tc := range []struct {
+		name, xfp, origin string
+		tls, ok           bool
+	}{
+		{"plain http same scheme", "", "http://gw.example", false, true},
+		{"https page vs plain http listener", "", "https://gw.example", false, false},
+		{"tls listener, https page", "", "https://gw.example", true, true},
+		{"tls listener, http page", "", "http://gw.example", true, false},
+		{"proxy https, https page", "https", "https://gw.example", false, true},
+		{"proxy https, http page", "https", "http://gw.example", false, false},
+		{"proxy list uses first hop", "https, http", "https://gw.example", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://gw.example/ws", nil)
+			if tc.tls {
+				r.TLS = &tls.ConnectionState{}
+			}
+			if tc.xfp != "" {
+				r.Header.Set("X-Forwarded-Proto", tc.xfp)
+			}
+			r.Header.Set("Origin", tc.origin)
+			if got := checkOrigin(r); got != tc.ok {
+				t.Fatalf("checkOrigin = %v, want %v", got, tc.ok)
 			}
 		})
 	}

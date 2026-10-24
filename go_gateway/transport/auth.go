@@ -22,6 +22,7 @@ package transport
 //     Manager, etc.) — never hardcoded or committed to the repo.
 
 import (
+	"container/heap"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -265,7 +266,7 @@ func validateJWT(token string) (*jwtClaims, error) {
 		if claims.Jti == "" {
 			return nil, fmt.Errorf("JWT missing required claim: jti (replay cache is on)")
 		}
-		if !replayCache.firstUse(claims.Jti, claims.Exp, now) {
+		if !replayCache.firstUse(replayKey(claims.Iss, hdr.Kid, claims.Jti), claims.Exp, now) {
 			return nil, fmt.Errorf("JWT replay: jti %q was already used", claims.Jti)
 		}
 	}
@@ -273,10 +274,31 @@ func validateJWT(token string) (*jwtClaims, error) {
 	return &claims, nil
 }
 
-// jtiCache remembers token IDs until their tokens expire.
+// jtiCache remembers token IDs until their tokens expire. seen gives O(1)
+// duplicate checks; byExp is a min-heap on exp so pruning only touches
+// entries that have actually expired.
 type jtiCache struct {
-	mu   sync.Mutex
-	seen map[string]int64 // jti → exp
+	mu    sync.Mutex
+	seen  map[string]int64 // replay key → exp
+	byExp jtiHeap
+}
+
+type jtiEntry struct {
+	key string
+	exp int64
+}
+
+type jtiHeap []jtiEntry
+
+func (h jtiHeap) Len() int           { return len(h) }
+func (h jtiHeap) Less(i, j int) bool { return h[i].exp < h[j].exp }
+func (h jtiHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *jtiHeap) Push(x any)        { *h = append(*h, x.(jtiEntry)) }
+func (h *jtiHeap) Pop() any {
+	old := *h
+	e := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return e
 }
 
 var replayCache = &jtiCache{seen: map[string]int64{}}
@@ -284,22 +306,32 @@ var replayCache = &jtiCache{seen: map[string]int64{}}
 func resetReplayCache() {
 	replayCache.mu.Lock()
 	replayCache.seen = map[string]int64{}
+	replayCache.byExp = nil
 	replayCache.mu.Unlock()
 }
 
-// firstUse records jti and reports whether it had not been seen before.
-func (c *jtiCache) firstUse(jti string, exp, now int64) bool {
+// replayKey scopes a jti to its issuer and signing key: RFC 7519 only
+// requires jti to be unique per issuer, and tokens under different keys are
+// different tokens.
+func replayKey(iss, kid, jti string) string {
+	return iss + "\x00" + kid + "\x00" + jti
+}
+
+// firstUse records key and reports whether it had not been seen before.
+func (c *jtiCache) firstUse(key string, exp, now int64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for k, e := range c.seen {
-		if e < now {
-			delete(c.seen, k)
+	for c.byExp.Len() > 0 && c.byExp[0].exp < now {
+		e := heap.Pop(&c.byExp).(jtiEntry)
+		if c.seen[e.key] == e.exp {
+			delete(c.seen, e.key)
 		}
 	}
-	if _, dup := c.seen[jti]; dup {
+	if _, dup := c.seen[key]; dup {
 		return false
 	}
-	c.seen[jti] = exp
+	c.seen[key] = exp
+	heap.Push(&c.byExp, jtiEntry{key, exp})
 	return true
 }
 

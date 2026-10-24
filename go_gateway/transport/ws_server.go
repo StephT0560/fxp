@@ -18,8 +18,8 @@ import (
 var upgrader = websocket.Upgrader{CheckOrigin: checkOrigin}
 
 // checkOrigin admits a WebSocket handshake when it has no Origin header
-// (non-browser clients), is same-origin (Origin host equals the request
-// Host), or its Origin is listed in FXP_GW_WS_ALLOWED_ORIGINS
+// (non-browser clients), is same-origin (Origin scheme and host equal the
+// request's), or its Origin is listed in FXP_GW_WS_ALLOWED_ORIGINS
 // (comma-separated, e.g. "https://trader.example,http://ops.example:8443").
 // Every other browser origin is rejected with 403.
 func checkOrigin(r *http.Request) bool {
@@ -32,7 +32,7 @@ func checkOrigin(r *http.Request) bool {
 		log.Printf("⛔ WebSocket handshake with malformed Origin %q rejected", origin)
 		return false
 	}
-	if strings.EqualFold(u.Host, r.Host) {
+	if strings.EqualFold(u.Host, r.Host) && strings.EqualFold(u.Scheme, requestScheme(r)) {
 		return true
 	}
 	for _, allowed := range strings.Split(os.Getenv("FXP_GW_WS_ALLOWED_ORIGINS"), ",") {
@@ -111,4 +111,17 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			_ = conn.SetReadDeadline(time.Time{})
 		}
 	}
+}
+
+// requestScheme is the scheme the browser used to reach the gateway: https if
+// TLS terminated here, otherwise the first X-Forwarded-Proto hop set by a
+// TLS-terminating proxy, otherwise http.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
+		return strings.TrimSpace(strings.Split(xfp, ",")[0])
+	}
+	return "http"
 }
