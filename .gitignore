@@ -1,6 +1,5 @@
 # Rust
-/target/
-**/target/
+target/
 
 # Go build artifacts
 *.exe
@@ -9,8 +8,18 @@
 *.so
 *.dylib
 *.test
-/bin/
-/out/
+bin/
+out/
+
+# Extensionless binaries from `go build` (named after the module or dir)
+/go_gateway/go_gateway
+/go_gateway/bench
+/go_gateway/benchmark/benchmark
+/go_gateway/simulation/simulation
+/go_gateway/test_clients/*/tcp_client
+/go_gateway/test_clients/*/ws_client
+/fix_bridge/fix_bridge
+/fxp_core/fxp_core
 
 # Generated protobuf (optional: remove if you want to commit generated files)
 /go_gateway/protobuf/*.pb.go
