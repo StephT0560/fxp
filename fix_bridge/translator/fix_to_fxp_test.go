@@ -46,6 +46,43 @@ func TestFixTimeInForceDefaults(t *testing.T) {
 	}
 }
 
+func TestGTDExpireDateTranslation(t *testing.T) {
+	for _, date := range []string{"20240229", "20270131"} {
+		msg, err := TranslateFIXtoFXP(buildInbound(t, codec.MsgTypeNewOrderSingle, map[int]string{
+			codec.TagClOrdID: "GTD", codec.TagSymbol: "AAPL", codec.TagSide: codec.SideBuy,
+			codec.TagOrdType: codec.OrdTypeLimit, codec.TagOrderQty: "10", codec.TagPrice: "10.00",
+			codec.TagTimeInForce: codec.TIFGTD, codec.TagExpireDate: date,
+			codec.TagTransactTime: "20260101-12:00:00.000",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		order := msg.GetNewOrder()
+		want := date[:4] + "-" + date[4:6] + "-" + date[6:]
+		if order.TimeInForce != protobuf.TimeInForce_GTD || order.ExpireDate != want {
+			t.Fatalf("got TIF=%v date=%q, want GTD %q", order.TimeInForce, order.ExpireDate, want)
+		}
+	}
+	for _, date := range []string{"", "20250229", "2026011", "2026-01-01", "20261301", "00000101"} {
+		msg, err := TranslateFIXtoFXP(buildInbound(t, codec.MsgTypeNewOrderSingle, map[int]string{
+			codec.TagClOrdID: "BAD", codec.TagSymbol: "AAPL", codec.TagSide: codec.SideBuy,
+			codec.TagOrdType: codec.OrdTypeLimit, codec.TagOrderQty: "10", codec.TagPrice: "10.00",
+			codec.TagTimeInForce: codec.TIFGTD, codec.TagExpireDate: date,
+			codec.TagTransactTime: "20260101-12:00:00.000",
+		}))
+		if date == "" {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if order := msg.GetNewOrder(); order.ExpireDate != "" || order.TimeInForce != protobuf.TimeInForce_GTD {
+				t.Fatalf("missing date must reach the core as GTD without expire_date: %v", order)
+			}
+		} else if err == nil {
+			t.Fatalf("malformed date %q was accepted", date)
+		}
+	}
+}
+
 func TestFixEnumUnknownValuesAreRejected(t *testing.T) {
 	cases := []struct {
 		name    string

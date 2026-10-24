@@ -29,6 +29,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"fix_bridge/codec"
 	"go_gateway/protobuf"
@@ -133,6 +134,16 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 	// Optional fields
 	account := msg.Get(codec.TagAccount)
 	expireDate := msg.Get(codec.TagExpireDate)
+	if expireDate != "" {
+		date, err := time.Parse("20060102", expireDate)
+		if err != nil || len(expireDate) != 8 || date.Year() == 0 {
+			if tif == protobuf.TimeInForce_GTD {
+				return nil, fmt.Errorf("invalid ExpireDate %q: expected YYYYMMDD", expireDate)
+			}
+		} else {
+			expireDate = date.Format("2006-01-02")
+		}
+	}
 	sender := msg.Get(codec.TagSenderCompID)
 
 	order := &protobuf.NewOrderSingle{

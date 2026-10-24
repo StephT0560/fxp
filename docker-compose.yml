@@ -18,7 +18,11 @@ services:
     build: .
     command: ["fxp_core"]
     environment:
-      RUST_LOG: ${RUST_LOG:-info}
+      - RUST_LOG=${RUST_LOG:-info}
+      - FXP_SESSION_SCHEDULE
+      - FXP_EVENT_LOG
+    volumes:
+      - core_store:/data/core_store
     ports:
       - "${FXP_WS_PORT:-8081}:8081"   # gateway WebSocket
       - "${FXP_TCP_PORT:-8082}:8082"  # gateway TCP (FXP protobuf)
@@ -68,4 +72,5 @@ services:
       - fix_store:/data/fix_store
 
 volumes:
+  core_store:
   fix_store:

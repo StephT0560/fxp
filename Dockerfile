@@ -47,7 +47,7 @@ RUN bash scripts/gen_proto.sh \
 
 FROM debian:bookworm-slim AS runtime
 RUN useradd --system --uid 10001 --home-dir /data --create-home fxp \
-    && mkdir -p /data/fix_store && chown fxp:fxp /data/fix_store
+    && mkdir -p /data/fix_store /data/core_store && chown fxp:fxp /data/fix_store /data/core_store
 COPY --from=core-build /src/fxp_core/target/release/fxp_core /usr/local/bin/fxp_core
 COPY --from=go-build /out/go_gateway /usr/local/bin/go_gateway
 COPY --from=go-build /out/fix_bridge /usr/local/bin/fix_bridge

@@ -104,6 +104,52 @@ func execReport(id string) *protobuf.FXPMessage {
 	}}
 }
 
+func TestAuctionPayloadsIgnoredWithoutBreakingSession(t *testing.T) {
+	srv, cli := net.Pipe()
+	defer func() { _ = cli.Close() }()
+	h := &seqTestHandler{bridgeHandler: &bridgeHandler{bridgeCompID: "FXPBRIDGE"}}
+	h.onLogon = func() {
+		h.onFXPMessage(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_TradingSessionStatus{
+			TradingSessionStatus: &protobuf.TradingSessionStatus{Symbol: "AAPL", Phase: protobuf.TradingPhase_OPENING_CALL},
+		}})
+		h.onFXPMessage(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_AuctionInfo{
+			AuctionInfo: &protobuf.AuctionInfo{Symbol: "AAPL", IndicativePrice: 100, IndicativeVolume: 5},
+		}})
+		h.onFXPMessage(execReport("AFTER-AUCTION"))
+	}
+	sess := session.NewSession(srv, "FXPBRIDGE", h)
+	sess.Auth = session.NewCredentialAuth(map[string]string{"TESTFIRM01": "pw"})
+	h.sess = sess
+	go sess.Run()
+	_ = cli.SetDeadline(time.Now().Add(5 * time.Second))
+	go func() {
+		_, _ = cli.Write(codec.NewBuilder(codec.MsgTypeLogon, "TESTFIRM01", "FXPBRIDGE", 1).
+			SetInt(codec.TagEncryptMethod, 0).SetInt(codec.TagHeartBtInt, 30).Set(codec.TagPassword, "pw").Build())
+	}()
+	parser := codec.NewParser(cli)
+	for want, typ := range []string{codec.MsgTypeLogon, codec.MsgTypeExecutionReport, codec.MsgTypeHeartbeat} {
+		msg, err := parser.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if msg.MsgType() != typ || msg.GetInt(codec.TagMsgSeqNum) != want+1 {
+			t.Fatalf("after ignored payloads: 35=%s 34=%d, want 35=%s 34=%d", msg.MsgType(), msg.GetInt(codec.TagMsgSeqNum), typ, want+1)
+		}
+		if want == 1 {
+			if sess.State() != session.StateLoggedOn {
+				t.Fatal("auction payload broke the session")
+			}
+			go func() {
+				_, _ = cli.Write(codec.NewBuilder(codec.MsgTypeTestRequest, "TESTFIRM01", "FXPBRIDGE", 2).
+					Set(codec.TagTestReqID, "still-alive").Build())
+			}()
+		}
+		if want == 2 && msg.Get(codec.TagTestReqID) != "still-alive" {
+			t.Fatal("session did not respond to TestRequest after ignored payloads")
+		}
+	}
+}
+
 // LogonAck carries 34=1, the first ExecutionReport 34=2, and every outbound
 // message (including concurrently sent ones) is strictly monotonic and gap-free.
 func TestOutboundSeqSingleCounter(t *testing.T) {

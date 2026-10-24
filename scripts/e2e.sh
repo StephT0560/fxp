@@ -50,10 +50,10 @@ wait_for_port() {
     exit 1
 }
 
-(cd "$repo_root/fxp_core" && exec ./target/release/fxp_core) >"$log_dir/core.log" 2>&1 &
-pids+=($!); wait_for_port 8080
+(cd "$repo_root/fxp_core" && exec env -u FXP_EVENT_LOG ./target/release/fxp_core) >"$log_dir/core.log" 2>&1 &
+core_pid=$!; pids+=("$core_pid"); wait_for_port 8080
 (cd "$repo_root/go_gateway" && exec "$repo_root/bin/go_gateway") >"$log_dir/gateway.log" 2>&1 &
-pids+=($!); wait_for_port 8082
+gateway_pid=$!; pids+=("$gateway_pid"); wait_for_port 8082
 start_bridge() {
     (cd "$repo_root/fix_bridge" && exec "$repo_root/bin/fix_bridge") >>"$log_dir/bridge.log" 2>&1 &
     bridge_pid=$!
@@ -80,3 +80,22 @@ wait "$client_pid" || client_ok=$?
 cat "$log_dir/durable_before.log"
 [[ $client_ok -eq 0 ]]
 durable durable_after_restart | tee "$log_dir/durable_after.log"
+
+# Exercise core persistence directly: gateway orderClientMap is intentionally
+# not recovered. Never reuse an operator's FXP_EVENT_LOG for this test.
+kill "$bridge_pid" "$gateway_pid" "$core_pid"
+wait "$bridge_pid" "$gateway_pid" "$core_pid" 2>/dev/null || true
+event_log="$log_dir/core-restart-events.log"
+rm -f "$event_log"
+start_persistent_core() {
+    (cd "$repo_root/fxp_core" && exec env -u FXP_SESSION_SCHEDULE FXP_EVENT_LOG="$event_log" ./target/release/fxp_core) >>"$log_dir/core-persistence.log" 2>&1 &
+    core_pid=$!
+    pids+=("$core_pid")
+    wait_for_port 8080
+}
+start_persistent_core
+(cd "$repo_root/go_gateway" && go run ./test_clients/persistence_client seed)
+kill -9 "$core_pid"
+wait "$core_pid" 2>/dev/null || true
+start_persistent_core
+(cd "$repo_root/go_gateway" && go run ./test_clients/persistence_client verify)

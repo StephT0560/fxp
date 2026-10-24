@@ -70,6 +70,14 @@ func EncodeFXPMessage(payload proto.Message) ([]byte, error) {
 		return proto.Marshal(&protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_TradeCaptureReport{TradeCaptureReport: v},
 		})
+	case *protobuf.TradingSessionStatus:
+		return proto.Marshal(&protobuf.FXPMessage{
+			Payload: &protobuf.FXPMessage_TradingSessionStatus{TradingSessionStatus: v},
+		})
+	case *protobuf.AuctionInfo:
+		return proto.Marshal(&protobuf.FXPMessage{
+			Payload: &protobuf.FXPMessage_AuctionInfo{AuctionInfo: v},
+		})
 	default:
 		return nil, fmt.Errorf("unsupported FXP payload type: %T", payload)
 	}
@@ -168,6 +176,12 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 
 	case *protobuf.FXPMessage_MarketDataSnapshot:
 		ForwardMarketData(payload.MarketDataSnapshot)
+
+	case *protobuf.FXPMessage_TradingSessionStatus:
+		ForwardMarketData(payload.TradingSessionStatus)
+
+	case *protobuf.FXPMessage_AuctionInfo:
+		ForwardMarketData(payload.AuctionInfo)
 
 	case *protobuf.FXPMessage_TradeCaptureReport:
 		slog.Debug("processing TradeCaptureReport", "symbol", payload.TradeCaptureReport.Symbol)
@@ -282,6 +296,10 @@ func ForwardMarketData(update proto.Message) {
 	case *protobuf.MarketDataSnapshot:
 		symbol = msg.Symbol
 	case *protobuf.TradeCaptureReport:
+		symbol = msg.Symbol
+	case *protobuf.TradingSessionStatus:
+		symbol = msg.Symbol
+	case *protobuf.AuctionInfo:
 		symbol = msg.Symbol
 	default:
 		log.Println("❌ Unknown update type for forwarding")
