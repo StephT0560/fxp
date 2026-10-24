@@ -72,6 +72,9 @@ func TranslateFXPtoFIX(
 		// Already handled during connect — not forwarded to FIX client
 		return nil
 
+	case *protobuf.FXPMessage_TradingSessionStatus, *protobuf.FXPMessage_AuctionInfo:
+		return nil
+
 	default:
 		slog.Warn("unhandled FXP payload type", "type", fmt.Sprintf("%T", msg.Payload))
 		return nil

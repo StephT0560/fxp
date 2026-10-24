@@ -379,6 +379,12 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		slog.Debug("TradeCaptureReport received", "symbol", payload.TradeCaptureReport.Symbol)
 		ForwardMarketData(payload.TradeCaptureReport)
 
+	case *protobuf.FXPMessage_TradingSessionStatus:
+		ForwardMarketData(payload.TradingSessionStatus)
+
+	case *protobuf.FXPMessage_AuctionInfo:
+		ForwardMarketData(payload.AuctionInfo)
+
 	default:
 		log.Printf("⚠️ Pool reader: unhandled payload type: %T", msg.Payload)
 	}

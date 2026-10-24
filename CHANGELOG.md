@@ -7,6 +7,10 @@ cut a release yet, so everything is under Unreleased.
 ## [Unreleased]
 
 ### Added
+- Pure deterministic auction uncrossing/allocation and additive FXP v2.1:
+  trading phases, session status, indicative auction data and an execution
+  report auction flag. Session/auction frames follow symbol subscriptions;
+  the FIX bridge ignores them without consuming sequence numbers (#8).
 - FIX bridge required-field dictionary for NewOrderSingle, OrderCancelRequest,
   OrderCancelReplaceRequest and MarketDataRequest; a message missing one gets
   `Reject(35=3)` with `373=1`, `371=<tag>`, `372=<MsgType>` (#9).

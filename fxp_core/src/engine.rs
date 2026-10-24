@@ -10,6 +10,7 @@ use prost_types::Timestamp;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod auction;
 mod session;
 use session::expiry_instant;
 pub use session::{SessionSchedule, UtcTimeOfDay};
@@ -755,6 +756,7 @@ fn build_report<R: Clone>(
         reject_reason: ev.reject_reason.to_string(),
         side: state.map_or(0, |s| s.side),
         order_quantity: state.map_or(0, |s| s.order_qty as i32),
+        auction: false,
     }
 }
 

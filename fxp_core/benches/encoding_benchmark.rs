@@ -97,6 +97,7 @@ fn make_fxp_execution_report() -> fxp::FxpMessage {
     fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::ExecutionReport(
             fxp::ExecutionReport {
+                auction: false,
                 header: Some(fxp::FxpHeader {
                     protocol_version: fxp_core::PROTOCOL_VERSION.to_string(),
                     sequence_number: SEQ_NUM + 1,

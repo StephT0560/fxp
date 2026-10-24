@@ -9,7 +9,7 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.0
+// FXP Protocol — v2.1 (additive auction/session messages).
 // Version 2.0 shifts all enum numbers and is wire-breaking with v1.x.
 //
 // Design principles:
@@ -29,7 +29,7 @@ import "google/protobuf/timestamp.proto";
 // ============================================================
 
 message FXPHeader {
-  string protocol_version = 1; // e.g. "2.0"
+  string protocol_version = 1; // e.g. "2.1"
   uint64 sequence_number  = 2; // monotonically increasing per session
 }
 
@@ -139,6 +139,14 @@ enum ExecutionType {
   EXEC_PENDING_REPLACE       = 8; // replace pending confirmation
 }
 
+enum TradingPhase {
+  TRADING_PHASE_UNSPECIFIED = 0;
+  CLOSED                   = 1;
+  OPENING_CALL             = 2;
+  CONTINUOUS               = 3;
+  CLOSING_CALL             = 4;
+}
+
 // ============================================================
 // ORDER MESSAGES
 // ============================================================
@@ -240,6 +248,7 @@ message ExecutionReport {
   string                    reject_reason     = 16; // human-readable (on EXEC_REJECTED)
   OrderSide                 side              = 17; // side of the order
   int32                     order_quantity    = 18; // total order quantity (FIX OrderQty)
+  bool                      auction           = 19;
 
   // Field numbers 1000–1999 reserved for firm-specific extensions.
 }
@@ -294,6 +303,23 @@ message TradeCaptureReport {
   google.protobuf.Timestamp timestamp      = 8;
 }
 
+message TradingSessionStatus {
+  string                    symbol    = 1;
+  TradingPhase              phase     = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message AuctionInfo {
+  string                    symbol             = 1;
+  TradingPhase              phase              = 2;
+  int64                     indicative_price   = 3;
+  uint64                    indicative_volume  = 4;
+  uint64                    imbalance_quantity = 5; // unsigned magnitude
+  OrderSide                 imbalance_side     = 6; // UNSPECIFIED when balanced
+  int64                     reference_price    = 7;
+  google.protobuf.Timestamp timestamp          = 8;
+}
+
 // ============================================================
 // ERROR HANDLING
 // ============================================================
@@ -345,5 +371,7 @@ message FXPMessage {
     ErrorMessage                error_message          = 13;
     LogonAck                    logon_ack              = 14;
     OrderCancelReplaceRequest   order_cancel_replace   = 15;
+    TradingSessionStatus        trading_session_status = 16;
+    AuctionInfo                 auction_info           = 17;
   }
 }

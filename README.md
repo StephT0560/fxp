@@ -81,7 +81,7 @@ Resting orders are held in an in-memory book. `expire_date` is stored but not en
 
 ---
 
-## Proto Schema (v2.0)
+## Proto Schema (v2.1)
 
 Full institutional-grade message coverage:
 
@@ -93,10 +93,12 @@ ExecutionReport         — lifecycle reports with leaves_qty, avg_px, cum_qty
 MarketDataSnapshot      — full order book depth
 MarketDataIncrementalUpdate — level changes
 TradeCaptureReport      — trade print feed
+TradingSessionStatus    — trading phase by symbol
+AuctionInfo             — indicative auction price, volume and imbalance
 ErrorMessage            — structured error responses
 ```
 
-Version 2.0 shifts all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
 **TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
@@ -394,7 +396,7 @@ fxp/
 │   ├── benches/
 │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   └── proto/
-│       └── fxp.proto            Protocol schema v2.0
+│       └── fxp.proto            Protocol schema v2.1
 │
 ├── go_gateway/                  Go gateway
 │   ├── logging/                 slog setup (FXP_LOG_LEVEL), shared with fix_bridge
