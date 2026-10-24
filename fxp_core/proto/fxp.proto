@@ -254,9 +254,10 @@ message MarketOrderBookEntry {
 }
 
 message MarketOrderUpdate {
-  int32 update_type = 1; // 0 = NewOrder, 1 = ModifyOrder, 2 = CancelOrder
-  int64 price       = 2;
-  int32 quantity    = 3;
+  int32     update_type = 1; // 0 = NewOrder, 1 = ModifyOrder, 2 = CancelOrder
+  int64     price       = 2;
+  int32     quantity    = 3;
+  OrderSide side        = 4; // book side of the level (BUY = bid, SELL = offer)
 }
 
 message MarketDataSnapshot {

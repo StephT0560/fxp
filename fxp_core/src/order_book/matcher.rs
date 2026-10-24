@@ -93,6 +93,11 @@ impl OrderBook {
                             update_type: MarketUpdateType::ModifyOrder,
                             price: trade_price,
                             quantity: trade_qty,
+                            side: if bid_seq < ask_seq {
+                                OrderSide::Buy
+                            } else {
+                                OrderSide::Sell
+                            },
                         }],
                     });
 
@@ -339,6 +344,10 @@ impl OrderBook {
                     update_type: MarketUpdateType::ModifyOrder,
                     price,
                     quantity: trade_qty,
+                    side: match aggressor.side {
+                        OrderSide::Buy => OrderSide::Sell,
+                        OrderSide::Sell => OrderSide::Buy,
+                    },
                 }],
             });
 

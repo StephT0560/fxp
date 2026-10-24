@@ -168,6 +168,7 @@ fn make_fxp_incremental() -> fxp::FxpMessage {
                     update_type: 1,
                     price: PRICE_FIXED,
                     quantity: 200,
+                    side: fxp::OrderSide::Buy as i32,
                 }],
                 timestamp: None,
             },

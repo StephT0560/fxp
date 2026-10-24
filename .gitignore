@@ -33,3 +33,5 @@ out/
 
 # Logs and temporary
 *.log
+# Python
+__pycache__/

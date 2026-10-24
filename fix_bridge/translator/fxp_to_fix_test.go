@@ -4,6 +4,7 @@ package translator
 
 import (
 	"bytes"
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -76,7 +77,7 @@ func TestUnspecifiedExecutionReportEnumsAreDropped(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_ExecutionReport{ExecutionReport: tc.rep}}
-			if got := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 2); got != nil {
+			if got := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 2, nil); got != nil {
 				t.Fatalf("unspecified %s produced FIX output: %q", tc.name, got)
 			}
 		})
@@ -98,5 +99,126 @@ func TestFormatFixedPoint(t *testing.T) {
 		if got := formatFixedPoint(tc.cents); got != tc.want {
 			t.Errorf("formatFixedPoint(%d) = %q, want %q", tc.cents, got, tc.want)
 		}
+	}
+}
+
+func countTags(m *codec.Message) map[int]int {
+	n := map[int]int{}
+	for _, f := range m.Tags {
+		n[f.Tag]++
+	}
+	return n
+}
+
+func mdReqIDs(ids map[string]string) MDReqIDLookup {
+	return func(symbol string) string { return ids[symbol] }
+}
+
+func TestMarketDataSnapshotRepeatingGroup(t *testing.T) {
+	snap := &protobuf.MarketDataSnapshot{
+		Symbol: "AAPL",
+		BidLevels: []*protobuf.MarketOrderBookEntry{
+			{Price: 10000, Size: 5}, {Price: 9990, Size: 7},
+		},
+		AskLevels: []*protobuf.MarketOrderBookEntry{
+			{Price: 10010, Size: 3}, {Price: 10020, Size: 9}, {Price: 10030, Size: 1},
+		},
+	}
+	msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: snap}}
+	raw := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 3, mdReqIDs(map[string]string{"AAPL": "REQ1"}))
+	m := parseER(t, raw)
+	const n = 5
+	if m.MsgType() != codec.MsgTypeMarketDataSnapshot || m.Get(codec.TagNoMDEntries) != strconv.Itoa(n) {
+		t.Fatalf("35=%s 268=%s, want W and %d", m.MsgType(), m.Get(codec.TagNoMDEntries), n)
+	}
+	if m.Get(codec.TagMDReqID) != "REQ1" || m.Get(codec.TagSymbol) != "AAPL" {
+		t.Fatalf("262=%q 55=%q, want REQ1 and AAPL", m.Get(codec.TagMDReqID), m.Get(codec.TagSymbol))
+	}
+	counts := countTags(m)
+	for _, tag := range []int{codec.TagMDEntryType, codec.TagMDEntryPx, codec.TagMDEntrySize} {
+		if counts[tag] != n {
+			t.Errorf("tag %d occurs %d times, want %d", tag, counts[tag], n)
+		}
+	}
+	var got []string
+	for _, f := range m.Tags {
+		if f.Tag == codec.TagMDEntryType || f.Tag == codec.TagMDEntryPx || f.Tag == codec.TagMDEntrySize {
+			got = append(got, f.Value)
+		}
+	}
+	want := []string{"0", "100.00", "5", "0", "99.90", "7", "1", "100.10", "3", "1", "100.20", "9", "1", "100.30", "1"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("group entries = %v, want %v", got, want)
+	}
+}
+
+func TestMarketDataIncrementalRepeatingGroup(t *testing.T) {
+	inc := &protobuf.MarketDataIncrementalUpdate{
+		Symbol: "AAPL",
+		Changes: []*protobuf.MarketOrderUpdate{
+			{UpdateType: 0, Price: 10000, Quantity: 5, Side: protobuf.OrderSide_BUY},
+			{UpdateType: 1, Price: 10100, Quantity: 7, Side: protobuf.OrderSide_SELL},
+			{UpdateType: 2, Price: 10200, Quantity: 9, Side: protobuf.OrderSide_SELL},
+		},
+	}
+	msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataIncremental{MarketDataIncremental: inc}}
+	raw := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 4, mdReqIDs(map[string]string{"AAPL": "REQ2"}))
+	m := parseER(t, raw)
+	const n = 3
+	if m.MsgType() != codec.MsgTypeMarketDataIncremental || m.Get(codec.TagNoMDEntries) != strconv.Itoa(n) {
+		t.Fatalf("35=%s 268=%s, want X and %d", m.MsgType(), m.Get(codec.TagNoMDEntries), n)
+	}
+	if m.Get(codec.TagMDReqID) != "REQ2" {
+		t.Fatalf("262=%q, want REQ2", m.Get(codec.TagMDReqID))
+	}
+	counts := countTags(m)
+	for _, tag := range []int{codec.TagMDUpdateAction, codec.TagMDEntryType, codec.TagSymbol, codec.TagMDEntryPx, codec.TagMDEntrySize} {
+		if counts[tag] != n {
+			t.Errorf("tag %d occurs %d times, want %d", tag, counts[tag], n)
+		}
+	}
+	var got []string
+	inGroup := false
+	for _, f := range m.Tags {
+		if f.Tag == codec.TagNoMDEntries {
+			inGroup = true
+			continue
+		}
+		if inGroup && f.Tag != codec.TagTransactTime && f.Tag != codec.TagCheckSum {
+			got = append(got, fmt.Sprintf("%d=%s", f.Tag, f.Value))
+		}
+	}
+	want := []string{
+		"279=0", "269=0", "55=AAPL", "270=100.00", "271=5",
+		"279=1", "269=1", "55=AAPL", "270=101.00", "271=7",
+		"279=2", "269=1", "55=AAPL", "270=102.00", "271=9",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("group = %v, want %v", got, want)
+	}
+}
+
+func TestMarketDataWithoutSubscriptionIsDropped(t *testing.T) {
+	inc := &protobuf.MarketDataIncrementalUpdate{Symbol: "AAPL", Changes: []*protobuf.MarketOrderUpdate{
+		{Price: 10000, Quantity: 5, Side: protobuf.OrderSide_BUY},
+	}}
+	msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataIncremental{MarketDataIncremental: inc}}
+	if got := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 4, mdReqIDs(nil)); got != nil {
+		t.Fatalf("unsolicited market data produced FIX output: %q", got)
+	}
+	if got := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 4, nil); got != nil {
+		t.Fatalf("nil lookup produced FIX output: %q", got)
+	}
+}
+
+func TestMarketDataIncrementalSkipsUnspecifiedSide(t *testing.T) {
+	inc := &protobuf.MarketDataIncrementalUpdate{Symbol: "AAPL", Changes: []*protobuf.MarketOrderUpdate{
+		{Price: 10000, Quantity: 5, Side: protobuf.OrderSide_BUY},
+		{Price: 10100, Quantity: 7},
+	}}
+	msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataIncremental{MarketDataIncremental: inc}}
+	m := parseER(t, TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 4, mdReqIDs(map[string]string{"AAPL": "R"})))
+	if m.Get(codec.TagNoMDEntries) != "1" || countTags(m)[codec.TagMDEntryPx] != 1 {
+		t.Fatalf("268=%s with %d entries, want 1", m.Get(codec.TagNoMDEntries), countTags(m)[codec.TagMDEntryPx])
 	}
 }

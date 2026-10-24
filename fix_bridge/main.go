@@ -174,6 +174,7 @@ type bridgeHandler struct {
 	sess         *session.Session
 	gwClient     *gateway.Client
 	pending      pendingRequests
+	md           mdSubscriptions
 }
 
 // OnLogon is called by the session after Logon is accepted.
@@ -233,6 +234,10 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		return
 	}
 
+	if msg.MsgType() == codec.MsgTypeMarketDataRequest && !h.md.track(msg) {
+		return // unsubscribe: nothing to forward upstream
+	}
+
 	fxpMsg, err := translator.TranslateFIXtoFXP(msg)
 	if err != nil {
 		log.Printf("[%s] translation error for %s: %v", sess.TargetCompID, msg.MsgType(), err)
@@ -267,7 +272,7 @@ func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
 	}
 	// Sequence numbers come from the session; untranslated types (nil) consume none.
 	h.sess.SendWithSeq(func(seq int) []byte {
-		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq)
+		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq, h.md.reqID)
 	})
 }
 

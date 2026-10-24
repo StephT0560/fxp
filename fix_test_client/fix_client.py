@@ -78,6 +78,11 @@ def parse_message(data):
                 fields[int(tag)] = val
             except ValueError:
                 pass
+    # Ordered (tag, value) pairs: repeating groups repeat tags, which the dict collapses.
+    fields['tags'] = [
+        (int(t), v) for t, _, v in (p.partition('=') for p in data.decode(errors='replace').split(SOH))
+        if t.isdigit()
+    ]
     return fields
 
 def read_message(sock):
@@ -155,6 +160,7 @@ class FIXSession:
         self.seq     = 1
         self.sock    = None
         self.inbox   = queue.Queue()  # inbound ExecutionReports
+        self.md_inbox = queue.Queue() # inbound MarketData W/X
         self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
@@ -225,6 +231,18 @@ class FIXSession:
                 continue
         return None
 
+    def wait_for_md(self, msg_type, match=lambda m: True, timeout=4.0):
+        """Wait for a MarketData message of msg_type satisfying match(msg)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                msg = self.md_inbox.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if msg.get(35) == msg_type and match(msg):
+                return msg
+        return None
+
     def drain(self, seconds=0.5):
         """Drain any pending messages from the inbox."""
         time.sleep(seconds)
@@ -259,6 +277,8 @@ class FIXSession:
                 # Route to inbox for test assertions
                 if msg_type in ('8', '9'):
                     self.inbox.put(msg)
+                elif msg_type in ('W', 'X'):
+                    self.md_inbox.put(msg)
 
             except socket.timeout:
                 continue
@@ -676,6 +696,62 @@ def test_outbound_sequence(s, r):
     assert_gap_free(r, 'fresh session', seqs)
 
 
+def md_group(msg, tags):
+    """Entries of the NoMDEntries(268) group as tuples of the given tags."""
+    group = [(t, v) for t, v in msg['tags'] if t in tags]
+    width = len(tags)
+    return [tuple(v for _, v in group[i:i + width]) for i in range(0, len(group), width)]
+
+
+def test_market_data(s, r):
+    """V subscribe → W carries every book level, X carries 262/269 per entry."""
+    print('\n─── test_market_data ────────────────────────────────────────')
+    sym    = 'MDSYM'
+    req_id = order_id('MDR')
+    sess = FIXSession(s.host, s.port, 'MDCHECK01', s.target, verbose=s.verbose)
+    sess.connect(); sess.logon()
+    try:
+        book = [('1', 10, 10.00), ('1', 20, 9.90), ('2', 30, 10.10), ('2', 40, 10.20)]
+        for side, qty, px in book:
+            oid = order_id('MDB')
+            sess.new_order(oid, sym, side, qty, '2', price=px, description=f'{side} {qty} {sym} @{px:.2f}')
+            if not sess.wait_for(order_id=oid, exec_type='0', timeout=3.0):
+                print(f'  {FAIL} book order {oid} not acknowledged'); r.failed += 1; return
+
+        sess.send('V', [(262, req_id), (263, '1'), (264, '0'), (267, '2'), (269, '0'), (269, '1'),
+                        (146, '1'), (55, sym)], f'MarketDataRequest {req_id}')
+        snap = sess.wait_for_md('W', lambda m: m.get(55) == sym)
+        want = [('0', '10.00', '10'), ('0', '9.90', '20'), ('1', '10.10', '30'), ('1', '10.20', '40')]
+        got = md_group(snap, (269, 270, 271)) if snap else None
+        counts = {t: sum(1 for tag, _ in snap['tags'] if tag == t) for t in (269, 270, 271)} if snap else {}
+        if snap and snap.get(262) == req_id and snap.get(268) == '4' and got == want \
+                and all(n == 4 for n in counts.values()):
+            print(f'  {PASS} W 262={req_id} 268=4 with all 4 levels')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} W snapshot incomplete: {snap and snap["tags"]}')
+            r.failed += 1
+
+        aggr = order_id('MDA')
+        sess.new_order(aggr, sym, '1', 30, '2', price=10.10, description=f'BUY 30 {sym} @10.10 (lifts offer)')
+        # The fill updates the resting offer level: 279=1 (Change) with 269=1 (Offer).
+        fill = ('1', '1', sym, '10.10', '30')
+        inc = sess.wait_for_md('X', lambda m: fill in md_group(m, (279, 269, 55, 270, 271)))
+        entries = md_group(inc, (279, 269, 55, 270, 271)) if inc else None
+        if inc and inc.get(262) == req_id and inc.get(268) == str(len(entries)) \
+                and fill in entries:
+            print(f'  {PASS} X 262={req_id} 268={len(entries)} trade on offer side (269=1)')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} X incremental missing 262/269 group: {inc and inc["tags"]}')
+            r.failed += 1
+
+        sess.send('V', [(262, req_id), (263, '2'), (146, '1'), (55, sym)], f'Unsubscribe {req_id}')
+    finally:
+        sess.logout()
+    assert_gap_free(r, 'market data session', sess.out_seqs)
+
+
 # ── Test registry ─────────────────────────────────────────────────────────────
 
 TESTS = {
@@ -690,6 +766,7 @@ TESTS = {
     'cancel_filled_order': test_cancel_filled_order,
     'cross_session_cancel': test_cross_session_cancel,
     'outbound_sequence':   test_outbound_sequence,
+    'market_data':         test_market_data,
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────

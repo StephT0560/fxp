@@ -28,6 +28,7 @@ package translator
 import (
 	"fmt"
 	"log"
+	"strconv"
 
 	"fix_bridge/codec"
 	"go_gateway/protobuf"
@@ -40,20 +41,32 @@ import (
 // seqNum is the next outbound FIX sequence number (managed by the session).
 // Returns nil if the message type does not produce a FIX output
 // (e.g. internal gateway messages).
+//
+// mdReqID returns the MDReqID(262) of the client's active subscription for a
+// symbol. Market data without a subscription (or with a nil lookup) is dropped.
 func TranslateFXPtoFIX(
 	msg *protobuf.FXPMessage,
 	senderCompID, targetCompID string,
 	seqNum int,
+	mdReqID MDReqIDLookup,
 ) []byte {
 	switch payload := msg.Payload.(type) {
 	case *protobuf.FXPMessage_ExecutionReport:
 		return translateExecutionReport(payload.ExecutionReport, senderCompID, targetCompID, seqNum)
 
 	case *protobuf.FXPMessage_MarketDataSnapshot:
-		return translateMarketDataSnapshot(payload.MarketDataSnapshot, senderCompID, targetCompID, seqNum)
+		reqID := lookupMDReqID(mdReqID, payload.MarketDataSnapshot.Symbol)
+		if reqID == "" {
+			return nil
+		}
+		return translateMarketDataSnapshot(payload.MarketDataSnapshot, senderCompID, targetCompID, seqNum, reqID)
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
-		return translateMarketDataIncremental(payload.MarketDataIncremental, senderCompID, targetCompID, seqNum)
+		reqID := lookupMDReqID(mdReqID, payload.MarketDataIncremental.Symbol)
+		if reqID == "" {
+			return nil
+		}
+		return translateMarketDataIncremental(payload.MarketDataIncremental, senderCompID, targetCompID, seqNum, reqID)
 
 	case *protobuf.FXPMessage_LogonAck:
 		// Already handled during connect — not forwarded to FIX client
@@ -63,6 +76,16 @@ func TranslateFXPtoFIX(
 		log.Printf("[translator] unhandled FXP payload type: %T", msg.Payload)
 		return nil
 	}
+}
+
+// MDReqIDLookup returns the MDReqID(262) subscribed for symbol, or "" if none.
+type MDReqIDLookup func(symbol string) string
+
+func lookupMDReqID(lookup MDReqIDLookup, symbol string) string {
+	if lookup == nil {
+		return ""
+	}
+	return lookup(symbol)
 }
 
 // ── ExecutionReport ───────────────────────────────────────────────────────────
@@ -151,26 +174,26 @@ func translateMarketDataSnapshot(
 	snap *protobuf.MarketDataSnapshot,
 	senderCompID, targetCompID string,
 	seqNum int,
+	mdReqID string,
 ) []byte {
 	b := codec.NewBuilder(codec.MsgTypeMarketDataSnapshot, senderCompID, targetCompID, seqNum)
+	b.Set(codec.TagMDReqID, mdReqID)
 	b.Set(codec.TagSymbol, snap.Symbol)
 
 	// Total entry count = bids + asks
 	numEntries := len(snap.BidLevels) + len(snap.AskLevels)
 	b.SetInt(codec.TagNoMDEntries, numEntries)
 
-	// Bid levels (MDEntryType=0)
+	// Repeating group entries use Append so every level is emitted.
 	for _, bid := range snap.BidLevels {
-		b.Set(codec.TagMDEntryType, "0") // Bid
-		b.Set(codec.TagMDEntryPx, formatFixedPoint(bid.Price))
-		b.SetInt(codec.TagMDEntrySize, int(bid.Size))
+		b.Append(codec.TagMDEntryType, "0") // Bid
+		b.Append(codec.TagMDEntryPx, formatFixedPoint(bid.Price))
+		b.Append(codec.TagMDEntrySize, strconv.Itoa(int(bid.Size)))
 	}
-
-	// Ask levels (MDEntryType=1)
 	for _, ask := range snap.AskLevels {
-		b.Set(codec.TagMDEntryType, "1") // Offer
-		b.Set(codec.TagMDEntryPx, formatFixedPoint(ask.Price))
-		b.SetInt(codec.TagMDEntrySize, int(ask.Size))
+		b.Append(codec.TagMDEntryType, "1") // Offer
+		b.Append(codec.TagMDEntryPx, formatFixedPoint(ask.Price))
+		b.Append(codec.TagMDEntrySize, strconv.Itoa(int(ask.Size)))
 	}
 
 	if snap.Timestamp != nil {
@@ -186,21 +209,36 @@ func translateMarketDataIncremental(
 	inc *protobuf.MarketDataIncrementalUpdate,
 	senderCompID, targetCompID string,
 	seqNum int,
+	mdReqID string,
 ) []byte {
 	b := codec.NewBuilder(codec.MsgTypeMarketDataIncremental, senderCompID, targetCompID, seqNum)
+	b.Set(codec.TagMDReqID, mdReqID)
 
-	b.SetInt(codec.TagNoMDEntries, len(inc.Changes))
-
+	type entry struct {
+		change    *protobuf.MarketOrderUpdate
+		entryType string
+	}
+	entries := make([]entry, 0, len(inc.Changes))
 	for _, change := range inc.Changes {
-		// MDUpdateAction: 0=New, 1=Change, 2=Delete
-		updateAction := mapMDUpdateAction(change.UpdateType)
-		b.Set(codec.TagMDUpdateAction, updateAction)
+		entryType, ok := mapMDEntryType(change.Side)
+		if !ok {
+			log.Printf("[translator] dropping %s MD entry with side %v", inc.Symbol, change.Side)
+			continue
+		}
+		entries = append(entries, entry{change, entryType})
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	b.SetInt(codec.TagNoMDEntries, len(entries))
 
-		// MDEntryType — price level changes don't carry side in FXP incremental,
-		// so we emit without MDEntryType (or caller can set it if available)
-		b.Set(codec.TagSymbol, inc.Symbol)
-		b.Set(codec.TagMDEntryPx, formatFixedPoint(change.Price))
-		b.SetInt(codec.TagMDEntrySize, int(change.Quantity))
+	// Repeating group entries use Append so every change is emitted.
+	for _, e := range entries {
+		b.Append(codec.TagMDUpdateAction, mapMDUpdateAction(e.change.UpdateType))
+		b.Append(codec.TagMDEntryType, e.entryType)
+		b.Append(codec.TagSymbol, inc.Symbol)
+		b.Append(codec.TagMDEntryPx, formatFixedPoint(e.change.Price))
+		b.Append(codec.TagMDEntrySize, strconv.Itoa(int(e.change.Quantity)))
 	}
 
 	if inc.Timestamp != nil {
@@ -208,6 +246,18 @@ func translateMarketDataIncremental(
 	}
 
 	return b.Build()
+}
+
+// mapMDEntryType maps the book side of a level to MDEntryType(269).
+func mapMDEntryType(side protobuf.OrderSide) (string, bool) {
+	switch side {
+	case protobuf.OrderSide_BUY:
+		return "0", true // Bid
+	case protobuf.OrderSide_SELL:
+		return "1", true // Offer
+	default:
+		return "", false
+	}
 }
 
 // ── Mapping helpers ───────────────────────────────────────────────────────────

@@ -61,6 +61,10 @@ func EncodeFXPMessage(payload proto.Message) ([]byte, error) {
 		return proto.Marshal(&protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_MarketDataIncremental{MarketDataIncremental: v},
 		})
+	case *protobuf.MarketDataSnapshot:
+		return proto.Marshal(&protobuf.FXPMessage{
+			Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: v},
+		})
 	case *protobuf.TradeCaptureReport:
 		return proto.Marshal(&protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_TradeCaptureReport{TradeCaptureReport: v},
@@ -161,6 +165,9 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		log.Println("➡️ Processing MarketDataIncrementalUpdate")
 		log.Printf("📡 MarketDataIncrementalUpdate received for symbol: %s", payload.MarketDataIncremental.Symbol)
 		ForwardMarketData(payload.MarketDataIncremental)
+
+	case *protobuf.FXPMessage_MarketDataSnapshot:
+		ForwardMarketData(payload.MarketDataSnapshot)
 
 	case *protobuf.FXPMessage_TradeCaptureReport:
 		log.Println("➡️ Processing TradeCaptureReport")
@@ -272,6 +279,8 @@ func ForwardMarketData(update proto.Message) {
 	var symbol string
 	switch msg := update.(type) {
 	case *protobuf.MarketDataIncrementalUpdate:
+		symbol = msg.Symbol
+	case *protobuf.MarketDataSnapshot:
 		symbol = msg.Symbol
 	case *protobuf.TradeCaptureReport:
 		symbol = msg.Symbol

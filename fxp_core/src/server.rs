@@ -185,6 +185,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
     while let Some(msg) = rx.recv().await {
         match msg {
             SymbolMsg::Subscribe(sub) => {
+                let _ = sub.tx.send(snapshot_frame(&book)).await;
                 subscribers.push(sub.tx);
                 println!("✅ Client subscribed to {}", symbol);
             }
@@ -233,6 +234,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                             },
                                             price: c.price,
                                             quantity: c.quantity as i32,
+                                            side: md_side(&c.side),
                                         })
                                         .collect(),
                                 },
@@ -387,6 +389,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                             },
                                             price: c.price,
                                             quantity: c.quantity as i32,
+                                            side: md_side(&c.side),
                                         })
                                         .collect(),
                                 },
@@ -415,6 +418,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                                 },
                                                 price: c.price,
                                                 quantity: c.quantity as i32,
+                                                side: md_side(&c.side),
                                             })
                                             .collect(),
                                     },
@@ -655,6 +659,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                                         },
                                                         price: c.price,
                                                         quantity: c.quantity as i32,
+                                                        side: md_side(&c.side),
                                                     })
                                                     .collect(),
                                             },
@@ -728,6 +733,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                         },
                                         price: c.price,
                                         quantity: c.quantity as i32,
+                                        side: md_side(&c.side),
                                     })
                                     .collect(),
                             },
@@ -758,6 +764,7 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                                         },
                                         price: c.price,
                                         quantity: c.quantity as i32,
+                                        side: md_side(&c.side),
                                     })
                                     .collect(),
                             },
@@ -986,6 +993,44 @@ fn frame_message(msg: &fxp::FxpMessage) -> Vec<u8> {
     let mut framed = (encoded.len() as u32).to_be_bytes().to_vec();
     framed.extend_from_slice(&encoded);
     framed
+}
+
+fn md_side(side: &OrderSide) -> i32 {
+    match side {
+        OrderSide::Buy => fxp::OrderSide::Buy as i32,
+        OrderSide::Sell => fxp::OrderSide::Sell as i32,
+    }
+}
+
+/// Full-depth snapshot: bids best (highest) first, asks best (lowest) first.
+fn snapshot_frame(book: &OrderBook) -> Vec<u8> {
+    let snap = book.get_market_snapshot();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let level = |side: OrderSide| {
+        move |&(price, size): &(i64, u32)| fxp::MarketOrderBookEntry {
+            price,
+            size: size as i32,
+            side: md_side(&side),
+        }
+    };
+    frame_message(&fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::MarketDataSnapshot(
+            fxp::MarketDataSnapshot {
+                header: Some(fxp::FxpHeader {
+                    protocol_version: crate::PROTOCOL_VERSION.to_string(),
+                    sequence_number: 1,
+                }),
+                symbol: snap.symbol.clone(),
+                bid_levels: snap.bids.iter().rev().map(level(OrderSide::Buy)).collect(),
+                ask_levels: snap.asks.iter().map(level(OrderSide::Sell)).collect(),
+                timestamp: Some(Timestamp {
+                    seconds: now.as_secs() as i64,
+                    nanos: now.subsec_nanos() as i32,
+                }),
+                ..Default::default()
+            },
+        )),
+    })
 }
 
 // ── TCP connection handler ────────────────────────────────────────────────────
@@ -1671,5 +1716,47 @@ mod report_tests {
         assert_eq!(seen[1], ACCEPT_BACKOFF_MIN * 2);
         assert!(seen.windows(2).all(|w| w[1] >= w[0]));
         assert_eq!(*seen.last().unwrap(), ACCEPT_BACKOFF_MAX);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_frame_carries_every_level_best_first() {
+        let mut book = OrderBook::new("SNAP", Arc::new(MarketDataBroadcaster::new()));
+        for (id, px, qty, side) in [
+            ("b1", 990, 20, OrderSide::Buy),
+            ("b2", 1000, 10, OrderSide::Buy),
+            ("a1", 1020, 40, OrderSide::Sell),
+            ("a2", 1010, 30, OrderSide::Sell),
+        ] {
+            book.add_order(Order::simple(
+                id.into(),
+                "T".into(),
+                "SNAP".into(),
+                px,
+                qty,
+                side,
+                OrderType::Limit,
+                TimeInForce::GTC,
+                0,
+            ));
+        }
+        let frame = snapshot_frame(&book);
+        let Some(fxp::fxp_message::Payload::MarketDataSnapshot(snap)) =
+            fxp::FxpMessage::decode(&frame[4..]).unwrap().payload
+        else {
+            panic!("not a snapshot");
+        };
+        let lv = |v: &[fxp::MarketOrderBookEntry]| {
+            v.iter()
+                .map(|e| (e.price, e.size, e.side))
+                .collect::<Vec<_>>()
+        };
+        let (b, s) = (fxp::OrderSide::Buy as i32, fxp::OrderSide::Sell as i32);
+        assert_eq!(lv(&snap.bid_levels), vec![(1000, 10, b), (990, 20, b)]);
+        assert_eq!(lv(&snap.ask_levels), vec![(1010, 30, s), (1020, 40, s)]);
     }
 }

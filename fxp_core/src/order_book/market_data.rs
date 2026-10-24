@@ -1,3 +1,4 @@
+use crate::order_book::order::OrderSide;
 // SPDX-License-Identifier: MIT
 
 #[derive(Debug)]
@@ -25,4 +26,6 @@ pub struct MarketOrderUpdate {
     pub update_type: MarketUpdateType,
     pub price: i64,
     pub quantity: u32,
+    /// Book side of the affected level (Buy = bid, Sell = offer).
+    pub side: OrderSide,
 }

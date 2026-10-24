@@ -306,6 +306,10 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		log.Printf("📡 MarketDataIncrementalUpdate for symbol: %s", payload.MarketDataIncremental.Symbol)
 		ForwardMarketData(payload.MarketDataIncremental)
 
+	case *protobuf.FXPMessage_MarketDataSnapshot:
+		log.Printf("📡 MarketDataSnapshot for symbol: %s", payload.MarketDataSnapshot.Symbol)
+		ForwardMarketData(payload.MarketDataSnapshot)
+
 	case *protobuf.FXPMessage_TradeCaptureReport:
 		log.Printf("📡 TradeCaptureReport for symbol: %s", payload.TradeCaptureReport.Symbol)
 		ForwardMarketData(payload.TradeCaptureReport)

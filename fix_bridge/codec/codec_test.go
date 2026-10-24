@@ -377,3 +377,26 @@ func mustAtoi(t *testing.T, s string) int {
 	}
 	return n
 }
+
+func TestRepeatingGroupRoundTrip(t *testing.T) {
+	b := NewBuilder(MsgTypeMarketDataIncremental, "FXPBRIDGE", "CLIENT", 7)
+	b.Set(TagMDReqID, "REQ")
+	b.SetInt(TagNoMDEntries, 3)
+	for i := 0; i < 3; i++ {
+		b.Append(TagMDUpdateAction, "0")
+		b.Append(TagMDEntryPx, strconv.Itoa(100+i))
+	}
+	m, err := NewParser(bytes.NewReader(b.Build())).ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var px []string
+	for _, f := range m.Tags {
+		if f.Tag == TagMDEntryPx {
+			px = append(px, f.Value)
+		}
+	}
+	if strings.Join(px, ",") != "100,101,102" || m.Get(TagNoMDEntries) != "3" {
+		t.Fatalf("270 values %v, 268=%s; want 100,101,102 and 3", px, m.Get(TagNoMDEntries))
+	}
+}

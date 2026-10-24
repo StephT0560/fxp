@@ -83,7 +83,12 @@ impl OrderBook {
             .insert(order.order_id.clone(), self.next_arrival);
 
         // ✅ Return market update when order is added
-        self.generate_incremental_update(MarketUpdateType::NewOrder, order.price, order.quantity)
+        self.generate_incremental_update(
+            MarketUpdateType::NewOrder,
+            order.price,
+            order.quantity,
+            order.side,
+        )
     }
 
     /// ✅ Notify clients when canceling an order
@@ -111,6 +116,7 @@ impl OrderBook {
                 MarketUpdateType::CancelOrder,
                 order.price,
                 order.quantity,
+                order.side,
             ));
         }
         None
@@ -216,6 +222,7 @@ impl OrderBook {
         update_type: MarketUpdateType,
         price: i64,
         quantity: u32,
+        side: OrderSide,
     ) -> MarketDataIncrementalUpdate {
         MarketDataIncrementalUpdate {
             symbol: self.symbol.clone(),
@@ -223,6 +230,7 @@ impl OrderBook {
                 update_type,
                 price,
                 quantity,
+                side,
             }],
         }
     }
