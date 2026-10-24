@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"go_gateway/protobuf"
+	"go_gateway/test_clients/devjwt"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -47,7 +48,7 @@ func main() {
 	signal.Notify(interrupt, os.Interrupt)
 
 	// ── Step 1: Logon ─────────────────────────────────────────────────────────
-	token := generateDevJWT(jwtSecret, traderID)
+	token := devjwt.Generate(jwtSecret, traderID)
 	log.Printf("🔑 Generated JWT for %s (session: %s)", traderID, sessionID)
 
 	logon := &protobuf.FXPMessage{

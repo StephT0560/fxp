@@ -1,4 +1,5 @@
-package main
+// Package devjwt mints HS256 JWTs for the local test clients.
+package devjwt
 
 import (
 	"crypto/hmac"
@@ -9,9 +10,9 @@ import (
 	"time"
 )
 
-// generateDevJWT creates a signed HS256 JWT for local dev/testing.
+// Generate creates a signed HS256 JWT for local dev/testing.
 // In production the client receives a token from your identity provider.
-func generateDevJWT(secret, traderID string) string {
+func Generate(secret, traderID string) string {
 	header := base64.RawURLEncoding.EncodeToString(
 		mustJSON(map[string]string{"alg": "HS256", "typ": "JWT"}),
 	)
