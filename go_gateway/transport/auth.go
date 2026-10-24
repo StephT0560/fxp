@@ -132,20 +132,20 @@ func validateJWT(token string) (*jwtClaims, error) {
 
 // ── Logon handling ────────────────────────────────────────────────────────────
 
-// HandleLogon validates the Logon message and sends a LogonAck.
-// Returns (traderID, nil) on success, ("", error) on failure.
+// HandleLogon validates the Logon token and registers a session under a
+// server-generated id; the client-supplied Logon.session_id is not trusted.
 // The caller is responsible for closing the connection on failure.
-func HandleLogon(logon *protobuf.Logon) (traderID string, err error) {
+func HandleLogon(logon *protobuf.Logon) (traderID, sessionID string, err error) {
 	claims, err := validateJWT(logon.Token)
 	if err != nil {
-		return "", fmt.Errorf("token validation failed: %w", err)
+		return "", "", fmt.Errorf("token validation failed: %w", err)
 	}
 
-	// Register the session
-	sessionStore.Store(logon.SessionId, claims.Sub)
-	log.Printf("✅ Logon accepted: session=%s trader=%s", logon.SessionId, claims.Sub)
+	sessionID = newSessionID()
+	sessionStore.Store(sessionID, claims.Sub)
+	log.Printf("✅ Logon accepted: session=%s trader=%s", sessionID, claims.Sub)
 
-	return claims.Sub, nil
+	return claims.Sub, sessionID, nil
 }
 
 // ── Wire helpers (shared with tcp_server / ws_server) ────────────────────────
@@ -230,18 +230,21 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 		// Logon is always allowed — it's how you authenticate
 		logon := payload.Logon
 
-		traderID, err := HandleLogon(logon)
+		traderID, newID, err := HandleLogon(logon)
 		if err != nil {
-			log.Printf("❌ Logon rejected for session %s: %v", logon.SessionId, err)
+			log.Printf("❌ Logon rejected: %v", err)
 			sendLogonAck(conn, false, err.Error())
 			closeConn(conn)
 			return
 		}
 
-		// Store the session ID on this connection's context
-		*sessionID = logon.SessionId
+		// A repeated Logon replaces this connection's previous session.
+		if *sessionID != "" {
+			invalidateSession(*sessionID)
+		}
+		*sessionID = newID
 		sendLogonAck(conn, true, "")
-		log.Printf("🔓 Session %s authenticated as trader %s", logon.SessionId, traderID)
+		log.Printf("🔓 Session %s authenticated as trader %s", newID, traderID)
 
 	case *protobuf.FXPMessage_Logout:
 		// Logout is allowed whether authenticated or not

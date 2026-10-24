@@ -31,6 +31,8 @@ const (
 	MsgTypeTestRequest = "1"
 	MsgTypeResendRequest = "2"
 	MsgTypeReject      = "3"
+	MsgTypeSequenceReset = "4"
+	MsgTypeBusinessMessageReject = "j"
 )
 
 // ── Application message types (tag 35 values) ────────────────────────────────
@@ -57,6 +59,26 @@ const (
 	TagRefSeqNum     = 45  // reference sequence number (in Reject)
 	TagRefTagID      = 371 // tag number that caused a Reject
 	TagSessionRejectReason = 373 // coded reject reason
+	TagBeginSeqNo    = 7   // first seqnum requested (ResendRequest)
+	TagEndSeqNo      = 16  // last seqnum requested, 0 = infinity (ResendRequest)
+	TagPossDupFlag   = 43  // "Y" on retransmitted messages
+	TagOrigSendingTime = 122 // original SendingTime of a retransmitted message
+	TagGapFillFlag   = 123 // "Y" = SequenceReset in GapFill mode
+	TagNewSeqNo      = 36  // next seqnum (SequenceReset)
+	TagPassword      = 554 // Logon password
+	TagRefMsgType    = 372 // MsgType being rejected (BusinessMessageReject)
+	TagBusinessRejectReason = 380 // coded reason (BusinessMessageReject)
+)
+
+// ── SessionRejectReason values (tag 373) ──────────────────────────────────────
+
+const (
+	RejectRequiredTagMissing = "1"
+	RejectValueIncorrect     = "5"
+	RejectIncorrectDataFormat = "6"
+	RejectCompIDProblem      = "9"
+	RejectSendingTimeAccuracy = "10"
+	RejectInvalidMsgType     = "11"
 )
 
 // ── Order entry tags ──────────────────────────────────────────────────────────
@@ -83,7 +105,7 @@ const (
 const (
 	TagOrderID       = 37  // exchange-assigned order ID
 	TagExecID        = 17  // execution ID (unique per fill)
-	TagExecType      = 150 // execution type: 0=New, 1=PartFill, 2=Fill, 4=Cancel, 8=Reject
+	TagExecType      = 150 // execution type: 0=New, F=Trade, 4=Cancel, 5=Replace, 8=Reject
 	TagOrdStatus     = 39  // order status: 0=New, 1=PartFill, 2=Fill, 4=Cancel, 8=Reject
 	TagLeavesQty     = 151 // remaining open quantity
 	TagCumQty        = 14  // cumulative filled quantity
@@ -150,6 +172,7 @@ const (
 	ExecTypeReplaced     = "5"
 	ExecTypeRejected     = "8"
 	ExecTypeExpired      = "C"
+	ExecTypeTrade        = "F" // FIX 4.4: any fill; partial vs full is in OrdStatus
 )
 
 // ── OrdStatus values (tag 39) ─────────────────────────────────────────────────

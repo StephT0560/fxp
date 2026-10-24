@@ -19,6 +19,7 @@ package codec
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -78,9 +79,20 @@ func (m *Message) MsgType() string {
 	return m.Get(TagMsgType)
 }
 
+// ErrGarbled marks a message that cannot be parsed (bad framing, BodyLength
+// or CheckSum). Per FIX it is ignored: the session neither processes it nor
+// consumes its sequence number, and the parser resynchronises on the next
+// "8=FIX".
+var ErrGarbled = errors.New("garbled FIX message")
+
+func garbled(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrGarbled, fmt.Sprintf(format, args...))
+}
+
 // Parser reads FIX messages from a buffered reader.
 type Parser struct {
-	r *bufio.Reader
+	r      *bufio.Reader
+	resync bool
 }
 
 // NewParser creates a parser reading from r.
@@ -92,16 +104,46 @@ func NewParser(r io.Reader) *Parser {
 // Blocks until a full message is available or an error occurs.
 // Returns io.EOF when the connection is closed cleanly.
 func (p *Parser) ReadMessage() (*Message, error) {
+	if p.resync {
+		if err := p.skipToBeginString(); err != nil {
+			return nil, err
+		}
+		p.resync = false
+	}
+	msg, err := p.readMessage()
+	if errors.Is(err, ErrGarbled) {
+		p.resync = true
+	}
+	return msg, err
+}
+
+// skipToBeginString discards bytes until the stream is at "8=FIX".
+func (p *Parser) skipToBeginString() error {
+	for {
+		b, err := p.r.Peek(5)
+		if err != nil {
+			return err
+		}
+		if string(b) == "8=FIX" {
+			return nil
+		}
+		if _, err := p.r.Discard(1); err != nil {
+			return err
+		}
+	}
+}
+
+func (p *Parser) readMessage() (*Message, error) {
 	// Step 1: Read tag 8 (BeginString) — must be first
 	tag, val, err := p.readField()
 	if err != nil {
 		return nil, err
 	}
 	if tag != TagBeginString {
-		return nil, fmt.Errorf("expected tag 8 (BeginString), got tag %d", tag)
+		return nil, garbled("expected tag 8 (BeginString), got tag %d", tag)
 	}
 	if !strings.HasPrefix(val, "FIX.4") {
-		return nil, fmt.Errorf("unsupported BeginString: %q (expected FIX.4.x)", val)
+		return nil, garbled("unsupported BeginString: %q (expected FIX.4.x)", val)
 	}
 
 	// Step 2: Read tag 9 (BodyLength)
@@ -110,14 +152,14 @@ func (p *Parser) ReadMessage() (*Message, error) {
 		return nil, err
 	}
 	if tag != TagBodyLength {
-		return nil, fmt.Errorf("expected tag 9 (BodyLength), got tag %d", tag)
+		return nil, garbled("expected tag 9 (BodyLength), got tag %d", tag)
 	}
 	bodyLen, err := strconv.Atoi(val)
 	if err != nil {
-		return nil, fmt.Errorf("invalid BodyLength %q: %w", val, err)
+		return nil, garbled("invalid BodyLength %q: %v", val, err)
 	}
 	if bodyLen <= 0 || bodyLen > 1_048_576 {
-		return nil, fmt.Errorf("BodyLength %d out of range", bodyLen)
+		return nil, garbled("BodyLength %d out of range", bodyLen)
 	}
 
 	// Step 3: Read exactly bodyLen bytes. BodyLength counts from after tag 9's
@@ -127,17 +169,17 @@ func (p *Parser) ReadMessage() (*Message, error) {
 		return nil, fmt.Errorf("reading body: %w", err)
 	}
 	if body[bodyLen-1] != soh {
-		return nil, fmt.Errorf("incorrect BodyLength %d: body does not end at a field boundary", bodyLen)
+		return nil, garbled("incorrect BodyLength %d: body does not end at a field boundary", bodyLen)
 	}
 
 	// Step 4: Parse the body into tag=value fields
 	fields, err := parseFields(body)
 	if err != nil {
-		return nil, fmt.Errorf("parsing body: %w", err)
+		return nil, garbled("parsing body: %v", err)
 	}
 	for _, f := range fields {
 		if f.Tag == TagCheckSum {
-			return nil, fmt.Errorf("incorrect BodyLength %d: CheckSum inside body", bodyLen)
+			return nil, garbled("incorrect BodyLength %d: CheckSum inside body", bodyLen)
 		}
 	}
 
@@ -147,7 +189,7 @@ func (p *Parser) ReadMessage() (*Message, error) {
 		return nil, fmt.Errorf("reading CheckSum: %w", err)
 	}
 	if tag != TagCheckSum {
-		return nil, fmt.Errorf("incorrect BodyLength %d: expected tag 10 after body, got tag %d", bodyLen, tag)
+		return nil, garbled("incorrect BodyLength %d: expected tag 10 after body, got tag %d", bodyLen, tag)
 	}
 	fields = append(fields, Field{TagCheckSum, val})
 
@@ -168,7 +210,7 @@ func (p *Parser) ReadMessage() (*Message, error) {
 
 	// Step 6: Validate checksum
 	if err := validateChecksum(msg); err != nil {
-		return nil, err
+		return nil, garbled("%v", err)
 	}
 
 	return msg, nil
@@ -273,12 +315,12 @@ func (p *Parser) readField() (int, string, error) {
 
 	eqIdx := strings.IndexByte(s, '=')
 	if eqIdx <= 0 {
-		return 0, "", fmt.Errorf("malformed field %q: missing '='", s)
+		return 0, "", garbled("malformed field %q: missing '='", s)
 	}
 
 	tag, err := strconv.Atoi(s[:eqIdx])
 	if err != nil {
-		return 0, "", fmt.Errorf("invalid tag %q: %w", s[:eqIdx], err)
+		return 0, "", garbled("invalid tag %q: %v", s[:eqIdx], err)
 	}
 
 	return tag, s[eqIdx+1:], nil

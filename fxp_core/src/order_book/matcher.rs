@@ -43,19 +43,24 @@ impl OrderBook {
                         }
                     };
 
+                    // Trades execute at the price of the order that was resting first.
+                    let bid_seq = self.arrival.get(&bid.order_id).copied().unwrap_or(u64::MAX);
+                    let ask_seq = self.arrival.get(&ask.order_id).copied().unwrap_or(u64::MAX);
+                    let trade_price = if bid_seq < ask_seq { bid_price } else { ask_price };
+
                     let trade_qty = bid.quantity.min(ask.quantity);
                     bid.quantity -= trade_qty;
                     ask.quantity -= trade_qty;
 
                     let buy_done  = bid.quantity == 0;
                     let sell_done = ask.quantity == 0;
-                    Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &bid.order_id, bid.quantity, trade_qty);
-                    Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &ask.order_id, ask.quantity, trade_qty);
+                    Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &mut self.arrival, &bid.order_id, bid.quantity, trade_qty);
+                    Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &mut self.arrival, &ask.order_id, ask.quantity, trade_qty);
 
                     fills.push(ExecutionReport {
                         buy_order_id:     bid.order_id.clone(),
                         sell_order_id:    ask.order_id.clone(),
-                        trade_price:      ask_price,
+                        trade_price:      trade_price,
                         trade_quantity:   trade_qty,
                         buy_fully_filled:  buy_done,
                         sell_fully_filled: sell_done,
@@ -64,7 +69,7 @@ impl OrderBook {
                         symbol:  self.symbol.clone(),
                         changes: vec![MarketOrderUpdate {
                             update_type: MarketUpdateType::ModifyOrder,
-                            price:       ask_price,
+                            price:       trade_price,
                             quantity:    trade_qty,
                         }],
                     });
@@ -183,18 +188,18 @@ impl OrderBook {
     // Fill entire quantity at limit price or cancel everything.
 
     fn execute_fok(&mut self, order: Order) -> AggressiveResult {
-        let available: u32 = match order.side {
+        let available: u64 = match order.side {
             OrderSide::Buy => self.sell_orders.iter()
                 .filter(|&(&p, _)| p <= order.price)
-                .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
+                .flat_map(|(_, v)| v.iter().map(|o| u64::from(o.quantity)))
                 .sum(),
             OrderSide::Sell => self.buy_orders.iter()
                 .filter(|&(&p, _)| p >= order.price)
-                .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
+                .flat_map(|(_, v)| v.iter().map(|o| u64::from(o.quantity)))
                 .sum(),
         };
 
-        if available < order.quantity {
+        if available < u64::from(order.quantity) {
             // Insufficient liquidity — kill the order
             return AggressiveResult {
                 fills: Vec::new(), fill_updates: Vec::new(),
@@ -234,7 +239,7 @@ impl OrderBook {
             filled       += trade_qty;
 
             let resting_done   = top.quantity == 0;
-            Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &top.order_id, top.quantity, trade_qty);
+            Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &mut self.arrival, &top.order_id, top.quantity, trade_qty);
             let aggressor_done = filled >= want;
 
             let (buy_id, sell_id, buy_done, sell_done) = match aggressor.side {

@@ -22,12 +22,16 @@ Usage:
   python3 fix_client.py --test all --verbose
 """
 
+import os
 import socket
 import time
 import argparse
 import threading
 import queue
 from datetime import datetime, timezone
+
+# Password(554) sent on Logon; must match the bridge's FXP_FIX_CREDENTIALS.
+FIX_PASSWORD = os.environ.get('FXP_FIX_PASSWORD', '')
 
 SOH = '\x01'
 PASS = '✅'
@@ -127,7 +131,7 @@ class FIXSession:
     """Manages a FIX session: connection, sequence numbers, message dispatch."""
 
     EXEC_TYPE = {
-        '0': 'New', '1': 'PartialFill', '2': 'Fill',
+        '0': 'New', 'F': 'Trade',
         '4': 'Canceled', '5': 'Replaced', '8': 'Rejected', 'C': 'Expired',
     }
     ORD_STATUS = {
@@ -159,7 +163,7 @@ class FIXSession:
         self._thread.start()
 
     def logon(self):
-        self.send('A', [(98, '0'), (108, '30'), (141, 'Y')], 'Logon')
+        self.send('A', [(98, '0'), (108, '30'), (141, 'Y'), (554, FIX_PASSWORD)], 'Logon')
         time.sleep(0.6)  # wait for logon ack + gateway connect
 
     def logout(self):
@@ -329,11 +333,11 @@ def test_limit_cross(s, r):
     s.new_order(buy_id,  sym, '1', 200, '2', price=375.00, description=f'BUY 200 {sym} @375.00')
     s.new_order(sell_id, sym, '2', 200, '2', price=375.00, description=f'SELL 200 {sym} @375.00')
 
-    buy_fill  = s.wait_for(order_id=buy_id,  exec_type='2')
-    sell_fill = s.wait_for(order_id=sell_id, exec_type='2')
+    buy_fill  = s.wait_for(order_id=buy_id,  exec_type='F')
+    sell_fill = s.wait_for(order_id=sell_id, exec_type='F')
 
-    r.assert_exec('buy fill',  buy_fill,  '2', '2')
-    r.assert_exec('sell fill', sell_fill, '2', '2')
+    r.assert_exec('buy fill',  buy_fill,  'F', '2')
+    r.assert_exec('sell fill', sell_fill, 'F', '2')
 
     # Verify fill price and quantity
     if buy_fill and buy_fill.get(32) == '200' and buy_fill.get(31) == '375.00':
@@ -447,13 +451,13 @@ def test_stop_order(s, r):
                 description=f'SELL IOC 100 {sym} @185.00 (triggers stop)')
 
     # Step 4: Resting buy fill
-    rest_fill = s.wait_for(order_id=rest_id, exec_type='2', timeout=3.0)
-    r.assert_exec('resting buy filled (creates last_trade)', rest_fill, '2')
+    rest_fill = s.wait_for(order_id=rest_id, exec_type='F', timeout=3.0)
+    r.assert_exec('resting buy filled (creates last_trade)', rest_fill, 'F')
 
     # Step 5: Stop should now trigger — wait for its fill
-    stop_fill = s.wait_for(order_id=stop_id, exec_type='2', timeout=4.0)
+    stop_fill = s.wait_for(order_id=stop_id, exec_type='F', timeout=4.0)
     if stop_fill:
-        r.assert_exec('stop triggered and filled', stop_fill, '2')
+        r.assert_exec('stop triggered and filled', stop_fill, 'F')
     else:
         # Stop may not trigger if book is empty after the IOC — acceptable
         # since stop triggers require liquidity to execute against
@@ -483,8 +487,8 @@ def test_ioc_partial(s, r):
     cancel = s.wait_for(order_id=ioc_id, exec_type='4', timeout=3.0)
     r.assert_exec('IOC remainder cancelled', cancel, '4')
 
-    fill = s.wait_for(order_id=ioc_id, exec_type='2', timeout=3.0)
-    r.assert_exec('IOC partial fill', fill, '2')
+    fill = s.wait_for(order_id=ioc_id, exec_type='F', timeout=3.0)
+    r.assert_exec('IOC partial fill', fill, 'F')
 
     if fill and fill.get(32) == '50':
         print(f'  {PASS} partial fill qty: 50 (correct)')
@@ -510,7 +514,7 @@ def test_fok_no_liquidity(s, r):
     r.assert_exec('FOK killed', msg, '4', '4')
 
     # Verify no fill occurred
-    fill = s.wait_for(order_id=fok_id, exec_type='2', timeout=1.0)
+    fill = s.wait_for(order_id=fok_id, exec_type='F', timeout=1.0)
     if fill is None:
         print(f'  {PASS} no fill (correct for FOK with no liquidity)')
         r.passed += 1
@@ -536,8 +540,8 @@ def test_cancel_filled_order(s, r):
                 description=f'SELL 100 {sym} @40.00')
 
     # Wait for fill
-    fill = s.wait_for(order_id=buy_id, exec_type='2', timeout=3.0)
-    r.assert_exec('buy filled', fill, '2')
+    fill = s.wait_for(order_id=buy_id, exec_type='F', timeout=3.0)
+    r.assert_exec('buy filled', fill, 'F')
 
     time.sleep(0.3)
     s.drain(0.2)  # clear sell fill from inbox before sending cancel
@@ -576,7 +580,7 @@ def test_cross_session_cancel(s, r):
     try:
         victim.new_order(vic_id, sym, '1', 100, '2', price=30.00,
                          description=f'VICTIM BUY 100 {sym} @30.00')
-        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+        r.assert_exec('victim order acknowledged', victim.wait_for(order_id=vic_id, exec_type='0', timeout=3.0), '0', '0')
 
         # Attacker guesses the victim's ClOrdID and tries to cancel it
         attacker.cancel_order(order_id('XAC'), vic_id, sym, '1')
@@ -627,7 +631,7 @@ def test_outbound_sequence(s, r):
     sess.connect(); sess.logon()
     try:
         sess.new_order(ord_id, sym, '1', 10, '2', price=5.00, description=f'BUY 10 {sym} @5.00')
-        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+        r.assert_exec('order acknowledged', sess.wait_for(order_id=ord_id, exec_type='0', timeout=3.0), '0', '0')
         sess.cancel_order(order_id('SEQC'), ord_id, sym, '1')
         r.assert_exec('order cancelled', sess.wait_for(order_id=ord_id, exec_type='4', timeout=3.0), '4')
     finally:
@@ -662,6 +666,7 @@ TESTS = {
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    global FIX_PASSWORD
     ap = argparse.ArgumentParser(description='FIX 4.4 test client for FXP bridge')
     ap.add_argument('--host',    default='127.0.0.1')
     ap.add_argument('--port',    type=int, default=8083)
@@ -671,7 +676,10 @@ def main():
                     help=f'Test to run: all | {" | ".join(TESTS)}')
     ap.add_argument('--verbose', action='store_true',
                     help='Print all sent/received messages')
+    ap.add_argument('--password', default=FIX_PASSWORD,
+                    help='Logon Password(554) (default: $FXP_FIX_PASSWORD)')
     args = ap.parse_args()
+    FIX_PASSWORD = args.password
 
     if args.test != 'all' and args.test not in TESTS:
         print(f'Unknown test: {args.test}')

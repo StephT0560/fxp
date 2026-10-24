@@ -67,6 +67,12 @@ func main() {
 	if jwtSecret == "" {
 		log.Fatal("FXP_JWT_SECRET environment variable not set")
 	}
+	// FXP_FIX_CREDENTIALS="COMPID:password,..." — the Logon allow-list.
+	creds, err := session.ParseCredentials(os.Getenv("FXP_FIX_CREDENTIALS"))
+	if err != nil {
+		log.Fatalf("FXP_FIX_CREDENTIALS: %v", err)
+	}
+	auth := session.NewCredentialAuth(creds)
 
 	listener, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
@@ -78,6 +84,7 @@ func main() {
 	log.Printf("   SenderCompID: %s", *bridgeCompID)
 	log.Printf("   Gateway:      127.0.0.1:8082")
 	log.Printf("   FXP_JWT_SECRET: set ✓")
+	log.Printf("   FIX CompIDs allowed: %d", len(creds))
 
 	for {
 		conn, err := listener.Accept()
@@ -86,7 +93,7 @@ func main() {
 			continue
 		}
 		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
-		go handleFIXClient(conn, *bridgeCompID, jwtSecret)
+		go handleFIXClient(conn, *bridgeCompID, jwtSecret, auth)
 	}
 }
 
@@ -95,7 +102,7 @@ func main() {
 // handleFIXClient runs the full lifecycle for one FIX client connection.
 // Creates a session, a gateway client, wires them together, and blocks
 // until the FIX session ends.
-func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string) {
+func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session.Authenticator) {
 	// The bridge handler implements session.Handler.
 	// It holds references to both the session (to send FIX frames back)
 	// and the gateway client (to forward orders).
@@ -106,6 +113,7 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string) {
 
 	// Create the FIX session — TargetCompID is filled in when Logon arrives
 	sess := session.NewSession(conn, bridgeCompID, h)
+	sess.Auth = auth
 	h.sess = sess
 
 	// Run the session (blocks until disconnect)
@@ -140,6 +148,13 @@ func (h *bridgeHandler) OnLogon(sess *session.Session) {
 	go func() {
 		if err := h.gwClient.Connect(); err != nil {
 			log.Printf("[%s] gateway connection failed: %v", traderID, err)
+			// Orders queued while connecting are rejected, never dropped.
+			h.gwClient.Close()
+			for _, m := range h.gwClient.DrainPending() {
+				if req := fixRequestFor(m); req != nil {
+					h.sendBusinessReject(req, h.sess, "gateway unavailable")
+				}
+			}
 			// Send Logout to FIX client — gateway is unavailable
 			h.sess.SendWithSeq(func(seq int) []byte {
 				return codec.NewLogout(h.bridgeCompID, sess.TargetCompID, seq,
@@ -161,7 +176,7 @@ func (h *bridgeHandler) OnLogout(sess *session.Session, reason string) {
 // Translates the FIX message to FXP and forwards to the gateway.
 func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 	if h.gwClient == nil {
-		log.Printf("[%s] received application message before gateway connected — dropping", sess.TargetCompID)
+		h.sendBusinessReject(msg, sess, "gateway not connected")
 		return
 	}
 
@@ -174,6 +189,7 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 
 	if err := h.gwClient.Send(fxpMsg); err != nil {
 		log.Printf("[%s] gateway send error: %v", sess.TargetCompID, err)
+		h.sendBusinessReject(msg, sess, "gateway unavailable: "+err.Error())
 	}
 }
 
@@ -227,8 +243,36 @@ func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, 
 		return b.Build()
 
 	default:
-		// For other message types, just log — no standard rejection message
-		log.Printf("[%s] cannot send business reject for %s: %s", targetCompID, msg.MsgType(), reason)
+		b := codec.NewBuilder(codec.MsgTypeBusinessMessageReject, bridgeCompID, targetCompID, seq)
+		if ref := msg.Get(codec.TagMsgSeqNum); ref != "" {
+			b.Set(codec.TagRefSeqNum, ref)
+		}
+		b.Set(codec.TagRefMsgType, msg.MsgType())
+		b.Set(codec.TagBusinessRejectReason, "0") // Other
+		b.Set(codec.TagText, reason)
+		return b.Build()
+	}
+}
+
+// fixRequestFor reconstructs the identifying FIX fields of a queued FXP
+// request so it can be rejected with buildBusinessReject.
+func fixRequestFor(m *protobuf.FXPMessage) *codec.Message {
+	f := map[int]string{}
+	switch p := m.Payload.(type) {
+	case *protobuf.FXPMessage_NewOrder:
+		f[codec.TagMsgType] = codec.MsgTypeNewOrderSingle
+		f[codec.TagClOrdID] = p.NewOrder.OrderId
+		f[codec.TagSymbol] = p.NewOrder.Symbol
+	case *protobuf.FXPMessage_OrderCancel:
+		f[codec.TagMsgType] = codec.MsgTypeOrderCancelRequest
+		f[codec.TagClOrdID] = p.OrderCancel.ClientCancelId
+		f[codec.TagOrigClOrdID] = p.OrderCancel.OrderId
+	case *protobuf.FXPMessage_OrderCancelReplace:
+		f[codec.TagMsgType] = codec.MsgTypeOrderCancelReplaceRequest
+		f[codec.TagClOrdID] = p.OrderCancelReplace.ClientReplaceId
+		f[codec.TagOrigClOrdID] = p.OrderCancelReplace.OrderId
+	default:
 		return nil
 	}
+	return &codec.Message{Fields: f}
 }

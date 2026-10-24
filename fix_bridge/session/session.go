@@ -1,31 +1,29 @@
 // session.go — FIX 4.4 session state machine
 //
 // Manages the lifecycle of a single FIX session:
-//   - Logon / Logout handshake
-//   - Inbound and outbound sequence number tracking
-//   - Heartbeat generation (sends Heartbeat every HeartBtInt seconds)
-//   - TestRequest detection and Heartbeat response
-//   - Gap detection (inbound seqnum out of range → ResendRequest)
+//   - Logon authentication (CompID allow-list + Password(554)) and Logout
+//   - Inbound sequence validation for every message, PossDup duplicates,
+//     gap detection (ResendRequest) and SequenceReset (GapFill and Reset)
+//   - Outbound sequencing with a MessageStore that serves ResendRequests
+//   - Heartbeats, TestRequest/Heartbeat(TestReqID) and peer timeout
+//   - Garbled messages are ignored; well-formed invalid ones get Reject(3)
 //
-// One Session per connected FIX client. The session runs two goroutines:
-//   - readLoop:  reads inbound frames, validates seqnums, dispatches to handler
-//   - heartbeat: fires a Heartbeat every HeartBtInt seconds
-//
-// Application messages (NewOrderSingle, ExecutionReport, etc.) are passed
-// to the Handler interface — the session layer does not interpret them.
-//
-// Thread safety: Session methods are called from the readLoop goroutine only.
-// Send() may be called from any goroutine (it writes to a buffered channel).
+// Goroutines: readLoop (inbound, owns inSeqNum/resendTo), writeLoop (socket
+// writes) and heartbeatLoop. Shared state is guarded by stateMu, sendMu,
+// hbMu or atomics. Application messages go to the Handler.
 
 package session
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fix_bridge/codec"
@@ -35,19 +33,24 @@ import (
 type State int
 
 const (
-	StateConnected  State = iota // TCP connected, waiting for Logon
-	StateLoggedOn                // Logon exchanged, processing application messages
-	StateLoggingOut              // Logout sent/received, draining
-	StateDisconnected            // TCP closed
+	StateConnected    State = iota // TCP connected, waiting for Logon
+	StateLoggedOn                  // Logon exchanged, processing application messages
+	StateLoggingOut                // Logout sent/received, draining
+	StateDisconnected              // TCP closed
 )
 
 func (s State) String() string {
 	switch s {
-	case StateConnected:   return "CONNECTED"
-	case StateLoggedOn:    return "LOGGED_ON"
-	case StateLoggingOut:  return "LOGGING_OUT"
-	case StateDisconnected: return "DISCONNECTED"
-	default:               return "UNKNOWN"
+	case StateConnected:
+		return "CONNECTED"
+	case StateLoggedOn:
+		return "LOGGED_ON"
+	case StateLoggingOut:
+		return "LOGGING_OUT"
+	case StateDisconnected:
+		return "DISCONNECTED"
+	default:
+		return "UNKNOWN"
 	}
 }
 
@@ -62,97 +65,116 @@ type Handler interface {
 
 // Session manages one FIX session over a TCP connection.
 type Session struct {
-	conn         net.Conn
-	parser       *codec.Parser
-	handler      Handler
+	conn    net.Conn
+	parser  *codec.Parser
+	handler Handler
+
+	// Auth validates Logon credentials; a nil Auth rejects every Logon.
+	Auth Authenticator
+	// Store keeps sent messages for ResendRequest.
+	Store MessageStore
 
 	// Identity
-	SenderCompID string // bridge's CompID (sent as SenderCompID in outbound msgs)
-	TargetCompID string // client's CompID (sent as TargetCompID in outbound msgs)
+	SenderCompID string // bridge's CompID
+	TargetCompID string // client's CompID; written under stateMu at Logon
 
-	// Sequence numbers
-	outSeqNum    int64  // next outbound sequence number; the session's only outbound counter (guarded by sendMu)
-	inSeqNum     int    // next expected inbound sequence number
+	outSeqNum int64 // next outbound MsgSeqNum (guarded by sendMu)
+	inSeqNum  int   // next expected inbound MsgSeqNum (readLoop only)
+	resendTo  int   // highest seq covered by our pending ResendRequest, 0 = none (readLoop only)
 
-	// Session parameters
-	heartBtInt   int           // heartbeat interval in seconds
-	lastSent     time.Time     // time of last outbound message
-	lastReceived time.Time     // time of last inbound message
+	heartBtInt   int          // guarded by stateMu
+	lastSent     time.Time    // guarded by sendMu
+	lastReceived atomic.Int64 // unix nanos
 
-	// State
-	state        State
-	stateMu      sync.RWMutex
+	hbMu          sync.Mutex // guards the outstanding TestRequest
+	testReqID     string
+	testReqSentAt time.Time
 
-	// Outbound send channel — allows any goroutine to send FIX frames safely
-	sendMu       sync.Mutex // serialises seq allocation + enqueue; guards outSeqNum, lastSent
-	sendCh       chan []byte
+	state   State
+	stateMu sync.RWMutex
 
-	// Shutdown
-	done         chan struct{}
-	once         sync.Once
+	sendMu  sync.Mutex // serialises seq allocation + enqueue
+	sendCh  chan []byte
+	queued  atomic.Int64
+	written atomic.Int64
+
+	done chan struct{}
+	once sync.Once
 }
 
 // NewSession creates a session for an accepted TCP connection.
-// senderCompID is the bridge's identity; targetCompID is filled in from the Logon.
 func NewSession(conn net.Conn, senderCompID string, handler Handler) *Session {
-	return &Session{
+	s := &Session{
 		conn:         conn,
 		parser:       codec.NewParser(conn),
 		handler:      handler,
+		Store:        NewMemoryStore(),
 		SenderCompID: senderCompID,
-		TargetCompID: "", // set when Logon arrives
 		outSeqNum:    1,
 		inSeqNum:     1,
 		heartBtInt:   30, // default; overridden by client's Logon HeartBtInt
 		lastSent:     time.Now(),
-		lastReceived: time.Now(),
 		state:        StateConnected,
 		sendCh:       make(chan []byte, 512),
 		done:         make(chan struct{}),
 	}
+	s.lastReceived.Store(time.Now().UnixNano())
+	return s
 }
+
+// heartbeatUnit is the unit of HeartBtInt (tests shorten it).
+var heartbeatUnit = time.Second
+
+// sendEnqueueTimeout bounds how long a send waits for space in sendCh.
+var sendEnqueueTimeout = 5 * time.Second
+
+// flushTimeout bounds how long a closing session waits to write queued frames.
+const flushTimeout = time.Second
 
 // Run starts the session read loop and writer, blocking until the session ends.
 func (s *Session) Run() {
-	defer s.close()
-
-	// Writer goroutine — drains sendCh to the TCP socket
+	defer func() {
+		s.flush(flushTimeout)
+		s.close()
+	}()
 	go s.writeLoop()
-
-	// Heartbeat goroutine — fires on interval
 	go s.heartbeatLoop()
-
-	// Read loop — blocks until disconnect or error
 	s.readLoop()
 }
 
-// sendEnqueueTimeout bounds how long SendWithSeq waits for space in sendCh.
-var sendEnqueueTimeout = 5 * time.Second
-
-// SendWithSeq allocates the next outbound MsgSeqNum from the session's single
-// counter, builds the frame with it and enqueues it under one lock, so frames
-// reach the wire in sequence order with no gaps. Safe to call from any
-// goroutine; application handlers must use it for every outbound message.
-// A nil frame consumes no sequence number.
+// SendWithSeq allocates the next outbound MsgSeqNum, builds the frame with it,
+// enqueues it and records it in the Store under one lock, so frames reach the
+// wire in sequence order with no gaps. A nil frame consumes no number.
 func (s *Session) SendWithSeq(build func(seq int) []byte) {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	frame := build(int(s.outSeqNum))
+	seq := int(s.outSeqNum)
+	frame := build(seq)
 	if frame == nil {
 		return
 	}
+	if s.enqueueLocked(frame) {
+		s.Store.Save(seq, frame)
+		s.outSeqNum++
+	}
+}
+
+// enqueueLocked queues a frame; the caller holds sendMu. A client that stops
+// reading is disconnected rather than having a numbered frame dropped.
+func (s *Session) enqueueLocked(frame []byte) bool {
 	timer := time.NewTimer(sendEnqueueTimeout)
 	defer timer.Stop()
 	select {
 	case s.sendCh <- frame:
-		s.outSeqNum++
+		s.queued.Add(1)
 		s.lastSent = time.Now()
+		return true
 	case <-s.done:
+		return false
 	case <-timer.C:
-		// Dropping a numbered frame would create a sequence gap, so a client
-		// that stops reading is disconnected instead.
-		log.Printf("[%s] send queue full for %v — closing session", s.TargetCompID, sendEnqueueTimeout)
+		log.Printf("[%s] send queue full for %v — closing session", s.target(), sendEnqueueTimeout)
 		s.close()
+		return false
 	}
 }
 
@@ -161,9 +183,15 @@ func (s *Session) SendMsg(b *codec.Builder) {
 	s.SendWithSeq(func(seq int) []byte {
 		b.SetInt(codec.TagMsgSeqNum, seq)
 		b.Set(codec.TagSenderCompID, s.SenderCompID)
-		b.Set(codec.TagTargetCompID, s.TargetCompID)
+		b.Set(codec.TagTargetCompID, s.target())
 		return b.Build()
 	})
+}
+
+func (s *Session) target() string {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.TargetCompID
 }
 
 func (s *Session) sinceLastSent() time.Duration {
@@ -172,10 +200,14 @@ func (s *Session) sinceLastSent() time.Duration {
 	return time.Since(s.lastSent)
 }
 
+func (s *Session) sinceLastReceived() time.Duration {
+	return time.Since(time.Unix(0, s.lastReceived.Load()))
+}
+
 func (s *Session) heartbeatInterval() time.Duration {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
-	return time.Duration(s.heartBtInt) * time.Second
+	return time.Duration(s.heartBtInt) * heartbeatUnit
 }
 
 // State returns the current session state.
@@ -197,207 +229,463 @@ func (s *Session) readLoop() {
 	for {
 		msg, err := s.parser.ReadMessage()
 		if err != nil {
+			if errors.Is(err, codec.ErrGarbled) {
+				log.Printf("[%s] ignoring garbled message: %v", s.target(), err)
+				continue
+			}
 			if err != io.EOF {
-				log.Printf("[%s] read error: %v", s.TargetCompID, err)
+				log.Printf("[%s] read error: %v", s.target(), err)
 			}
 			return
 		}
-		s.lastReceived = time.Now()
+		s.lastReceived.Store(time.Now().UnixNano())
 
 		if err := s.dispatch(msg); err != nil {
 			if err == io.EOF {
-				// Clean logout — handleLogout already sent the echo
-				return
+				return // Logout exchanged or Logon rejected; reply already queued
 			}
-			log.Printf("[%s] dispatch error: %v", s.TargetCompID, err)
+			log.Printf("[%s] dispatch error: %v", s.target(), err)
 			s.sendLogout(err.Error())
 			return
 		}
 	}
 }
 
-// dispatch routes an inbound message to the appropriate handler.
+// dispatch validates the sequence number of every inbound message, then
+// routes it to the session-level handlers or the application Handler.
 func (s *Session) dispatch(msg *codec.Message) error {
 	msgType := msg.MsgType()
-	state   := s.State()
+	seq, err := strconv.Atoi(msg.Get(codec.TagMsgSeqNum))
+	if err != nil || seq <= 0 {
+		if s.State() != StateLoggedOn {
+			return s.rejectLogon(msg, "missing or invalid MsgSeqNum (34)")
+		}
+		return fmt.Errorf("missing or invalid MsgSeqNum (34)")
+	}
 
-	// Session-level messages are handled here regardless of state
-	switch msgType {
-	case codec.MsgTypeLogon:
-		return s.handleLogon(msg)
+	if s.State() != StateLoggedOn {
+		if msgType != codec.MsgTypeLogon {
+			return s.rejectLogon(msg, fmt.Sprintf("first message must be Logon, got 35=%s", msgType))
+		}
+		return s.handleLogon(msg, seq)
+	}
 
-	case codec.MsgTypeLogout:
-		return s.handleLogout(msg)
+	if msg.Get(codec.TagSenderCompID) != s.target() || msg.Get(codec.TagTargetCompID) != s.SenderCompID {
+		s.sendReject(seq, codec.RejectCompIDProblem, "CompID problem")
+		return fmt.Errorf("CompID problem: 49=%q 56=%q", msg.Get(codec.TagSenderCompID), msg.Get(codec.TagTargetCompID))
+	}
 
-	case codec.MsgTypeHeartbeat:
-		return s.handleHeartbeat(msg)
-
-	case codec.MsgTypeTestRequest:
-		return s.handleTestRequest(msg)
-
-	case codec.MsgTypeResendRequest:
-		// Simplified: we don't store sent messages, so respond with GapFill
-		log.Printf("[%s] ResendRequest received — sending GapFill (not supported)", s.TargetCompID)
+	// SequenceReset-Reset and Logon(141=Y) ignore MsgSeqNum.
+	if msgType == codec.MsgTypeSequenceReset && msg.Get(codec.TagGapFillFlag) != "Y" {
+		s.applyNewSeqNo(msg, seq)
+		return nil
+	}
+	if msgType == codec.MsgTypeLogon && msg.Get(codec.TagResetSeqNumFlag) == "Y" {
+		s.handleInSessionReset(seq)
 		return nil
 	}
 
-	// Application messages only accepted when logged on
-	if state != StateLoggedOn {
-		return fmt.Errorf("received application message %q before Logon", msgType)
+	possDup := msg.Get(codec.TagPossDupFlag) == "Y"
+	switch {
+	case seq < s.inSeqNum:
+		if !possDup {
+			return fmt.Errorf("MsgSeqNum too low, expecting %d but received %d", s.inSeqNum, seq)
+		}
+		if reason, text := checkPossDup(msg); reason != "" {
+			s.sendReject(seq, reason, text)
+		}
+		return nil // duplicate of a message already processed
+	case seq > s.inSeqNum:
+		switch msgType {
+		case codec.MsgTypeResendRequest:
+			s.handleResendRequest(msg)
+		case codec.MsgTypeLogout:
+			return s.handleLogout(msg)
+		}
+		s.requestResend(seq)
+		return nil
+	}
+	s.inSeqNum++
+	if s.resendTo != 0 && s.inSeqNum > s.resendTo {
+		s.resendTo = 0
 	}
 
-	// Validate inbound sequence number
-	if err := s.validateSeqNum(msg); err != nil {
-		return err
+	// Well-formed but invalid: consume the sequence number and Reject(3).
+	if possDup {
+		if reason, text := checkPossDup(msg); reason != "" {
+			s.sendReject(seq, reason, text)
+			return nil
+		}
 	}
-
-	// Dispatch to application handler
-	s.handler.Handle(msg, s)
+	if msg.Get(codec.TagSendingTime) == "" {
+		s.sendReject(seq, codec.RejectRequiredTagMissing, "SendingTime (52) missing")
+		return nil
+	}
+	if !validMsgType(msgType) {
+		s.sendReject(seq, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
+		return nil
+	}
+	switch msgType {
+	case codec.MsgTypeLogon:
+		return nil // repeated Logon without reset: nothing to do
+	case codec.MsgTypeLogout:
+		return s.handleLogout(msg)
+	case codec.MsgTypeHeartbeat:
+		s.handleHeartbeat(msg)
+	case codec.MsgTypeTestRequest:
+		s.handleTestRequest(msg)
+	case codec.MsgTypeResendRequest:
+		s.handleResendRequest(msg)
+	case codec.MsgTypeReject:
+		log.Printf("[%s] Reject received for seq %s: 373=%s %q", s.target(),
+			msg.Get(codec.TagRefSeqNum), msg.Get(codec.TagSessionRejectReason), msg.Get(codec.TagText))
+	case codec.MsgTypeSequenceReset:
+		s.applyNewSeqNo(msg, seq) // GapFill
+	default:
+		s.handler.Handle(msg, s)
+	}
 	return nil
 }
 
-// ── Logon handling ────────────────────────────────────────────────────────────
-
-func (s *Session) handleLogon(msg *codec.Message) error {
-	if s.State() == StateLoggedOn {
-		// Already logged on — treat as sequence reset if ResetSeqNumFlag=Y
-		if msg.Get(codec.TagResetSeqNumFlag) == "Y" {
-			log.Printf("[%s] Logon with ResetSeqNumFlag=Y — resetting sequence numbers", s.TargetCompID)
-			s.inSeqNum = 2
-			s.sendMu.Lock()
-			s.outSeqNum = 2
-			s.sendMu.Unlock()
+func validMsgType(t string) bool {
+	if len(t) == 0 || len(t) > 2 {
+		return false
+	}
+	for _, c := range t {
+		if !(c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') {
+			return false
 		}
-		return nil
+	}
+	return true
+}
+
+func isAdminMsgType(t string) bool {
+	switch t {
+	case codec.MsgTypeLogon, codec.MsgTypeHeartbeat, codec.MsgTypeTestRequest, codec.MsgTypeResendRequest,
+		codec.MsgTypeReject, codec.MsgTypeSequenceReset, codec.MsgTypeLogout:
+		return true
+	}
+	return false
+}
+
+const fixTimeLayout = "20060102-15:04:05.000"
+
+func parseFIXTime(v string) (time.Time, error) {
+	if t, err := time.Parse(fixTimeLayout, v); err == nil {
+		return t, nil
+	}
+	return time.Parse("20060102-15:04:05", v)
+}
+
+// checkPossDup validates OrigSendingTime(122) on a PossDupFlag=Y message.
+func checkPossDup(msg *codec.Message) (reason, text string) {
+	orig := msg.Get(codec.TagOrigSendingTime)
+	if orig == "" {
+		return codec.RejectRequiredTagMissing, "OrigSendingTime (122) required with PossDupFlag=Y"
+	}
+	ot, err1 := parseFIXTime(orig)
+	st, err2 := parseFIXTime(msg.Get(codec.TagSendingTime))
+	if err1 != nil || err2 != nil {
+		return codec.RejectIncorrectDataFormat, "OrigSendingTime/SendingTime not a UTCTimestamp"
+	}
+	if ot.After(st) {
+		return codec.RejectSendingTimeAccuracy, "OrigSendingTime later than SendingTime"
+	}
+	return "", ""
+}
+
+// ── Logon / Logout ────────────────────────────────────────────────────────────
+
+func (s *Session) handleLogon(msg *codec.Message, seq int) error {
+	sender := msg.Get(codec.TagSenderCompID)
+	if sender == "" {
+		return s.rejectLogon(msg, "Logon missing SenderCompID (49)")
+	}
+	if msg.Get(codec.TagTargetCompID) != s.SenderCompID {
+		return s.rejectLogon(msg, "invalid TargetCompID (56)")
+	}
+	if s.Auth == nil || s.Auth.Authenticate(sender, msg.Get(codec.TagPassword)) != nil {
+		return s.rejectLogon(msg, "authentication failed")
 	}
 
-	// First logon — set TargetCompID from client's SenderCompID
-	s.TargetCompID = msg.Get(codec.TagSenderCompID)
-	if s.TargetCompID == "" {
-		return fmt.Errorf("Logon missing SenderCompID (tag 49)")
+	reset := msg.Get(codec.TagResetSeqNumFlag) == "Y"
+	if reset && seq != 1 {
+		return s.rejectLogon(msg, "ResetSeqNumFlag=Y requires MsgSeqNum=1")
+	}
+	if reset {
+		s.inSeqNum = 1
+		s.resetOutbound()
+	}
+	if seq < s.inSeqNum {
+		return s.rejectLogon(msg, fmt.Sprintf("MsgSeqNum too low, expecting %d but received %d", s.inSeqNum, seq))
+	}
+	gap := seq > s.inSeqNum
+	if !gap {
+		s.inSeqNum = seq + 1
 	}
 
-	// Validate expected seqnum
-	if err := s.validateSeqNum(msg); err != nil {
-		return err
-	}
-
-	// Read HeartBtInt from client's Logon
+	s.stateMu.Lock()
+	s.TargetCompID = sender
 	if hbi := msg.GetInt(codec.TagHeartBtInt); hbi > 0 {
-		s.stateMu.Lock()
 		s.heartBtInt = hbi
-		s.stateMu.Unlock()
 	}
+	hbi := s.heartBtInt
+	s.state = StateLoggedOn
+	s.stateMu.Unlock()
+	log.Printf("[%s] Logon accepted (HeartBtInt=%ds, reset=%v)", sender, hbi, reset)
 
-	s.setState(StateLoggedOn)
-	log.Printf("[%s] Logon accepted (HeartBtInt=%ds)", s.TargetCompID, s.heartBtInt)
-
-	// Send Logon acknowledgement
-	s.SendWithSeq(func(seq int) []byte {
-		return codec.NewLogonAck(s.SenderCompID, s.TargetCompID, seq, s.heartBtInt, false)
+	s.SendWithSeq(func(n int) []byte {
+		return codec.NewLogonAck(s.SenderCompID, sender, n, hbi, reset)
 	})
-
+	if gap {
+		s.requestResend(seq)
+	}
 	s.handler.OnLogon(s)
 	return nil
 }
 
-// ── Logout handling ───────────────────────────────────────────────────────────
+// rejectLogon answers an unacceptable Logon with a Logout and ends the session.
+func (s *Session) rejectLogon(msg *codec.Message, reason string) error {
+	sender := msg.Get(codec.TagSenderCompID)
+	log.Printf("[%s] Logon rejected: %s", sender, reason)
+	s.SendWithSeq(func(n int) []byte {
+		return codec.NewLogout(s.SenderCompID, sender, n, reason)
+	})
+	return io.EOF
+}
+
+func (s *Session) handleInSessionReset(seq int) {
+	if seq != 1 {
+		s.sendReject(seq, codec.RejectValueIncorrect, "Logon with ResetSeqNumFlag=Y must have MsgSeqNum=1")
+		return
+	}
+	log.Printf("[%s] Logon with ResetSeqNumFlag=Y — resetting sequence numbers", s.target())
+	s.inSeqNum = 2
+	s.resendTo = 0
+	s.resetOutbound()
+	hbi := int(s.heartbeatInterval() / heartbeatUnit)
+	s.SendWithSeq(func(n int) []byte {
+		return codec.NewLogonAck(s.SenderCompID, s.target(), n, hbi, true)
+	})
+}
+
+func (s *Session) resetOutbound() {
+	s.sendMu.Lock()
+	s.outSeqNum = 1
+	s.Store.Reset()
+	s.sendMu.Unlock()
+}
 
 func (s *Session) handleLogout(msg *codec.Message) error {
 	reason := msg.Get(codec.TagText)
-	log.Printf("[%s] Logout received: %q", s.TargetCompID, reason)
+	log.Printf("[%s] Logout received: %q", s.target(), reason)
 	s.setState(StateLoggingOut)
-
-	// Echo Logout back
 	s.SendWithSeq(func(seq int) []byte {
-		return codec.NewLogout(s.SenderCompID, s.TargetCompID, seq, "")
+		return codec.NewLogout(s.SenderCompID, s.target(), seq, "")
 	})
-
 	s.handler.OnLogout(s, reason)
-	return io.EOF // signals readLoop to exit cleanly — not an error
+	return io.EOF
 }
 
 func (s *Session) sendLogout(reason string) {
 	if s.State() == StateLoggedOn {
 		s.setState(StateLoggingOut)
 		s.SendWithSeq(func(seq int) []byte {
-			return codec.NewLogout(s.SenderCompID, s.TargetCompID, seq, reason)
+			return codec.NewLogout(s.SenderCompID, s.target(), seq, reason)
 		})
 	}
 }
 
-// ── Heartbeat / TestRequest handling ─────────────────────────────────────────
-
-func (s *Session) handleHeartbeat(msg *codec.Message) error {
-	// Heartbeats reset the "no data received" timer — nothing else to do
-	return nil
+func (s *Session) sendReject(refSeq int, reason, text string) {
+	log.Printf("[%s] rejecting seq %d: 373=%s %s", s.target(), refSeq, reason, text)
+	s.SendWithSeq(func(n int) []byte {
+		return codec.NewReject(s.SenderCompID, s.target(), n, refSeq, reason, text)
+	})
 }
 
-func (s *Session) handleTestRequest(msg *codec.Message) error {
+// ── Heartbeat / TestRequest ───────────────────────────────────────────────────
+
+func (s *Session) handleHeartbeat(msg *codec.Message) {
+	id := msg.Get(codec.TagTestReqID)
+	if id == "" {
+		return
+	}
+	s.hbMu.Lock()
+	defer s.hbMu.Unlock()
+	if id == s.testReqID {
+		s.testReqID = ""
+	} else {
+		log.Printf("[%s] Heartbeat TestReqID %q does not match outstanding %q", s.target(), id, s.testReqID)
+	}
+}
+
+func (s *Session) handleTestRequest(msg *codec.Message) {
 	testReqID := msg.Get(codec.TagTestReqID)
 	s.SendWithSeq(func(seq int) []byte {
-		return codec.NewHeartbeat(s.SenderCompID, s.TargetCompID, seq, testReqID)
+		return codec.NewHeartbeat(s.SenderCompID, s.target(), seq, testReqID)
 	})
-	return nil
 }
 
-// ── Sequence number validation ────────────────────────────────────────────────
+// ── Sequence recovery ─────────────────────────────────────────────────────────
 
-func (s *Session) validateSeqNum(msg *codec.Message) error {
-	seqStr := msg.Get(codec.TagMsgSeqNum)
-	if seqStr == "" {
-		return fmt.Errorf("missing MsgSeqNum (tag 34)")
+// requestResend asks for everything from the next expected seq onwards, once
+// per gap; seq is the out-of-order message that revealed it.
+func (s *Session) requestResend(seq int) {
+	if s.resendTo != 0 {
+		if seq > s.resendTo {
+			s.resendTo = seq
+		}
+		return
 	}
-	seq, err := strconv.Atoi(seqStr)
+	s.resendTo = seq
+	begin := s.inSeqNum
+	log.Printf("[%s] sequence gap: expected %d, got %d — sending ResendRequest", s.target(), begin, seq)
+	s.SendWithSeq(func(n int) []byte {
+		b := codec.NewBuilder(codec.MsgTypeResendRequest, s.SenderCompID, s.target(), n)
+		b.SetInt(codec.TagBeginSeqNo, begin)
+		b.SetInt(codec.TagEndSeqNo, 0)
+		return b.Build()
+	})
+}
+
+// applyNewSeqNo handles SequenceReset: GapFill (after the seq check) or Reset.
+func (s *Session) applyNewSeqNo(msg *codec.Message, seq int) {
+	newSeq := msg.GetInt(codec.TagNewSeqNo)
+	if newSeq <= 0 {
+		s.sendReject(seq, codec.RejectRequiredTagMissing, "NewSeqNo (36) missing")
+		return
+	}
+	if newSeq < s.inSeqNum {
+		s.sendReject(seq, codec.RejectValueIncorrect,
+			fmt.Sprintf("NewSeqNo %d lower than expected %d", newSeq, s.inSeqNum))
+		return
+	}
+	s.inSeqNum = newSeq
+	if s.resendTo != 0 && s.inSeqNum > s.resendTo {
+		s.resendTo = 0
+	}
+}
+
+// handleResendRequest replays stored application messages with PossDupFlag=Y
+// and replaces administrative or missing ones with SequenceReset-GapFill.
+func (s *Session) handleResendRequest(msg *codec.Message) {
+	begin := msg.GetInt(codec.TagBeginSeqNo)
+	end := msg.GetInt(codec.TagEndSeqNo)
+
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	last := int(s.outSeqNum) - 1
+	if begin < 1 {
+		begin = 1
+	}
+	if end == 0 || end > last {
+		end = last
+	}
+	target := s.target()
+	log.Printf("[%s] ResendRequest %d..%d", target, begin, end)
+
+	gapStart := 0
+	flushGap := func(next int) bool {
+		if gapStart == 0 {
+			return true
+		}
+		b := codec.NewBuilder(codec.MsgTypeSequenceReset, s.SenderCompID, target, gapStart)
+		b.Set(codec.TagPossDupFlag, "Y")
+		b.Set(codec.TagOrigSendingTime, time.Now().UTC().Format(fixTimeLayout))
+		b.Set(codec.TagGapFillFlag, "Y")
+		b.SetInt(codec.TagNewSeqNo, next)
+		gapStart = 0
+		return s.enqueueLocked(b.Build())
+	}
+	for seq := begin; seq <= end; seq++ {
+		m := s.storedMessage(seq)
+		if m == nil || isAdminMsgType(m.MsgType()) {
+			if gapStart == 0 {
+				gapStart = seq
+			}
+			continue
+		}
+		if !flushGap(seq) || !s.enqueueLocked(resendFrame(m, s.SenderCompID, target, seq)) {
+			return
+		}
+	}
+	flushGap(end + 1)
+}
+
+func (s *Session) storedMessage(seq int) *codec.Message {
+	raw, ok := s.Store.Get(seq)
+	if !ok {
+		return nil
+	}
+	m, err := codec.NewParser(bytes.NewReader(raw)).ReadMessage()
 	if err != nil {
-		return fmt.Errorf("invalid MsgSeqNum %q: %w", seqStr, err)
+		return nil
 	}
+	return m
+}
 
-	if seq < s.inSeqNum {
-		// Sequence number too low — potential replay attack or reset issue
-		return fmt.Errorf("MsgSeqNum %d too low (expected %d)", seq, s.inSeqNum)
+// resendFrame rebuilds a stored message as a retransmission: same MsgSeqNum,
+// PossDupFlag=Y, OrigSendingTime = original SendingTime, fresh SendingTime.
+func resendFrame(m *codec.Message, sender, target string, seq int) []byte {
+	b := codec.NewBuilder(m.MsgType(), sender, target, seq)
+	b.Set(codec.TagPossDupFlag, "Y")
+	b.Set(codec.TagOrigSendingTime, m.Get(codec.TagSendingTime))
+	for _, f := range m.Tags {
+		switch f.Tag {
+		case codec.TagBeginString, codec.TagBodyLength, codec.TagCheckSum, codec.TagMsgType,
+			codec.TagSenderCompID, codec.TagTargetCompID, codec.TagMsgSeqNum, codec.TagSendingTime,
+			codec.TagPossDupFlag, codec.TagOrigSendingTime:
+			continue
+		}
+		b.Append(f.Tag, f.Value)
 	}
-	if seq > s.inSeqNum {
-		// Gap detected — log and continue (simplified; production would send ResendRequest)
-		log.Printf("[%s] sequence gap: expected %d, got %d", s.TargetCompID, s.inSeqNum, seq)
-	}
-
-	s.inSeqNum = seq + 1
-	return nil
+	return b.Build()
 }
 
 // ── Heartbeat loop ────────────────────────────────────────────────────────────
 
+// heartbeatLoop sends Heartbeats when idle, sends a TestRequest when the peer
+// has been silent for HeartBtInt (+20%), and disconnects if no Heartbeat with
+// the matching TestReqID arrives within another HeartBtInt.
 func (s *Session) heartbeatLoop() {
 	for {
 		interval := s.heartbeatInterval()
-		timer := time.NewTimer(interval)
 		select {
 		case <-s.done:
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-time.After(interval / 4):
 		}
-
 		if s.State() != StateLoggedOn {
 			continue
 		}
 
-		// Send Heartbeat if no outbound message sent in the last HeartBtInt seconds
 		if s.sinceLastSent() >= interval {
 			s.SendWithSeq(func(seq int) []byte {
-				log.Printf("[%s] Heartbeat sent (seq=%d)", s.TargetCompID, seq)
-				return codec.NewHeartbeat(s.SenderCompID, s.TargetCompID, seq, "")
+				return codec.NewHeartbeat(s.SenderCompID, s.target(), seq, "")
 			})
 		}
 
-		// Check if client has gone silent (no inbound in 2× HeartBtInt)
-		if time.Since(s.lastReceived) > 2*interval {
-			log.Printf("[%s] no data received in %v — sending TestRequest", s.TargetCompID, 2*interval)
-			testID := fmt.Sprintf("TEST-%d", time.Now().UnixNano())
+		s.hbMu.Lock()
+		pending, sentAt := s.testReqID, s.testReqSentAt
+		s.hbMu.Unlock()
+		if pending != "" {
+			if time.Since(sentAt) >= interval {
+				log.Printf("[%s] no Heartbeat for TestRequest %s within %v — disconnecting", s.target(), pending, interval)
+				s.sendLogout("TestRequest timeout")
+				s.flush(flushTimeout)
+				s.close()
+				return
+			}
+			continue
+		}
+		if s.sinceLastReceived() >= interval+interval/5 {
+			id := fmt.Sprintf("TEST-%d", time.Now().UnixNano())
+			s.hbMu.Lock()
+			s.testReqID, s.testReqSentAt = id, time.Now()
+			s.hbMu.Unlock()
 			s.SendWithSeq(func(seq int) []byte {
-				b := codec.NewBuilder(codec.MsgTypeTestRequest, s.SenderCompID, s.TargetCompID, seq)
-				b.Set(codec.TagTestReqID, testID)
+				b := codec.NewBuilder(codec.MsgTypeTestRequest, s.SenderCompID, s.target(), seq)
+				b.Set(codec.TagTestReqID, id)
 				return b.Build()
 			})
 		}
@@ -413,10 +701,23 @@ func (s *Session) writeLoop() {
 			return
 		case frame := <-s.sendCh:
 			if _, err := s.conn.Write(frame); err != nil {
-				log.Printf("[%s] write error: %v", s.TargetCompID, err)
+				log.Printf("[%s] write error: %v", s.target(), err)
 				s.close()
 				return
 			}
+			s.written.Add(1)
+		}
+	}
+}
+
+// flush waits (bounded) until every queued frame has been written.
+func (s *Session) flush(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for s.written.Load() < s.queued.Load() && time.Now().Before(deadline) {
+		select {
+		case <-s.done:
+			return
+		case <-time.After(2 * time.Millisecond):
 		}
 	}
 }
@@ -428,6 +729,6 @@ func (s *Session) close() {
 		s.setState(StateDisconnected)
 		close(s.done)
 		s.conn.Close()
-		log.Printf("[%s] session closed", s.TargetCompID)
+		log.Printf("[%s] session closed", s.target())
 	})
 }

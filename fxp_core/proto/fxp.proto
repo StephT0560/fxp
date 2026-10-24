@@ -228,6 +228,8 @@ message ExecutionReport {
   string                    client_order_id   = 14; // echoed from NewOrderSingle if set
   string                    orig_order_id     = 15; // original order_id (on REPLACED reports)
   string                    reject_reason     = 16; // human-readable (on EXEC_REJECTED)
+  OrderSide                 side              = 17; // side of the order
+  int32                     order_quantity    = 18; // total order quantity (FIX OrderQty)
 
   // Field numbers 1000–1999 reserved for firm-specific extensions.
 }

@@ -61,6 +61,12 @@ func (b *Builder) Set(tag int, value string) *Builder {
 	return b
 }
 
+// Append adds a tag without replacing earlier occurrences (repeating groups).
+func (b *Builder) Append(tag int, value string) *Builder {
+	b.fields = append(b.fields, Field{Tag: tag, Value: value})
+	return b
+}
+
 // SetInt adds or replaces a tag with an integer value.
 func (b *Builder) SetInt(tag int, value int) *Builder {
 	return b.Set(tag, strconv.Itoa(value))

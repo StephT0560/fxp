@@ -360,12 +360,22 @@ fn test_stop_limit_rests_after_trigger() {
     book.add_order(resting);
     let (fills, _) = book.match_orders();
 
-    // The StopLimit sell rests at 98_00 and crosses the 99_00 bid.
-    // Passive matching fills at the ask price (98_00) — the arriving sell
-    // is the "ask" side when added to the book.
+    // The StopLimit sell arrives at 98_00 and crosses the resting 99_00 bid.
+    // Trades execute at the resting order's price, so the fill is at 99_00.
     assert_eq!(fills.len(), 1);
-    assert_eq!(fills[0].trade_price, 98_00, "Fills at ask price — arriving sell sets the price");
+    assert_eq!(fills[0].trade_price, 99_00, "Fills at the resting bid price");
     assert_eq!(fills[0].trade_quantity, 50);
+}
+
+#[test]
+fn test_p03_passive_cross_at_resting_price() {
+    use crate::order_book::order::{OrderSide, OrderType, TimeInForce};
+    let mut book = test_helpers::make_book();
+    book.add_order(test_helpers::make_order("BID", OrderSide::Buy, 101_00, 10, OrderType::Limit, TimeInForce::GTC));
+    book.add_order(test_helpers::make_order("ASK", OrderSide::Sell, 99_00, 10, OrderType::Limit, TimeInForce::GTC));
+    let (fills, _) = book.match_orders();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].trade_price, 101_00, "Aggressor sell executes at the resting bid price");
 }
 
 #[test]
@@ -633,6 +643,16 @@ mod critical_tests {
         assert_eq!((r.trader_id.as_str(), r.price, r.quantity), ("VICTIM", 101_00, 10));
     }
 
+    #[test]
+    fn p08_fok_liquidity_sum_does_not_overflow() {
+        let mut book = make_book();
+        book.add_order(make_order("A1", OrderSide::Sell, 100_00, u32::MAX, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("A2", OrderSide::Sell, 101_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let r = book.process_aggressive(make_order("F1", OrderSide::Buy, 101_00, 20, OrderType::Limit, TimeInForce::FOK));
+        assert_eq!(r.unfilled_qty, 0);
+        assert_eq!(r.fills.iter().map(|f| f.trade_quantity).sum::<u32>(), 20);
+    }
+
     // ── Reference model: price-time priority with a flat Vec ──────────────────
 
     #[derive(Clone)]
@@ -646,7 +666,7 @@ mod critical_tests {
     impl RefBook {
         /// Match an incoming order against the opposite side: best price first,
         /// then earliest arrival. `passive_rest` = true models Day/GTC limits
-        /// (remainder rests; trade price = ask price, mirroring match_orders).
+        /// (remainder rests). Trades always execute at the resting order's price.
         fn submit(&mut self, id: &str, side: OrderSide, price: i64, mut qty: u32, passive_rest: bool) -> Vec<RefFill> {
             let mut fills = Vec::new();
             while qty > 0 {
@@ -660,9 +680,7 @@ mod critical_tests {
                 let Some(i) = best else { break };
                 let q = qty.min(self.orders[i].qty);
                 let resting = self.orders[i].clone();
-                let px = if passive_rest {
-                    match side { OrderSide::Buy => resting.price, OrderSide::Sell => price }
-                } else { resting.price };
+                let px = resting.price;
                 fills.push(match side {
                     OrderSide::Buy  => (id.to_string(), resting.id.clone(), px, q),
                     OrderSide::Sell => (resting.id.clone(), id.to_string(), px, q),
