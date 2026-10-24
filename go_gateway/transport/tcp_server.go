@@ -58,7 +58,7 @@ func handleTCPClient(clientConn net.Conn) {
 	sessionID := ""
 	defer func() {
 		if sessionID != "" {
-			invalidateSession(sessionID)
+			endSession(sessionID)
 		}
 	}()
 	bucket := newTokenBucket(lim.RatePerSec, lim.RateBurst)

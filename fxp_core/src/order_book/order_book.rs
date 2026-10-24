@@ -4,6 +4,7 @@ use crate::order_book::broadcaster::MarketDataBroadcaster;
 use crate::order_book::market_data::{
     MarketDataIncrementalUpdate, MarketDataSnapshot, MarketOrderUpdate, MarketUpdateType,
 };
+use crate::order_book::matcher::StpOutcome;
 use crate::order_book::order::Order;
 use crate::order_book::order::OrderSide;
 use crate::order_book::order::TimeInForce;
@@ -23,6 +24,8 @@ pub struct OrderBook {
     /// Arrival sequence of each live order; the lower value is the resting side.
     pub arrival: HashMap<String, u64>,
     next_arrival: u64,
+    /// Self-trade prevention results of the last matching call.
+    pub stp: StpOutcome,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +73,7 @@ impl OrderBook {
             cum_filled: HashMap::new(),
             arrival: HashMap::new(),
             next_arrival: 0,
+            stp: StpOutcome::default(),
         }
     }
 

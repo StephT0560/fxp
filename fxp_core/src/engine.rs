@@ -3,7 +3,8 @@
 use crate::fxp;
 use crate::order_book::broadcaster::MarketDataBroadcaster;
 use crate::order_book::market_data::{MarketDataIncrementalUpdate, MarketUpdateType};
-use crate::order_book::order::{Order, OrderSide, OrderType, TimeInForce};
+use crate::order_book::matcher::{StpAction, StpEvent};
+use crate::order_book::order::{Order, OrderSide, OrderType, Stp, StpMode, TimeInForce};
 use crate::order_book::order_book::{OrderBook, OrderReject, OrderReplace};
 use crate::order_book::stops::{Execution, StopBook, StopReplace, run_stop_cascade, stop_fires};
 use prost_types::Timestamp;
@@ -12,11 +13,15 @@ use std::sync::Arc;
 
 pub mod auction;
 #[cfg(test)]
+mod mass_cancel_tests;
+#[cfg(test)]
 mod persistence_tests;
 #[cfg(test)]
 mod phase_tests;
 mod phases;
 mod session;
+#[cfg(test)]
+mod stp_tests;
 use session::expiry_instant;
 pub use session::{SessionSchedule, UtcTimeOfDay};
 
@@ -42,6 +47,19 @@ pub struct CancelReplaceMsg<R> {
     pub new_time_in_force: i32,
     pub new_stop_price: i64, // 0 = no change (parked stops only)
     pub output_tx: R,
+}
+
+/// Cancel every live order of `sender` in this symbol (book, parked stops,
+/// auction-held orders), optionally only one side.
+pub struct MassCancelMsg {
+    pub sender: String,
+    /// `fxp::OrderSide`; 0 = both sides.
+    pub side: i32,
+    /// Echoed only on the mass-cancel report; each canceled order's ER keeps
+    /// that order's own client_order_id.
+    pub client_request_id: String,
+    /// `fxp::MassCancelReason`.
+    pub reason: i32,
 }
 
 enum SymbolMsg<R> {
@@ -79,6 +97,21 @@ fn parse_order_enums(
         Err(_) => return Err(format!("unknown time_in_force {}", order.time_in_force)),
     };
     Ok((side, order_type, time_in_force))
+}
+
+/// Resolve an order's STP instruction: `(mode, explicitly requested)`.
+fn parse_stp(value: i32, default: StpMode) -> Result<(StpMode, bool), String> {
+    use fxp::SelfTradePrevention as P;
+    let explicit = |mode| Ok((mode, true));
+    match P::try_from(value) {
+        Ok(P::Unspecified) => Ok((default, false)),
+        Ok(P::None) => Ok((StpMode::None, false)),
+        Ok(P::CancelNewest) => explicit(StpMode::CancelNewest),
+        Ok(P::CancelOldest) => explicit(StpMode::CancelOldest),
+        Ok(P::CancelBoth) => explicit(StpMode::CancelBoth),
+        Ok(P::DecrementAndCancel) => explicit(StpMode::DecrementAndCancel),
+        Err(_) => Err(format!("unknown stp_mode {value}")),
+    }
 }
 
 fn parse_replace_time_in_force(value: i32) -> Result<Option<TimeInForce>, String> {
@@ -121,6 +154,8 @@ pub enum Output<R> {
     ExecutionReport(R, fxp::ExecutionReport),
     MarketData(fxp::MarketDataIncrementalUpdate),
     Snapshot(R, fxp::MarketDataSnapshot),
+    /// Number of orders a mass cancel canceled; follows their reports.
+    MassCancelCount(u32),
 }
 
 pub struct Engine<R, C, I> {
@@ -138,6 +173,7 @@ pub struct Engine<R, C, I> {
     call_markets: HashMap<String, Order>,
     held_close: HashMap<String, Order>,
     last_indicative: Option<auction::AuctionResult>,
+    stp_default: StpMode,
 }
 
 impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
@@ -164,7 +200,13 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             call_markets: HashMap::new(),
             held_close: HashMap::new(),
             last_indicative: Some(auction::AuctionResult::default()),
+            stp_default: StpMode::None,
         }
+    }
+    /// Self-trade prevention applied to orders with `STP_UNSPECIFIED`.
+    pub fn with_stp_default(mut self, mode: StpMode) -> Self {
+        self.stp_default = mode;
+        self
     }
     pub fn new_order(&mut self, order: fxp::NewOrderSingle, owner: R) -> Vec<Output<R>> {
         self.process(SymbolMsg::Order(OrderMsg {
@@ -177,6 +219,44 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
     }
     pub fn cancel_replace(&mut self, request: CancelReplaceMsg<R>) -> Vec<Output<R>> {
         self.process(SymbolMsg::CancelReplace(request))
+    }
+    pub fn mass_cancel(&mut self, request: MassCancelMsg) -> Vec<Output<R>> {
+        let mut outputs = self.tick();
+        let ts = phases::timestamp(self.clock.now());
+        let mut targets: Vec<(u64, String)> = self
+            .states
+            .iter()
+            .filter(|(_, s)| {
+                s.sender == request.sender && (request.side == 0 || s.side == request.side)
+            })
+            .map(|(id, s)| (s.arrival, id.clone()))
+            .collect();
+        targets.sort();
+        let reason = match fxp::MassCancelReason::try_from(request.reason) {
+            Ok(fxp::MassCancelReason::Disconnect) => "cancel on disconnect",
+            _ => "mass cancel",
+        };
+        for (_, id) in &targets {
+            let md = self.remove_live(id);
+            let state = self.states.remove(id).expect("live order state");
+            let ev = ReportEvent {
+                reject_reason: reason,
+                ..ReportEvent::new(
+                    fxp::ExecutionType::ExecCanceled,
+                    fxp::OrderStatus::OrderCanceled,
+                )
+            };
+            outputs.push(Output::ExecutionReport(
+                state.output_tx.clone(),
+                build_report(&mut self.ids, id, &self.symbol, Some(&state), ev, &ts),
+            ));
+            if let Some(md) = md {
+                outputs.push(Output::MarketData(build_md_update(&md, &ts)));
+            }
+        }
+        outputs.push(Output::MassCancelCount(targets.len() as u32));
+        self.publish_indicative(self.clock.now(), &mut outputs);
+        outputs
     }
     pub fn subscribe(&mut self, owner: R) -> Vec<Output<R>> {
         let mut outputs = self.tick();
@@ -464,12 +544,8 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             }
 
                             // Immediate fills from the replacement can trigger parked stops
-                            let (fills, fill_updates) = book.match_orders();
-                            let mut exec = Execution {
-                                fills,
-                                fill_updates,
-                                ..Default::default()
-                            };
+                            let mut exec = Execution::default();
+                            book.match_into(&mut exec);
                             run_stop_cascade(book, stop_book, last_trade_price, &mut exec);
                             outputs.push(Output::MarketData(build_md_update(&inc, &ts)));
                             report_execution(ids, &mut outputs, exec, states, symbol, &ts);
@@ -483,6 +559,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                     let now = self.clock.now();
 
                     let parsed_enums = parse_order_enums(&order);
+                    let stp = parse_stp(order.stp_mode, self.stp_default);
                     let is_limit = match &parsed_enums {
                         Ok((_, order_type, _)) => {
                             matches!(order_type, OrderType::Limit | OrderType::StopLimit)
@@ -499,6 +576,14 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         }
                         Ok(_) if states.contains_key(&order.order_id) => {
                             Some("Duplicate order id".into())
+                        }
+                        Ok(_) if stp.is_err() => stp.clone().err(),
+                        Ok((_, _, TimeInForce::AtOpen | TimeInForce::AtClose))
+                            if stp.as_ref().is_ok_and(|&(mode, explicit)| {
+                                explicit && mode != StpMode::None
+                            }) =>
+                        {
+                            Some("self-trade prevention is not supported for auction orders".into())
                         }
                         Ok((_, ty, tif))
                             if phases::entry_reason(phase, full_schedule, *ty, *tif).is_some() =>
@@ -553,6 +638,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         expire_date: order.expire_date.clone(),
                         account: order.account.clone(),
                         client_order_id: order.client_order_id.clone(),
+                        stp: Stp {
+                            mode: stp.expect("stp_mode validated").0,
+                            group: order.stp_group.clone(),
+                        },
                     };
 
                     let state =
@@ -935,7 +1024,11 @@ fn report_execution<R: Clone>(
     symbol: &str,
     ts: &Option<Timestamp>,
 ) {
-    for f in &exec.fills {
+    let mut stp = exec.stp.iter().peekable();
+    for (i, f) in exec.fills.iter().enumerate() {
+        while let Some(e) = stp.next_if(|e| e.before_fill <= i) {
+            report_stp(ids, outputs, states, symbol, e, ts);
+        }
         for id in [&f.buy_order_id, &f.sell_order_id] {
             if let Some((frame, tx)) =
                 apply_fill(ids, states, id, symbol, f.trade_price, f.trade_quantity, ts)
@@ -943,6 +1036,9 @@ fn report_execution<R: Clone>(
                 outputs.push(Output::ExecutionReport(tx.clone(), frame));
             }
         }
+    }
+    for e in stp {
+        report_stp(ids, outputs, states, symbol, e, ts);
     }
     for id in &exec.cancels {
         if let Some(st) = states.remove(id) {
@@ -956,9 +1052,73 @@ fn report_execution<R: Clone>(
             ));
         }
     }
-    for inc in exec.rested.iter().chain(&exec.fill_updates) {
+    for inc in exec
+        .rested
+        .iter()
+        .chain(&exec.stp_updates)
+        .chain(&exec.fill_updates)
+    {
         outputs.push(Output::MarketData(build_md_update(inc, ts)));
     }
+}
+
+/// EXEC_CANCELED (or EXEC_RESTATED for a reduced survivor) for a prevented
+/// self-match, with the STP mode as the reason.
+fn report_stp<R: Clone>(
+    ids: &mut impl ExecIds,
+    outputs: &mut Vec<Output<R>>,
+    states: &mut HashMap<String, OrderState<R>>,
+    symbol: &str,
+    e: &StpEvent,
+    ts: &Option<Timestamp>,
+) {
+    let reason = format!("self-trade prevention ({})", e.mode.as_str());
+    let (st, ev) = match e.action {
+        StpAction::Canceled => {
+            let Some(st) = states.remove(&e.order_id) else {
+                return;
+            };
+            let ev = ReportEvent::new(
+                fxp::ExecutionType::ExecCanceled,
+                fxp::OrderStatus::OrderCanceled,
+            );
+            (st, ev)
+        }
+        StpAction::Restated(by) => {
+            let Some(st) = states.get_mut(&e.order_id) else {
+                return;
+            };
+            st.order_qty = st.order_qty.saturating_sub(by);
+            let status = if st.cum_qty > 0 {
+                fxp::OrderStatus::OrderPartiallyFilled
+            } else {
+                fxp::OrderStatus::OrderNew
+            };
+            let ev = ReportEvent {
+                leaves: st.leaves(),
+                ..ReportEvent::new(fxp::ExecutionType::ExecRestated, status)
+            };
+            (
+                OrderState {
+                    sender: st.sender.clone(),
+                    expire_date: st.expire_date.clone(),
+                    account: st.account.clone(),
+                    client_order_id: st.client_order_id.clone(),
+                    output_tx: st.output_tx.clone(),
+                    ..*st
+                },
+                ev,
+            )
+        }
+    };
+    let ev = ReportEvent {
+        reject_reason: &reason,
+        ..ev
+    };
+    outputs.push(Output::ExecutionReport(
+        st.output_tx.clone(),
+        build_report(ids, &e.order_id, symbol, Some(&st), ev, ts),
+    ));
 }
 
 /// Full-depth snapshot: bids best (highest) first, asks best (lowest) first.

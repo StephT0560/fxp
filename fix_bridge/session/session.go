@@ -67,6 +67,12 @@ type Handler interface {
 	OnLogout(session *Session, reason string)
 }
 
+// DisconnectHandler is optionally implemented by a Handler to run once the
+// session's connection has closed for any reason, before its store is released.
+type DisconnectHandler interface {
+	OnDisconnect(session *Session)
+}
+
 // Session manages one FIX session over a TCP connection.
 type Session struct {
 	conn    net.Conn
@@ -88,6 +94,8 @@ type Session struct {
 	// Identity
 	SenderCompID string // bridge's CompID
 	TargetCompID string // client's CompID; written under stateMu at Logon
+	// CancelOnDisconnect is Logon tag 8013=Y; written under stateMu at Logon.
+	CancelOnDisconnect bool
 
 	outSeqNum int64 // next outbound MsgSeqNum (guarded by sendMu)
 	inSeqNum  int   // next expected inbound MsgSeqNum (readLoop only)
@@ -154,6 +162,10 @@ func (s *Session) Run() {
 	defer func() {
 		s.flush(flushTimeout)
 		s.close()
+		// Messages sent from OnDisconnect are still persisted for resend.
+		if dh, ok := s.handler.(DisconnectHandler); ok {
+			dh.OnDisconnect(s)
+		}
 		s.releaseStore()
 	}()
 	go s.writeLoop()
@@ -517,6 +529,11 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	if seq < s.inSeqNum {
 		return s.rejectLogon(msg, fmt.Sprintf("MsgSeqNum too low, expecting %d but received %d", s.inSeqNum, seq))
 	}
+	cod := msg.Get(codec.TagCancelOnDisconnect)
+	if cod != "" && cod != "Y" && cod != "N" {
+		return s.rejectLogon(msg, "invalid CancelOnDisconnect (8013); expected Y or N")
+	}
+
 	gap := seq > s.inSeqNum
 	if !gap {
 		if err := s.setInSeq(seq + 1); err != nil {
@@ -526,6 +543,7 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 
 	s.stateMu.Lock()
 	s.TargetCompID = sender
+	s.CancelOnDisconnect = cod == "Y"
 	if hbi := msg.GetInt(codec.TagHeartBtInt); hbi > 0 {
 		s.heartBtInt = hbi
 	}

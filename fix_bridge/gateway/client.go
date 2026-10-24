@@ -71,6 +71,9 @@ type Client struct {
 	once       sync.Once
 	userClosed atomic.Bool
 
+	// CancelOnDisconnect is sent on the gateway Logon; set before Connect.
+	CancelOnDisconnect bool
+
 	inflightMu sync.Mutex
 	inflight   []byte // frame whose write failed; returned by DrainPending
 	connected  bool
@@ -225,9 +228,10 @@ func (c *Client) sendLogon() error {
 	msg := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_Logon{
 			Logon: &protobuf.Logon{
-				Token:     token,
-				SessionId: c.sessionID,
-				Timestamp: timestamppb.Now(),
+				Token:              token,
+				SessionId:          c.sessionID,
+				Timestamp:          timestamppb.Now(),
+				CancelOnDisconnect: c.CancelOnDisconnect,
 			},
 		},
 	}

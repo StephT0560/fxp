@@ -209,31 +209,71 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string, owner string
 		stored = registerRoute(orderID, orderRoute{conn: clientConn, owner: owner})
 	}
 
+	if err := writeToCore(frame); err != nil {
+		log.Printf("❌ OrderID %s not sent to core: %v", orderID, err)
+		if stored {
+			orderClientMap.Delete(orderID)
+		}
+		inflightRequests.Delete(orderID)
+		return
+	}
+	slog.Debug("order sent via pool", "order_id", orderID)
+}
+
+// writeToCore writes one frame on a pooled connection, reconnecting and
+// retrying once if the write fails.
+func writeToCore(frame []byte) error {
 	pc := acquire()
 	defer release(pc)
-
 	if err := pc.write(frame); err != nil {
-		log.Printf("❌ Pool conn %d write failed (OrderID %s): %v — reconnecting", pc.id, orderID, err)
+		log.Printf("❌ Pool conn %d write failed: %v — reconnecting", pc.id, err)
 		if rerr := pc.reconnect(); rerr != nil {
-			log.Printf("❌ Pool conn %d reconnect failed: %v", pc.id, rerr)
-			if stored {
-				orderClientMap.Delete(orderID)
-			}
-			inflightRequests.Delete(orderID)
-			return
+			return fmt.Errorf("pool conn %d reconnect: %w", pc.id, rerr)
 		}
 		// The connection's existing poolReader picks up the new conn.
-		// Retry once
-		if err = pc.write(frame); err != nil {
-			log.Printf("❌ Pool conn %d retry failed (OrderID %s): %v", pc.id, orderID, err)
-			if stored {
-				orderClientMap.Delete(orderID)
-			}
-			inflightRequests.Delete(orderID)
-			return
+		if err := pc.write(frame); err != nil {
+			return fmt.Errorf("pool conn %d retry: %w", pc.id, err)
 		}
 	}
-	slog.Debug("order sent via pool", "order_id", orderID, "conn", pc.id)
+	return nil
+}
+
+func frameBytes(raw []byte) []byte {
+	frame := make([]byte, 4+len(raw))
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
+	copy(frame[4:], raw)
+	return frame
+}
+
+// massCancelRoutes queues, per (owner, client_request_id), the connections
+// waiting for an OrderMassCancelReport. Cancel-on-disconnect requests have
+// no route; their reports are dropped.
+var (
+	massCancelMu     sync.Mutex
+	massCancelRoutes = map[[2]string][]any{}
+)
+
+func pushMassCancelRoute(owner, requestID string, conn any) {
+	massCancelMu.Lock()
+	defer massCancelMu.Unlock()
+	key := [2]string{owner, requestID}
+	massCancelRoutes[key] = append(massCancelRoutes[key], conn)
+}
+
+func popMassCancelRoute(owner, requestID string) any {
+	massCancelMu.Lock()
+	defer massCancelMu.Unlock()
+	key := [2]string{owner, requestID}
+	queue := massCancelRoutes[key]
+	if len(queue) == 0 {
+		return nil
+	}
+	if len(queue) == 1 {
+		delete(massCancelRoutes, key)
+	} else {
+		massCancelRoutes[key] = queue[1:]
+	}
+	return queue[0]
 }
 
 // ── poolReader ────────────────────────────────────────────────────────────────
@@ -366,6 +406,16 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		if !terminal && isCanceled {
 			slog.Debug("cancel with leaves>0; keeping order in client map", "order_id", orderID)
 		}
+
+	case *protobuf.FXPMessage_OrderMassCancelReport:
+		rep := payload.OrderMassCancelReport
+		conn := popMassCancelRoute(rep.Sender, rep.ClientRequestId)
+		if conn == nil {
+			slog.Debug("mass cancel report without requester", "sender", rep.Sender, "affected", rep.TotalAffected)
+			return
+		}
+		encoded, _ := proto.Marshal(msg)
+		deliverReport(conn, encoded, "mass-cancel:"+rep.ClientRequestId)
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
 		slog.Debug("MarketDataIncrementalUpdate received", "symbol", payload.MarketDataIncremental.Symbol)

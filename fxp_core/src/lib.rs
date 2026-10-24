@@ -10,11 +10,11 @@ pub mod fxp {
     include!(concat!(env!("OUT_DIR"), "/fxp.rs"));
 }
 
-pub const PROTOCOL_VERSION: &str = "2.1";
+pub const PROTOCOL_VERSION: &str = "2.2";
 
 #[test]
 fn protocol_version_is_v2() {
-    assert_eq!(PROTOCOL_VERSION, "2.1");
+    assert_eq!(PROTOCOL_VERSION, "2.2");
 }
 
 // ── Shared test helpers ───────────────────────────────────────────────────────
@@ -52,6 +52,7 @@ mod test_helpers {
             expire_date: String::new(),
             account: String::new(),
             client_order_id: String::new(),
+            stp: Default::default(),
         }
     }
 
@@ -108,6 +109,7 @@ fn test_full_order_lifecycle() {
         expire_date: String::new(),
         account: String::new(),
         client_order_id: String::new(),
+        stp: Default::default(),
     });
 
     book.add_order(Order {
@@ -124,6 +126,7 @@ fn test_full_order_lifecycle() {
         expire_date: String::new(),
         account: String::new(),
         client_order_id: String::new(),
+        stp: Default::default(),
     });
 
     let (fills, updates) = book.match_orders();

@@ -21,6 +21,7 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - FXP_SESSION_SCHEDULE
       - FXP_EVENT_LOG
+      - FXP_STP_DEFAULT
     volumes:
       - core_store:/data/core_store
     ports:

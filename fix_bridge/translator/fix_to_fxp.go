@@ -47,6 +47,8 @@ func TranslateFIXtoFXP(msg *codec.Message) (*protobuf.FXPMessage, error) {
 		return translateCancelRequest(msg)
 	case codec.MsgTypeOrderCancelReplaceRequest:
 		return translateCancelReplaceRequest(msg)
+	case codec.MsgTypeOrderMassCancelRequest:
+		return translateMassCancel(msg)
 	case codec.MsgTypeMarketDataRequest:
 		return translateMarketDataRequest(msg)
 	default:
@@ -145,6 +147,10 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 		}
 	}
 	sender := msg.Get(codec.TagSenderCompID)
+	stpMode, err := mapSTPInstruction(msg.Get(codec.TagSelfMatchPreventionInstruction))
+	if err != nil {
+		return nil, err
+	}
 
 	order := &protobuf.NewOrderSingle{
 		Header: &protobuf.FXPHeader{
@@ -164,6 +170,8 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 		Account:       account,
 		ExpireDate:    expireDate,
 		Timestamp:     timestamppb.Now(),
+		StpMode:       stpMode,
+		StpGroup:      msg.Get(codec.TagSelfMatchPreventionID),
 	}
 
 	return &protobuf.FXPMessage{
@@ -319,6 +327,66 @@ func translateMarketDataRequest(msg *codec.Message) (*protobuf.FXPMessage, error
 }
 
 // ── Field mapping helpers ─────────────────────────────────────────────────────
+
+// mapSTPInstruction maps SelfMatchPreventionInstruction (2964). Absent means
+// the engine default (FXP_STP_DEFAULT); 99 is an FXP extension.
+func mapSTPInstruction(s string) (protobuf.SelfTradePrevention, error) {
+	switch s {
+	case "":
+		return protobuf.SelfTradePrevention_SELF_TRADE_PREVENTION_UNSPECIFIED, nil
+	case "1":
+		return protobuf.SelfTradePrevention_SELF_TRADE_PREVENTION_CANCEL_NEWEST, nil
+	case "2":
+		return protobuf.SelfTradePrevention_SELF_TRADE_PREVENTION_CANCEL_OLDEST, nil
+	case "3":
+		return protobuf.SelfTradePrevention_SELF_TRADE_PREVENTION_CANCEL_BOTH, nil
+	case "99":
+		return protobuf.SelfTradePrevention_SELF_TRADE_PREVENTION_DECREMENT_AND_CANCEL, nil
+	}
+	return 0, fmt.Errorf("unsupported SelfMatchPreventionInstruction (2964) %q", s)
+}
+
+// MassCancelRejectError is a 35=q the bridge answers itself with a rejected
+// 35=r (531=0) instead of forwarding it.
+type MassCancelRejectError struct {
+	Reason string // MassCancelRejectReason (532)
+	Text   string
+}
+
+func (e *MassCancelRejectError) Error() string { return e.Text }
+
+// translateMassCancel maps 35=q. Supported MassCancelRequestType (530):
+// 7 = all orders, 1 = orders for one Symbol (55); Side (54) optionally
+// narrows either to one side.
+func translateMassCancel(msg *codec.Message) (*protobuf.FXPMessage, error) {
+	req := &protobuf.OrderMassCancelRequest{
+		Sender:          msg.Get(codec.TagSenderCompID),
+		ClientRequestId: msg.Get(codec.TagClOrdID),
+		Reason:          protobuf.MassCancelReason_MASS_CANCEL_REASON_REQUEST,
+		Timestamp:       timestamppb.Now(),
+	}
+	switch t := msg.Get(codec.TagMassCancelRequestType); t {
+	case "7":
+	case "1":
+		req.Symbol = msg.Get(codec.TagSymbol)
+		if req.Symbol == "" {
+			return nil, &MassCancelRejectError{Reason: "1", Text: "MassCancelRequestType=1 requires Symbol (55)"}
+		}
+	default:
+		return nil, &MassCancelRejectError{Reason: "0",
+			Text: fmt.Sprintf("unsupported MassCancelRequestType (530) %q; supported: 1 (symbol), 7 (all orders)", t)}
+	}
+	if s := msg.Get(codec.TagSide); s != "" {
+		side, err := mapSide(s)
+		if err != nil {
+			return nil, &MassCancelRejectError{Reason: "99", Text: err.Error()}
+		}
+		req.Side = side
+	}
+	return &protobuf.FXPMessage{
+		Payload: &protobuf.FXPMessage_OrderMassCancel{OrderMassCancel: req},
+	}, nil
+}
 
 func mapSide(s string) (protobuf.OrderSide, error) {
 	switch s {

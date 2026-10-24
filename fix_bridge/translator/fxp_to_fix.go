@@ -68,6 +68,9 @@ func TranslateFXPtoFIX(
 		}
 		return translateMarketDataIncremental(payload.MarketDataIncremental, senderCompID, targetCompID, seqNum, reqID)
 
+	case *protobuf.FXPMessage_OrderMassCancelReport:
+		return translateMassCancelReport(payload.OrderMassCancelReport, senderCompID, targetCompID, seqNum)
+
 	case *protobuf.FXPMessage_LogonAck:
 		// Already handled during connect — not forwarded to FIX client
 		return nil
@@ -279,6 +282,8 @@ func mapExecType(et protobuf.ExecutionType) (string, error) {
 		return codec.ExecTypeRejected, nil
 	case protobuf.ExecutionType_EXEC_EXPIRED:
 		return codec.ExecTypeExpired, nil
+	case protobuf.ExecutionType_EXEC_RESTATED:
+		return codec.ExecTypeRestated, nil
 	case protobuf.ExecutionType_EXEC_PENDING_CANCEL:
 		return "6", nil
 	case protobuf.ExecutionType_EXEC_PENDING_REPLACE:
@@ -286,6 +291,45 @@ func mapExecType(et protobuf.ExecutionType) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown or unspecified execution_type %d", et)
 	}
+}
+
+// translateMassCancelReport maps OrderMassCancelReport to 35=r.
+func translateMassCancelReport(rep *protobuf.OrderMassCancelReport, senderCompID, targetCompID string, seqNum int) []byte {
+	requestType := "7"
+	if rep.Symbol != "" {
+		requestType = "1"
+	}
+	return MassCancelReport(senderCompID, targetCompID, seqNum, rep.ClientRequestId, requestType,
+		rep.Symbol, rep.Side, int(rep.TotalAffected), "99", rep.RejectReason)
+}
+
+// MassCancelReport builds a 35=r; a non-empty text means the request was
+// rejected (531=0) with MassCancelRejectReason (532) rejectReason.
+func MassCancelReport(senderCompID, targetCompID string, seqNum int, clOrdID, requestType, symbol string,
+	side protobuf.OrderSide, totalAffected int, rejectReason, text string) []byte {
+	b := codec.NewBuilder(codec.MsgTypeOrderMassCancelReport, senderCompID, targetCompID, seqNum)
+	if clOrdID != "" {
+		b.Set(codec.TagClOrdID, clOrdID)
+		b.Set(codec.TagOrderID, clOrdID)
+	} else {
+		b.Set(codec.TagOrderID, "NONE")
+	}
+	b.Set(codec.TagMassCancelRequestType, requestType)
+	if text != "" {
+		b.Set(codec.TagMassCancelResponse, "0")
+		b.Set(codec.TagMassCancelRejectReason, rejectReason)
+		b.Set(codec.TagText, text)
+	} else {
+		b.Set(codec.TagMassCancelResponse, requestType)
+	}
+	b.SetInt(codec.TagTotalAffectedOrders, totalAffected)
+	if symbol != "" {
+		b.Set(codec.TagSymbol, symbol)
+	}
+	if s, err := mapSideToFIX(side); err == nil {
+		b.Set(codec.TagSide, s)
+	}
+	return b.Build()
 }
 
 func mapSideToFIX(side protobuf.OrderSide) (string, error) {

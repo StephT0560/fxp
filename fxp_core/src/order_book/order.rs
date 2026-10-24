@@ -16,6 +16,71 @@ pub struct Order {
     pub expire_date: String, // required for GTD (YYYY-MM-DD, empty if not applicable)
     pub account: String,
     pub client_order_id: String,
+    pub stp: Stp,
+}
+
+impl Order {
+    /// Self-trade prevention scope: the STP group if set, otherwise the owner.
+    pub fn stp_key(&self) -> StpKey<'_> {
+        if self.stp.group.is_empty() {
+            StpKey::Owner(&self.trader_id)
+        } else {
+            StpKey::Group(&self.stp.group)
+        }
+    }
+}
+
+/// Self-match identity. An explicit group never equals an owner id, even if
+/// the strings are equal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StpKey<'a> {
+    Owner(&'a str),
+    Group(&'a str),
+}
+
+/// Self-trade prevention instruction carried by an order. The aggressing
+/// (newest) order's mode governs a match against a resting order with the
+/// same [`Order::stp_key`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Stp {
+    pub mode: StpMode,
+    pub group: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StpMode {
+    #[default]
+    None,
+    CancelNewest,
+    CancelOldest,
+    CancelBoth,
+    DecrementAndCancel,
+}
+
+impl StpMode {
+    /// Parse an `FXP_STP_DEFAULT` value; empty means disabled.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "" | "none" => Ok(Self::None),
+            "cancel-newest" => Ok(Self::CancelNewest),
+            "cancel-oldest" => Ok(Self::CancelOldest),
+            "cancel-both" => Ok(Self::CancelBoth),
+            "decrement-and-cancel" => Ok(Self::DecrementAndCancel),
+            other => Err(format!(
+                "invalid STP mode {other:?} (none|cancel-newest|cancel-oldest|cancel-both|decrement-and-cancel)"
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CancelNewest => "cancel-newest",
+            Self::CancelOldest => "cancel-oldest",
+            Self::CancelBoth => "cancel-both",
+            Self::DecrementAndCancel => "decrement-and-cancel",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

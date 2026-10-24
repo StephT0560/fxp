@@ -81,7 +81,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	sessionID := ""
 	defer func() {
 		if sessionID != "" {
-			invalidateSession(sessionID)
+			endSession(sessionID)
 		}
 	}()
 

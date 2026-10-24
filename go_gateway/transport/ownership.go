@@ -3,6 +3,7 @@
 package transport
 
 import (
+	"strconv"
 	"strings"
 	"sync"
 
@@ -81,6 +82,9 @@ func bindOwner(msg *protobuf.FXPMessage, traderID string) {
 	case *protobuf.FXPMessage_NewOrder:
 		p.NewOrder.Sender = traderID
 		p.NewOrder.OrderId = namespacedOrderID(traderID, p.NewOrder.OrderId)
+		// STP groups are scoped to the trader so a client cannot name another
+		// trader's group (and, e.g., cancel its resting orders with cancel-oldest).
+		p.NewOrder.StpGroup = stpGroupID(traderID, p.NewOrder.StpGroup)
 	case *protobuf.FXPMessage_OrderCancel:
 		p.OrderCancel.Sender = traderID
 		p.OrderCancel.OrderId = namespacedOrderID(traderID, p.OrderCancel.OrderId)
@@ -88,6 +92,8 @@ func bindOwner(msg *protobuf.FXPMessage, traderID string) {
 		p.OrderCancelReplace.Sender = traderID
 		p.OrderCancelReplace.OrderId = namespacedOrderID(traderID, p.OrderCancelReplace.OrderId)
 		p.OrderCancelReplace.NewOrderId = namespacedOrderID(traderID, p.OrderCancelReplace.NewOrderId)
+	case *protobuf.FXPMessage_OrderMassCancel:
+		p.OrderMassCancel.Sender = traderID
 	}
 }
 
@@ -113,4 +119,13 @@ func stripOwner(rep *protobuf.ExecutionReport, owner string) {
 	rep.OrderId = strings.TrimPrefix(rep.OrderId, prefix)
 	rep.OrigOrderId = strings.TrimPrefix(rep.OrigOrderId, prefix)
 	rep.ExecutionId = strings.Replace(rep.ExecutionId, prefix, "", 1)
+}
+
+// stpGroupID scopes a client STP group to its trader. The length prefix keeps
+// it unambiguous when trader IDs themselves contain ownerSep.
+func stpGroupID(owner, group string) string {
+	if group == "" {
+		return ""
+	}
+	return strconv.Itoa(len(owner)) + ":" + owner + ownerSep + group
 }
