@@ -4,6 +4,14 @@
 # then stops the stack. Exits non-zero if any scenario fails.
 set -euo pipefail
 
+if ! command -v go >/dev/null 2>&1 && [[ -x /usr/local/go/bin/go ]]; then
+    export PATH="/usr/local/go/bin:$PATH"
+fi
+if ! command -v go >/dev/null 2>&1; then
+    printf 'error: Go is required (not on PATH or in /usr/local/go/bin)\n' >&2
+    exit 1
+fi
+
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 log_dir="${E2E_LOG_DIR:-$repo_root/target/e2e}"
 mkdir -p "$log_dir" "$repo_root/bin"

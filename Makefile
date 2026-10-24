@@ -15,8 +15,7 @@ build: proto
 
 test: proto
 	cd fxp_core && cargo test --locked
-	# go_gateway/benchmark fails go vet (pre-existing benchmark.go:479), so it is not in the test set
-	cd go_gateway && go test -race ./transport/... ./test_clients/...
+	cd go_gateway && go test -race ./...
 	cd fix_bridge && go test -race ./...
 
 bench:

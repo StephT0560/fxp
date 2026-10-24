@@ -115,7 +115,7 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 			return nil, fmt.Errorf("invalid Price %q: %w", priceStr, err)
 		}
 	} else if ordType == protobuf.OrderType_LIMIT || ordType == protobuf.OrderType_STOP_LIMIT {
-		return nil, fmt.Errorf("Price (tag 44) required for OrdType %q", ordTypeStr)
+		return nil, fmt.Errorf("price (tag 44) required for OrdType %q", ordTypeStr)
 	}
 
 	// Parse stop price (required for Stop and StopLimit)

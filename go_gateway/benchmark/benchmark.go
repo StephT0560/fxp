@@ -171,11 +171,6 @@ func connectAndLogon(traderID, sessionID string) (net.Conn, error) {
 
 // ── Result types ──────────────────────────────────────────────────────────────
 
-type latencySample struct {
-	orderID  string
-	duration time.Duration
-}
-
 type benchResult struct {
 	samples     []time.Duration
 	totalOrders int64
@@ -478,7 +473,7 @@ func main() {
 		log.Fatalf("Gateway not reachable at %s: %v\nMake sure both servers are running.", gatewayAddr, err)
 	}
 	testConn.Close()
-	fmt.Println("Gateway reachable ✓\n")
+	fmt.Print("Gateway reachable ✓\n\n")
 
 	// Run concurrent senders
 	var wg sync.WaitGroup
