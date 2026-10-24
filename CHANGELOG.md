@@ -7,6 +7,11 @@ cut a release yet, so everything is under Unreleased.
 ## [Unreleased]
 
 ### Added
+- Bounded core and gateway client output queues isolate slow consumers; critical
+  output overflow disconnects the client while market-data overflow is dropped.
+- Core symbol admission controls via `FXP_SYMBOLS` and `FXP_MAX_SYMBOLS`, with
+  graceful SIGINT/SIGTERM handling across core, gateway, and FIX bridge.
+- Operations guidance for backpressure, symbol admission, and graceful shutdown.
 - Self-trade prevention (FXP v2.2, additive): per-order `stp_mode`/`stp_group`
   with cancel-newest, cancel-oldest, cancel-both and decrement-and-cancel,
   scoped to the owner or a per-trader STP group; engine default
