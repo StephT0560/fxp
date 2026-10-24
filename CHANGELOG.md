@@ -7,6 +7,19 @@ cut a release yet, so everything is under Unreleased.
 ## [Unreleased]
 
 ### Added
+- Self-trade prevention (FXP v2.2, additive): per-order `stp_mode`/`stp_group`
+  with cancel-newest, cancel-oldest, cancel-both and decrement-and-cancel,
+  scoped to the owner or a per-trader STP group; engine default
+  `FXP_STP_DEFAULT` (default `none`, unchanged behavior). Prevented matches
+  print no trade and cancel with text `self-trade prevention (<mode>)`.
+  FIX tags 2362/2964. Explicit STP on auction-only orders is rejected;
+  auction uncrossing ignores STP (#1).
+- Owner-scoped `OrderMassCancelRequest`/`OrderMassCancelReport` (optional
+  symbol and side filters, parked stops included); FIX `35=q` (530=7 all,
+  530=1 by symbol) answered with `35=r` (531/532/533) (#1).
+- Cancel-on-disconnect per session (`Logon.cancel_on_disconnect`, FIX Logon
+  `8013=Y`; default off): any disconnect mass-cancels the trader's orders,
+  and the bridge stores the canceled ERs for resend (#1).
 - Opt-in core input-log persistence with synchronous write-ahead fsync, checksum
   tail repair, deterministic replay and downtime catch-up, enabled by
   `FXP_EVENT_LOG`; includes a core SIGKILL/restart E2E check (#8).

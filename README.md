@@ -82,10 +82,13 @@ Auction price selection maximizes volume, minimizes imbalance, prefers the refer
 **Cancel workflows:**
 - `OrderCancelRequest` — cancel a working order
 - `OrderCancelReplaceRequest` — cancel the original and add a replacement; the replacement loses the original's FIFO priority
+- `OrderMassCancelRequest` — cancel all of the caller's orders (including parked stops), optionally by symbol and side
+
+**Risk controls** (all off by default, see [docs/risk-controls.md](docs/risk-controls.md)): self-trade prevention per order or via `FXP_STP_DEFAULT` (cancel-newest, cancel-oldest, cancel-both, decrement-and-cancel; scoped to the owner or an STP group), owner-scoped mass cancel, and per-session cancel-on-disconnect.
 
 ---
 
-## Proto Schema (v2.1)
+## Proto Schema (v2.2)
 
 Full institutional-grade message coverage:
 
@@ -100,13 +103,14 @@ TradeCaptureReport      — trade print feed
 TradingSessionStatus    — trading phase by symbol
 AuctionInfo             — indicative auction price, volume and imbalance
 ErrorMessage            — structured error responses
+OrderMassCancelRequest / OrderMassCancelReport — owner-scoped mass cancel
 ```
 
-Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
 **TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
-**ExecutionType:** EXEC_NEW · EXEC_FILLED · EXEC_CANCELED · EXEC_REPLACED · EXEC_REJECTED · EXEC_EXPIRED
+**ExecutionType:** EXEC_NEW · EXEC_FILLED · EXEC_CANCELED · EXEC_REPLACED · EXEC_REJECTED · EXEC_EXPIRED · EXEC_RESTATED
 
 Custom firm extensions: field numbers 1000–1999 reserved per message.
 
@@ -180,6 +184,7 @@ Logs go to stderr. Per-order, per-fill and per-message events are logged at debu
 |---|---|---|---|
 | `fxp_core` | `RUST_LOG` ([`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax) | `info` | `RUST_LOG=fxp_core=debug` |
 | `fxp_core` | `FXP_SESSION_SCHEDULE` | unset (no Day expiry) | `close=16:30:00` |
+| `fxp_core` | `FXP_STP_DEFAULT` (`none`, `cancel-newest`, `cancel-oldest`, `cancel-both`, `decrement-and-cancel`): self-trade prevention for orders that do not set `stp_mode` | `none` | `FXP_STP_DEFAULT=cancel-newest` |
 | `go_gateway`, `fix_bridge` | `FXP_LOG_LEVEL` (`debug`, `info`, `warn`, `error`) | `info` | `FXP_LOG_LEVEL=debug` |
 
 The optional core session schedule is a strict comma-separated `key=value`
@@ -294,19 +299,20 @@ The FIX 4.4 bridge (`fix_bridge`, port 8083) handles these inbound messages:
 
 | MsgType | Message | Support |
 |---|---|---|
-| `A`, `0`, `1`, `2`, `3`, `4`, `5` | Logon, Heartbeat, TestRequest, ResendRequest, Reject, SequenceReset, Logout | ✅ Session layer |
-| `D` | NewOrderSingle | ✅ |
+| `A`, `0`, `1`, `2`, `3`, `4`, `5` | Logon, Heartbeat, TestRequest, ResendRequest, Reject, SequenceReset, Logout | ✅ Session layer; Logon `8013=Y` enables cancel-on-disconnect |
+| `D` | NewOrderSingle | ✅ incl. STP `2362` SelfMatchPreventionID, `2964` SelfMatchPreventionInstruction (1/2/3, 99 = decrement-and-cancel) |
 | `F` | OrderCancelRequest | ✅ |
 | `G` | OrderCancelReplaceRequest | ✅ |
 | `V` | MarketDataRequest (snapshot, subscribe, unsubscribe) | ✅ |
+| `q` | OrderMassCancelRequest (`530=7` all orders, `530=1` by symbol; optional `54`) | ✅ answered with `35=r` (531/532/533); other 530 values rejected with `531=0 532=0` |
 | `H` | OrderStatusRequest | ❌ BusinessMessageReject (`35=j`, `380=3`) |
-| any other application type | e.g. `AF`, `q`, `AD` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
+| any other application type | e.g. `AF`, `AD` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
 
-Outbound: ExecutionReport (`8`), OrderCancelReject (`9`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`), BusinessMessageReject (`j`) plus the session messages.
+Outbound: ExecutionReport (`8`, ExecType `D` = restated by decrement-and-cancel STP), OrderCancelReject (`9`), OrderMassCancelReport (`r`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`), BusinessMessageReject (`j`) plus the session messages.
 
 Required fields follow the FIX 4.4 spec (`fix_bridge/codec/dictionary.go`):
 `D` needs 11, 55, 54, 60, 40; `F` needs 41, 11, 55, 54, 60; `G` needs 41, 11, 55, 54, 60, 40;
-`V` needs 262, 263, 264, 267, 269, 146, 55. A message missing one of them gets
+`V` needs 262, 263, 264, 267, 269, 146, 55; `q` needs 11, 530, 60. A message missing one of them gets
 Reject (`35=3`) with `373=1` (Required tag missing), `371` (the missing tag) and `372`.
 
 ## FIX Session Store
@@ -421,7 +427,7 @@ fxp/
 │   ├── benches/
 │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   └── proto/
-│       └── fxp.proto            Protocol schema v2.1
+│       └── fxp.proto            Protocol schema v2.2
 │
 ├── go_gateway/                  Go gateway
 │   ├── logging/                 slog setup (FXP_LOG_LEVEL), shared with fix_bridge
