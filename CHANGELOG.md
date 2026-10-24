@@ -7,6 +7,9 @@ cut a release yet, so everything is under Unreleased.
 ## [Unreleased]
 
 ### Added
+- Engine auction phases and full daily UTC schedules: non-matching call books,
+  held AT_CLOSE orders, opening/closing uncrosses, auction-flagged fills,
+  indicative/session feeds, and opening-only stop election (#8).
 - Pure deterministic auction uncrossing/allocation and additive FXP v2.1:
   trading phases, session status, indicative auction data and an execution
   report auction flag. Session/auction frames follow symbol subscriptions;

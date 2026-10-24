@@ -64,16 +64,20 @@ Client ← ExecutionReport + MarketDataIncrementalUpdate
 
 | Type | Behaviour | Status |
 |---|---|---|
-| `LIMIT` DAY/GTC/GTD | Rests on book, passive matching | ✅ |
-| `LIMIT` IOC | Fill available qty, cancel remainder | ✅ |
-| `LIMIT` FOK | Fill all or cancel all (liquidity check first) | ✅ |
-| `MARKET` | Sweep book at any price, cancel unfilled | ✅ |
-| `STOP` | Parks until `last_trade_price` crosses `stop_price`, then fires as market | ✅ |
-| `STOP_LIMIT` | Parks until stop triggers, then rests as limit | ✅ |
-| `AT_OPEN` | LIMIT orders rest on the book; no opening-auction matching | ❌ Not supported |
-| `AT_CLOSE` | LIMIT orders rest on the book; no closing-auction matching | ❌ Not supported |
+| `LIMIT` DAY/GTC/GTD | Continuous matching; during a call, rests without matching until uncross | ✅ |
+| `LIMIT` IOC | Fill available qty, cancel remainder; rejected during calls | ✅ |
+| `LIMIT` FOK | Fill all or cancel all; rejected during calls | ✅ |
+| `MARKET` | Continuous: sweep then cancel remainder. Call: queue off-book until uncross, then cancel remainder | ✅ |
+| `STOP` | Parks until a continuous print or opening auction price triggers it as a market order; never triggers during calls or on the closing print | ✅ |
+| `STOP_LIMIT` | Same trigger rules as STOP, executes as a limit | ✅ |
+| `AT_OPEN` | Limit/market accepted only during OpeningCall; unfilled remainder canceled at open | ✅ Full schedule required |
+| `AT_CLOSE` | Limit/market held off-book during Continuous/OpeningCall, joins ClosingCall; remainder canceled at close | ✅ Full schedule required |
 
-Resting orders are held in an in-memory book. `expire_date` is stored but not enforced, so DAY/GTD orders do not expire automatically and GTC orders are not persisted across process restarts. Price levels use FIFO order (`VecDeque::push_back` on add and `pop_front` on match), covered by `p01_time_priority_fifo_within_level`.
+Day orders expire at configured close, after the closing uncross. GTD orders expire at midnight UTC following their date, with or without a schedule. GTC orders survive sessions but are not persisted across process restarts. Price levels use FIFO order (`VecDeque::push_back` on add and `pop_front` on match), covered by `p01_time_priority_fifo_within_level`.
+
+Closed rejects new orders and replaces but permits cancellation. Calls may expose a crossed limit book; they never run continuous matching. Replaces during a call lose priority and do not match. Held AT_CLOSE orders can be canceled but not replaced. When moved at close_call, held limits retain their original arrival order relative to each other but queue behind orders already resting at the same price. Auction-only TIFs are not supported for stops. With no full schedule, AT_OPEN and AT_CLOSE are rejected.
+
+Auction price selection maximizes volume, minimizes imbalance, prefers the reference (last trade) price, then resolves pressure ties. Allocations use market/price/time priority. Auction fills have `auction=true`; opening prints elect parked stops after the Continuous phase status, while closing prints update the reference without electing stops. TradingSessionStatus and deduplicated AuctionInfo updates are streamed to symbol subscribers.
 
 **Cancel workflows:**
 - `OrderCancelRequest` — cancel a working order
@@ -179,12 +183,18 @@ Logs go to stderr. Per-order, per-fill and per-message events are logged at debu
 | `go_gateway`, `fix_bridge` | `FXP_LOG_LEVEL` (`debug`, `info`, `warn`, `error`) | `info` | `FXP_LOG_LEVEL=debug` |
 
 The optional core session schedule is a strict comma-separated `key=value`
-list. Currently only `close=HH:MM[:SS]` is supported, in UTC every day;
-unknown or duplicate keys, invalid times and an explicitly empty value prevent
-startup. Unset means Day orders never expire. With a schedule, resting Day
-orders and parked Day stops expire at each close. The core advances expiry
-before each request and on a one-second timer, including missed boundaries
-after a time jump.
+list of UTC `HH:MM[:SS]` times. Only two forms are valid:
+- `close=16:30`: always Continuous, with daily Day expiry (no auctions).
+- `open_call=08:30,open=09:00,close_call=16:25,close=16:30`: all four keys,
+  strictly ordered within one day. OpeningCall is [open_call, open),
+  Continuous is [open, close_call), ClosingCall is [close_call, close),
+  and the market is Closed otherwise.
+
+Unknown/duplicate keys, partial schedules, unordered times, invalid times and
+an explicitly empty value prevent startup. Unset means always Continuous and
+no Day expiry. With a schedule, resting Day orders and parked Day stops expire
+at close. Phase and expiry boundaries advance before each request and on a
+one-second timer, including every missed daily auction after a time jump.
 
 GTD orders require `expire_date=YYYY-MM-DD` (FIX `59=6`, `432=YYYYMMDD`).
 They expire at midnight UTC following that date, independently of the session

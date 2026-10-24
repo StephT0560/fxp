@@ -4,7 +4,18 @@ use std::str::FromStr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionSchedule {
+    pub open_call: Option<UtcTimeOfDay>,
+    pub open: Option<UtcTimeOfDay>,
+    pub close_call: Option<UtcTimeOfDay>,
     pub close: UtcTimeOfDay,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Boundary {
+    OpenCall,
+    Open,
+    CloseCall,
+    Close,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,13 +24,48 @@ pub struct UtcTimeOfDay {
 }
 
 impl SessionSchedule {
-    pub(crate) fn next_close(self, after: i64) -> i64 {
-        let close = after.div_euclid(86_400) * 86_400 + i64::from(self.close.seconds);
-        if close <= after {
-            close + 86_400
+    pub fn is_full(self) -> bool {
+        self.open_call.is_some() && self.open.is_some() && self.close_call.is_some()
+    }
+
+    pub(super) fn phase(self, now: i64) -> crate::fxp::TradingPhase {
+        use crate::fxp::TradingPhase::*;
+        let (Some(open_call), Some(open), Some(close_call)) =
+            (self.open_call, self.open, self.close_call)
+        else {
+            return Continuous;
+        };
+        let time = now.rem_euclid(86_400) as u32;
+        if time >= open_call.seconds && time < open.seconds {
+            OpeningCall
+        } else if time >= open.seconds && time < close_call.seconds {
+            Continuous
+        } else if time >= close_call.seconds && time < self.close.seconds {
+            ClosingCall
         } else {
-            close
+            Closed
         }
+    }
+
+    pub(super) fn next_boundary(self, after: i64) -> (i64, Boundary) {
+        [
+            (self.open_call, Boundary::OpenCall),
+            (self.open, Boundary::Open),
+            (self.close_call, Boundary::CloseCall),
+            (Some(self.close), Boundary::Close),
+        ]
+        .into_iter()
+        .filter_map(|(time, kind)| {
+            time.map(|time| {
+                let mut at = after.div_euclid(86_400) * 86_400 + i64::from(time.seconds);
+                if at <= after {
+                    at += 86_400;
+                }
+                (at, kind)
+            })
+        })
+        .min_by_key(|(time, _)| *time)
+        .unwrap()
     }
 }
 
@@ -52,16 +98,35 @@ impl FromStr for SessionSchedule {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let mut close = None;
+        let (mut open_call, mut open, mut close_call) = (None, None, None);
         for entry in value.split(',') {
             let (key, value) = entry.split_once('=').ok_or("expected key=value")?;
-            match key {
-                "close" if close.is_none() => close = Some(value.parse()?),
-                "close" => return Err("duplicate close".into()),
+            let field = match key {
+                "close" => &mut close,
+                "open_call" => &mut open_call,
+                "open" => &mut open,
+                "close_call" => &mut close_call,
                 _ => return Err(format!("unknown schedule key {key:?}")),
+            };
+            if field.is_some() {
+                return Err(format!("duplicate {key}"));
+            }
+            *field = Some(value.parse::<UtcTimeOfDay>()?);
+        }
+        let close = close.ok_or("close is required")?;
+        match (open_call, open, close_call) {
+            (None, None, None) => {}
+            (Some(a), Some(b), Some(c))
+                if a.seconds < b.seconds && b.seconds < c.seconds && c.seconds < close.seconds => {}
+            _ => {
+                return Err("expected close alone or open_call < open < close_call < close".into());
             }
         }
         Ok(Self {
-            close: close.ok_or("close is required")?,
+            open_call,
+            open,
+            close_call,
+            close,
         })
     }
 }

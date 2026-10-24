@@ -185,6 +185,24 @@ async fn scheduled_order_book_task(
         };
         for output in outputs {
             match output {
+                Output::TradingSessionStatus(status) => {
+                    broadcast_md(
+                        &mut subscribers,
+                        frame_message(&fxp::FxpMessage {
+                            payload: Some(fxp::fxp_message::Payload::TradingSessionStatus(status)),
+                        }),
+                    )
+                    .await;
+                }
+                Output::AuctionInfo(info) => {
+                    broadcast_md(
+                        &mut subscribers,
+                        frame_message(&fxp::FxpMessage {
+                            payload: Some(fxp::fxp_message::Payload::AuctionInfo(info)),
+                        }),
+                    )
+                    .await;
+                }
                 Output::ExecutionReport(tx, report) => {
                     let _ = tx
                         .send(frame_message(&fxp::FxpMessage {

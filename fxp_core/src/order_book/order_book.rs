@@ -165,6 +165,44 @@ impl OrderBook {
         }
     }
 
+    /// Decrement an auction participant without running continuous matching.
+    pub(crate) fn apply_auction_fill(
+        &mut self,
+        id: &str,
+        quantity: u32,
+    ) -> MarketDataIncrementalUpdate {
+        let order = self.order_lookup[id].clone();
+        let levels = match order.side {
+            OrderSide::Buy => &mut self.buy_orders,
+            OrderSide::Sell => &mut self.sell_orders,
+        };
+        let level = levels.get_mut(&order.price).expect("live auction level");
+        let resting = level
+            .iter_mut()
+            .find(|o| o.order_id == id)
+            .expect("live auction order");
+        resting.quantity -= quantity;
+        let remaining = resting.quantity;
+        level.retain(|o| o.quantity > 0);
+        if level.is_empty() {
+            levels.remove(&order.price);
+        }
+        Self::sync_fill(
+            &mut self.order_lookup,
+            &mut self.cum_filled,
+            &mut self.arrival,
+            id,
+            remaining,
+            quantity,
+        );
+        self.generate_incremental_update(
+            MarketUpdateType::ModifyOrder,
+            order.price,
+            quantity,
+            order.side,
+        )
+    }
+
     /// Cancel/replace a live order. `new_price` 0 keeps the price; `new_total_qty`
     /// 0 keeps the remaining quantity, otherwise it is the new total order
     /// quantity (FIX OrderQty) and the replacement rests with total - filled.

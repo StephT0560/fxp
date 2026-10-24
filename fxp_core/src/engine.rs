@@ -11,6 +11,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod auction;
+#[cfg(test)]
+mod phase_tests;
+mod phases;
 mod session;
 use session::expiry_instant;
 pub use session::{SessionSchedule, UtcTimeOfDay};
@@ -111,6 +114,8 @@ pub trait ExecIds {
 }
 
 pub enum Output<R> {
+    TradingSessionStatus(fxp::TradingSessionStatus),
+    AuctionInfo(fxp::AuctionInfo),
     ExecutionReport(R, fxp::ExecutionReport),
     MarketData(fxp::MarketDataIncrementalUpdate),
     Snapshot(R, fxp::MarketDataSnapshot),
@@ -127,11 +132,21 @@ pub struct Engine<R, C, I> {
     schedule: Option<SessionSchedule>,
     last_seen: Time,
     next_arrival: u64,
+    phase: fxp::TradingPhase,
+    call_markets: HashMap<String, Order>,
+    held_close: HashMap<String, Order>,
+    last_indicative: Option<auction::AuctionResult>,
 }
 
 impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
+    pub fn phase(&self) -> fxp::TradingPhase {
+        self.phase
+    }
     pub fn new(symbol: &str, clock: C, ids: I, schedule: Option<SessionSchedule>) -> Self {
         let last_seen = clock.now();
+        let phase = schedule.map_or(fxp::TradingPhase::Continuous, |s| {
+            s.phase(last_seen.seconds)
+        });
         Self {
             symbol: symbol.into(),
             book: OrderBook::new(symbol, Arc::new(MarketDataBroadcaster::new())),
@@ -143,6 +158,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             schedule,
             last_seen,
             next_arrival: 0,
+            phase,
+            call_markets: HashMap::new(),
+            held_close: HashMap::new(),
+            last_indicative: Some(auction::AuctionResult::default()),
         }
     }
     pub fn new_order(&mut self, order: fxp::NewOrderSingle, owner: R) -> Vec<Output<R>> {
@@ -166,62 +185,20 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         outputs
     }
     pub fn tick(&mut self) -> Vec<Output<R>> {
-        let now = self.clock.now();
-        if now <= self.last_seen {
-            return Vec::new();
-        }
-        let mut due = Vec::new();
-        for (id, state) in &self.states {
-            let boundary = match state.time_in_force {
-                TimeInForce::Day => self.schedule.map(|s| s.next_close(self.last_seen.seconds)),
-                TimeInForce::Gtd => expiry_instant(&state.expire_date).ok(),
-                _ => None,
-            };
-            if let Some(seconds) = boundary {
-                let boundary = Time { seconds, nanos: 0 };
-                if boundary > self.last_seen && boundary <= now {
-                    due.push((boundary, state.arrival, id.clone()));
-                }
-            }
-        }
-        due.sort();
-        let mut outputs = Vec::new();
-        for (boundary, _, id) in due {
-            let state = self.states.remove(&id).expect("live expiry state");
-            let md = match self.book.cancel_order_for(&id, &state.sender) {
-                Ok(md) => Some(md),
-                Err(OrderReject::UnknownOrder) => {
-                    self.stop_book
-                        .cancel_for(&id, &state.sender)
-                        .expect("live parked expiry");
-                    None
-                }
-                Err(_) => unreachable!("expiry uses the order owner"),
-            };
-            let ts = Some(Timestamp {
-                seconds: boundary.seconds,
-                nanos: boundary.nanos,
-            });
-            let ev = ReportEvent {
-                orig_order_id: &id,
-                ..ReportEvent::new(
-                    fxp::ExecutionType::ExecExpired,
-                    fxp::OrderStatus::OrderExpired,
-                )
-            };
-            let report = build_report(&mut self.ids, &id, &self.symbol, Some(&state), ev, &ts);
-            outputs.push(Output::ExecutionReport(state.output_tx, report));
-            if let Some(md) = md {
-                outputs.push(Output::MarketData(build_md_update(&md, &ts)));
-            }
-        }
-        self.last_seen = now;
-        outputs
+        self.advance()
     }
     fn process(&mut self, msg: SymbolMsg<R>) -> Vec<Output<R>> {
         let mut outputs = self.tick();
         self.next_arrival += 1;
         let arrival = self.next_arrival;
+        if self.preflight(&msg, &mut outputs) {
+            self.publish_indicative(self.clock.now(), &mut outputs);
+            return outputs;
+        }
+        let phase = self.phase;
+        let full_schedule = self.schedule.is_some_and(SessionSchedule::is_full);
+        let call_markets = &mut self.call_markets;
+        let held_close = &mut self.held_close;
         let symbol = &self.symbol;
         let book = &mut self.book;
         let stop_book = &mut self.stop_book;
@@ -393,7 +370,9 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 );
                                 states.insert(cr_msg.new_order_id.clone(), new_state);
                                 // A new stop price may already be through the last print
-                                if last_trade_price.is_some_and(|p| stop_fires(&replacement, p)) {
+                                if phase == fxp::TradingPhase::Continuous
+                                    && last_trade_price.is_some_and(|p| stop_fires(&replacement, p))
+                                {
                                     let order = stop_book
                                         .cancel_for(&replacement.order_id, &replacement.trader_id)
                                         .expect("replacement was just parked");
@@ -408,6 +387,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         break 'request;
                     }
 
+                    let original = book.order_lookup.get(&cr_msg.order_id).cloned();
                     let result = book.replace_order(
                         &cr_msg.order_id,
                         &cr_msg.new_order_id,
@@ -461,6 +441,26 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             );
                             states.insert(cr_msg.new_order_id.clone(), new_state);
 
+                            if replacement.time_in_force == TimeInForce::AtClose
+                                && phase != fxp::TradingPhase::ClosingCall
+                            {
+                                book.cancel_order(&replacement.order_id);
+                                held_close.insert(replacement.order_id.clone(), replacement);
+                                let orig = original.expect("successful replacement");
+                                let md = book.generate_incremental_update(
+                                    MarketUpdateType::CancelOrder,
+                                    orig.price,
+                                    orig.quantity,
+                                    orig.side,
+                                );
+                                outputs.push(Output::MarketData(build_md_update(&md, &ts)));
+                                break 'request;
+                            }
+                            if phase != fxp::TradingPhase::Continuous {
+                                outputs.push(Output::MarketData(build_md_update(&inc, &ts)));
+                                break 'request;
+                            }
+
                             // Immediate fills from the replacement can trigger parked stops
                             let (fills, fill_updates) = book.match_orders();
                             let mut exec = Execution {
@@ -494,6 +494,15 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         }
                         Ok(_) if is_limit && order.price <= 0 => {
                             Some("limit price must be positive".to_string())
+                        }
+                        Ok(_) if states.contains_key(&order.order_id) => {
+                            Some("Duplicate order id".into())
+                        }
+                        Ok((_, ty, tif))
+                            if phases::entry_reason(phase, full_schedule, *ty, *tif).is_some() =>
+                        {
+                            phases::entry_reason(phase, full_schedule, *ty, *tif)
+                                .map(str::to_string)
                         }
                         Ok((_, _, TimeInForce::Gtd)) => {
                             validate_expiry(&order.expire_date, now).err()
@@ -577,8 +586,8 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             break 'request;
                         }
 
-                        let fires_immediately =
-                            last_trade_price.is_some_and(|p| stop_fires(&order_obj, p));
+                        let fires_immediately = phase == fxp::TradingPhase::Continuous
+                            && last_trade_price.is_some_and(|p| stop_fires(&order_obj, p));
 
                         if !fires_immediately {
                             // Park in stop_book — send EXEC_NEW acknowledgement
@@ -605,6 +614,34 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         }
                     }
 
+                    if phase != fxp::TradingPhase::Continuous
+                        || time_in_force == TimeInForce::AtClose
+                    {
+                        let ev = ReportEvent {
+                            leaves: state.leaves(),
+                            ..ReportEvent::new(
+                                fxp::ExecutionType::ExecNew,
+                                fxp::OrderStatus::OrderNew,
+                            )
+                        };
+                        outputs.push(Output::ExecutionReport(
+                            output_tx,
+                            build_report(ids, &order_obj.order_id, symbol, Some(&state), ev, &ts),
+                        ));
+                        states.insert(order_obj.order_id.clone(), state);
+                        if time_in_force == TimeInForce::AtClose
+                            && phase != fxp::TradingPhase::ClosingCall
+                        {
+                            held_close.insert(order_obj.order_id.clone(), order_obj);
+                        } else if order_type == OrderType::Market {
+                            call_markets.insert(order_obj.order_id.clone(), order_obj);
+                        } else {
+                            let md = book.add_order(order_obj);
+                            outputs.push(Output::MarketData(build_md_update(&md, &ts)));
+                        }
+                        break 'request;
+                    }
+
                     // Process the order (non-stop, or stop that triggered immediately)
                     states.insert(order_obj.order_id.clone(), state);
                     let mut exec = Execution::default();
@@ -628,6 +665,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                 }
             }
         }
+        self.publish_indicative(self.clock.now(), &mut outputs);
         outputs
     }
 }
