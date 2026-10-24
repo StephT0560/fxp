@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Freeze/reset released FIX session state atomically and preserve old messages/sequences when scheduled archiving fails (#2).
+
 - Stabilize the existing gateway reconnect fixture with a TCP half-close, preserving complete-frame and single-reader assertions (#2 verification).
 
 - Gate PRs on all 59 pinned QuickFIX FIX44 server definitions, with a documented per-case expected-failure baseline and explicit runner/result validation (#2).

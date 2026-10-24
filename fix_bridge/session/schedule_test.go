@@ -3,6 +3,7 @@
 package session
 
 import (
+	"errors"
 	"fix_bridge/codec"
 	"os"
 	"path/filepath"
@@ -271,5 +272,73 @@ func TestPendingEpochResetCannotResurrectFrames(t *testing.T) {
 	}
 	if _, ok := st.Get(8); ok {
 		t.Fatal("resurrected old frame")
+	}
+}
+
+func TestStoreReleaseResetsBothCountersBeforeRejectingLateSends(t *testing.T) {
+	s := NewSession(nil, "B", nil)
+	s.loggedOn.Store(true)
+	s.ResetOnDisconnect = true
+	if err := s.Store.Save(8, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.setInSeq(9); err != nil {
+		t.Fatal(err)
+	}
+	s.outSeqNum = 9
+	s.releaseStore()
+	in, out := s.Store.SeqNums()
+	if in != 1 || out != 1 || s.inSeqNum != 1 || s.outSeqNum != 1 {
+		t.Fatalf("reset counters: store %d/%d session %d/%d", in, out, s.inSeqNum, s.outSeqNum)
+	}
+	s.SendWithSeq(func(int) []byte { return []byte("late callback") })
+	if in, out := s.Store.SeqNums(); in != 1 || out != 1 {
+		t.Fatal("late callback altered reset store")
+	}
+}
+
+type archiveFailureStore struct {
+	*MemoryStore
+	fail atomic.Bool
+}
+
+func (s *archiveFailureStore) AdvanceEpoch(epoch int64) error {
+	if s.fail.Load() {
+		return errors.New("archive unavailable")
+	}
+	return s.MemoryStore.AdvanceEpoch(epoch)
+}
+func TestFailedBoundaryArchivePreservesTheOldStore(t *testing.T) {
+	store := &archiveFailureStore{MemoryStore: NewMemoryStore()}
+	var clock atomic.Int64
+	clock.Store(time.Date(2026, 3, 9, 16, 59, 59, 0, time.UTC).Unix())
+	schedule, _ := ParseSchedule("09:00:00", "17:00:00", "", "", "UTC")
+	p := newPeerConfigured(t, func(s *Session) {
+		s.Store = store
+		s.Schedule = schedule
+		s.Now = func() time.Time { return time.Unix(clock.Load(), 0) }
+		s.MaxLatency = 0
+	})
+	p.logon()
+	store.fail.Store(true)
+	clock.Add(1)
+	p.sess.CheckSchedule()
+	p.expect(codec.MsgTypeLogout)
+	p.expectClosed()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		p.sess.sendMu.Lock()
+		released := p.sess.released
+		p.sess.sendMu.Unlock()
+		if released {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, ok := store.Get(1); !ok {
+		t.Fatal("archive failure discarded old messages")
+	}
+	if in, out := store.SeqNums(); in == 1 && out == 1 {
+		t.Fatal("archive failure reset sequence state")
 	}
 }

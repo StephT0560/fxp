@@ -174,16 +174,7 @@ func (s *Session) Run() {
 		if dh, ok := s.handler.(DisconnectHandler); ok {
 			dh.OnDisconnect(s)
 		}
-		if s.loggedOn.Load() && (s.resetAtClose.Load() || s.ResetOnDisconnect) {
-			s.sendMu.Lock()
-			if s.Schedule != nil && s.resetAtClose.Load() {
-				if err := s.advanceSchedule(); err != nil {
-					log.Printf("scheduled reset failed: %v", err)
-				}
-			}
-			s.Store.Reset()
-			s.sendMu.Unlock()
-		}
+
 		s.releaseStore()
 	}()
 	go s.writeLoop()
@@ -663,6 +654,23 @@ func (s *Session) acquireStore(key SessionKey) error {
 func (s *Session) releaseStore() {
 	s.sendMu.Lock()
 	s.released = true
+	// Reset and freeze the old session under the same lock. Gateway callbacks
+	// already in flight must not rewrite the fresh store before registry release.
+	if s.loggedOn.Load() && (s.resetAtClose.Load() || s.ResetOnDisconnect) {
+		reset := true
+		if s.Schedule != nil && s.resetAtClose.Load() {
+			if err := s.advanceSchedule(); err != nil {
+				log.Printf("scheduled archive failed; preserving old store: %v", err)
+				reset = false
+			}
+		}
+		if reset {
+			s.Store.Reset()
+			s.inSeqNum = 1
+			s.outSeqNum = 1
+			s.resendTo = 0
+		}
+	}
 	key := s.regKey
 	s.sendMu.Unlock()
 	if key != nil {

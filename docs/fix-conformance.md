@@ -123,3 +123,9 @@ TradeCaptureReport, SecurityDefinition, initiator mode and TLS are unchanged
 and remain out of scope. No production certification rating is asserted by
 this change. In particular, a green acceptance gate means no regressions
 against its explicit baseline, not that every upstream definition passes.
+
+Store reset and session release share one critical section, preventing late
+callbacks from advancing newly reset sequences. If scheduled archiving fails,
+the old messages and sequence state are preserved rather than truncated; the
+next scheduled Logon retries the archive and fails closed while it remains
+unavailable. Operator intervention may be required to restore archive access.

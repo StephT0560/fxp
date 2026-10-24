@@ -374,7 +374,7 @@ Counts observed at this revision:
 |---|---:|
 | `fxp_core` (`cargo test`) | 161 unit tests |
 | `go_gateway` (`go test ./...`) | 49 top-level tests |
-| `fix_bridge` (`go test ./...`) | 119 top-level tests |
+| `fix_bridge` (`go test ./...`) | 121 top-level tests |
 | Python FIX E2E client (`scripts/e2e.sh`) | 69 main checks, plus cancel-on-disconnect and restart/persistence checks |
 
 ---
