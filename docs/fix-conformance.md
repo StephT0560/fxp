@@ -94,3 +94,6 @@ header prefixes are ignored without consuming sequencing state. SequenceReset
 in Reset mode ignores the MsgSeqNum value (including 0) but still validates
 its dictionary fields; GapFill and ordinary messages require positive sequence
 numbers. Rejects retain RefMsgType for the affected administrative message.
+
+Permitting undeclared user-defined tags does not permit empty values or duplicate
+fields: the validator still returns reasons 4 and 13 in the current scope.

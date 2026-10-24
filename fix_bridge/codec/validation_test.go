@@ -151,3 +151,15 @@ func TestParserRequiresMsgTypeThird(t *testing.T) {
 		t.Fatalf("got %v want garbled third-field error", err)
 	}
 }
+
+func TestAllowedUserFieldsStillRejectEmptyAndDuplicate(t *testing.T) {
+	for _, tc := range []struct {
+		extra  []Field
+		reason string
+	}{{[]Field{{9001, ""}}, "4"}, {[]Field{{9001, "a"}, {9001, "b"}}, "13"}} {
+		v := DefaultDictionary.Validate(validationMessage(t, "D", append(validOrder(), tc.extra...)...), false)
+		if v == nil || v.Tag != 9001 || v.Reason != tc.reason {
+			t.Errorf("got %+v want %s", v, tc.reason)
+		}
+	}
+}

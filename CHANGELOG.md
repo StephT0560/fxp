@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep empty-value and duplicate checks enabled for permitted user-defined FIX fields (#2).
+
 - Enforce MsgType as the third wire field and validate Reset-mode dictionary fields while ignoring its sequence number (#2).
 
 - Complete header/trailer ordering and FIX decimal lexical checks; distinguish missing/empty CompIDs from authenticated identity mismatches (#2).

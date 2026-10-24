@@ -254,6 +254,10 @@ func (d *Dictionary) Validate(m *Message, strict bool) *ValidationError {
 	}
 
 	for _, f := range tags {
+		if f.Value == "" {
+			return d.failure(f.Tag, "4", "Tag specified without a value")
+		}
+
 		def, ok := d.fields[f.Tag]
 		if !ok {
 			if f.Tag >= 5000 && !strict {
@@ -311,6 +315,10 @@ func (d *Dictionary) scope(tags []Field, pos int, rules []*rule, group, strict b
 		r, ok := byTag[f.Tag]
 		if !ok {
 			if _, defined := d.fields[f.Tag]; !defined && f.Tag >= 5000 && !strict {
+				if seen[f.Tag] {
+					return pos, d.failure(f.Tag, "13", "Tag appears more than once")
+				}
+				seen[f.Tag] = true
 				pos++
 				continue
 			}
