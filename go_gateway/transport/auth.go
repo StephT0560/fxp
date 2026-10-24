@@ -447,7 +447,7 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 		if err != nil {
 			log.Printf("❌ Logon rejected: %v", err)
 			sendLogonAck(conn, false, err.Error())
-			closeConn(conn)
+			drainTerminalResponse(conn)
 			return
 		}
 
@@ -475,12 +475,29 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 			log.Printf("⛔ Rejected unauthenticated message type %T", msg.Payload)
 			sendSessionError(conn, protobuf.ErrorType_SESSION_NOT_LOGGED_ON,
 				"session not established — send Logon before any other message")
-			closeConn(conn)
+			drainTerminalResponse(conn)
 			return
 		}
 
 		// Authenticated: bind order-entry messages to the session's trader, then route
 		bindOwner(msg, GetTraderID(*sessionID))
 		HandleFXPMessage(conn, msg)
+	}
+}
+
+func drainTerminalResponse(conn any) {
+	value, ok := clientWriters.Load(conn)
+	if !ok {
+		closeConn(conn)
+		return
+	}
+	writer := value.(*clientWriter)
+	writer.drain()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-writer.finished:
+	case <-timer.C:
+		writer.forceStop()
 	}
 }

@@ -3,11 +3,15 @@
 package transport
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -15,8 +19,82 @@ import (
 	"testing"
 	"time"
 
+	"go_gateway/protobuf"
+
 	"github.com/gorilla/websocket"
+	"google.golang.org/protobuf/proto"
 )
+
+func terminalTCPResponse(t *testing.T, request *protobuf.FXPMessage) *protobuf.FXPMessage {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	server, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := registerClientWriter(server)
+	done := make(chan struct{})
+	go func() {
+		handleTCPClientWithWriter(server, writer)
+		close(done)
+	}()
+	raw, err := proto.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := make([]byte, 4, len(raw)+4)
+	binary.BigEndian.PutUint32(frame, uint32(len(raw)))
+	frame = append(frame, raw...)
+	if _, err := io.Copy(client, bytes.NewReader(frame)); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	body, err := readFrame(client, 1<<20)
+	if err != nil {
+		t.Fatalf("read terminal response: %v", err)
+	}
+	response := &protobuf.FXPMessage{}
+	if err := proto.Unmarshal(body, response); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("read after terminal response = %v, want EOF", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("TCP handler did not finish after terminal response")
+	}
+	return response
+}
+
+func TestTerminalAuthResponsesArriveBeforeEOF(t *testing.T) {
+	t.Setenv("FXP_JWT_SECRET", "test-secret")
+	logon := terminalTCPResponse(t, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_Logon{
+		Logon: &protobuf.Logon{Token: "invalid-token"},
+	}})
+	ack := logon.GetLogonAck()
+	if ack == nil || ack.Accepted || ack.RejectReason == "" {
+		t.Fatalf("invalid-token response = %v, want rejected LogonAck with reason", logon.Payload)
+	}
+
+	order := terminalTCPResponse(t, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_NewOrder{
+		NewOrder: &protobuf.NewOrderSingle{OrderId: "unauth-order"},
+	}})
+	errMsg := order.GetErrorMessage()
+	if errMsg == nil || errMsg.ErrorType != protobuf.ErrorType_SESSION_NOT_LOGGED_ON {
+		t.Fatalf("unauthenticated order response = %v, want ErrorMessage", order.Payload)
+	}
+}
 
 func signJWT(t *testing.T, secret string, header, claims map[string]any) string {
 	t.Helper()
