@@ -18,7 +18,7 @@ mkdir -p "$log_dir" "$repo_root/bin"
 
 export FXP_JWT_SECRET="${FXP_JWT_SECRET:-dev-secret-change-in-production}"
 export FXP_FIX_PASSWORD="${FXP_FIX_PASSWORD:-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
-export FXP_FIX_CREDENTIALS="${FXP_FIX_CREDENTIALS:-TESTFIRM01:$FXP_FIX_PASSWORD,VICTIM01:$FXP_FIX_PASSWORD,ATTACKER01:$FXP_FIX_PASSWORD,SEQCHECK01:$FXP_FIX_PASSWORD,MDCHECK01:$FXP_FIX_PASSWORD,DURABLE01:$FXP_FIX_PASSWORD}"
+export FXP_FIX_CREDENTIALS="${FXP_FIX_CREDENTIALS:-TESTFIRM01:$FXP_FIX_PASSWORD,VICTIM01:$FXP_FIX_PASSWORD,ATTACKER01:$FXP_FIX_PASSWORD,SEQCHECK01:$FXP_FIX_PASSWORD,MDCHECK01:$FXP_FIX_PASSWORD,DURABLE01:$FXP_FIX_PASSWORD,MASSCXL01:$FXP_FIX_PASSWORD,CODTEST01:$FXP_FIX_PASSWORD,CODCHK01:$FXP_FIX_PASSWORD}"
 if [[ -z "${FXP_FIX_STORE_DIR:-}" ]]; then
     export FXP_FIX_STORE_DIR="$log_dir/fix_store"
     rm -rf "$FXP_FIX_STORE_DIR"
@@ -65,6 +65,10 @@ start_bridge
 
 python3 "$repo_root/fix_test_client/fix_client.py" | tee "$log_dir/fix_client.log"
 grep -Eq 'Results: ([1-9][0-9]*)/\1 passed$' "$log_dir/fix_client.log"
+
+# Cancel-on-disconnect: reset a COD session's TCP socket; its resting and stop
+# orders must leave the book and the cancels must be resent after reconnect.
+python3 "$repo_root/fix_test_client/fix_client.py" --sender CODTEST01 --test cod_disconnect | tee "$log_dir/cod.log"
 
 # Kill the bridge (SIGKILL) mid-session and restart it: the durable FIX store
 # must resume DURABLE01's sequence numbers and serve a ResendRequest.

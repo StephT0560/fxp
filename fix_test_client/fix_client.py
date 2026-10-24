@@ -27,6 +27,7 @@ import sys
 import json
 import os
 import socket
+import struct
 import time
 import argparse
 import threading
@@ -150,6 +151,7 @@ class FIXSession:
         'A': 'Logon', '0': 'Heartbeat', '5': 'Logout',
         '8': 'ExecutionReport', '9': 'OrderCancelReject',
         '3': 'Reject', 'W': 'MarketDataSnapshot', 'X': 'MarketDataIncremental',
+        'r': 'OrderMassCancelReport',
     }
 
     def __init__(self, host, port, sender, target, verbose=False):
@@ -163,6 +165,7 @@ class FIXSession:
         self.inbox   = queue.Queue()  # inbound ExecutionReports
         self.md_inbox = queue.Queue() # inbound MarketData W/X
         self.reject_inbox = queue.Queue() # inbound Reject(3) / BusinessMessageReject(j)
+        self.mass_inbox = queue.Queue()   # inbound OrderMassCancelReport(r)
         self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
@@ -172,8 +175,8 @@ class FIXSession:
         self._thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._thread.start()
 
-    def logon(self):
-        self.send('A', [(98, '0'), (108, '30'), (141, 'Y'), (554, FIX_PASSWORD)], 'Logon')
+    def logon(self, extra=()):
+        self.send('A', [(98, '0'), (108, '30'), (141, 'Y'), (554, FIX_PASSWORD)] + list(extra), 'Logon')
         time.sleep(0.6)  # wait for logon ack + gateway connect
 
     def logout(self):
@@ -191,7 +194,7 @@ class FIXSession:
         time.sleep(0.15)
 
     def new_order(self, clordid, symbol, side, qty, ord_type, price=None,
-                  stop_px=None, tif='0', description=''):
+                  stop_px=None, tif='0', description='', extra=()):
         fields = [
             (11, clordid), (55, symbol), (54, side),
             (38, str(qty)), (40, ord_type), (59, tif), (60, utc_now()),
@@ -200,7 +203,28 @@ class FIXSession:
             fields.append((44, f'{price:.2f}'))
         if stop_px is not None:
             fields.append((99, f'{stop_px:.2f}'))
+        fields.extend(extra)
         self.send('D', fields, description or f'NewOrder {clordid}')
+
+    def mass_cancel(self, clordid, request_type, symbol=None, side=None):
+        fields = [(11, clordid), (530, request_type), (60, utc_now())]
+        if symbol is not None:
+            fields.append((55, symbol))
+        if side is not None:
+            fields.append((54, side))
+        self.send('q', fields, f'OrderMassCancelRequest {clordid} 530={request_type}')
+
+    def wait_for_mass(self, clordid, timeout=4.0):
+        """Wait for an OrderMassCancelReport(r) with ClOrdID(11)=clordid."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                msg = self.mass_inbox.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if msg.get(11) == clordid:
+                return msg
+        return None
 
     def cancel_order(self, clordid, orig_clordid, symbol, side):
         fields = [
@@ -295,6 +319,8 @@ class FIXSession:
                     self.md_inbox.put(msg)
                 elif msg_type in ('3', 'j'):
                     self.reject_inbox.put(msg)
+                elif msg_type == 'r':
+                    self.mass_inbox.put(msg)
 
             except socket.timeout:
                 continue
@@ -825,6 +851,92 @@ def test_market_data(s, r):
     assert_gap_free(r, 'market data session', sess.out_seqs)
 
 
+def check(r, ok, description, detail=''):
+    if ok:
+        print(f'  {PASS} {description}')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} {description}: {detail}')
+        r.failed += 1
+
+
+def assert_stp_cancel(r, description, msg):
+    text = (msg or {}).get(58, '')
+    check(r, msg is not None and msg.get(150) == '4' and text.startswith('self-trade prevention'),
+          description, None if msg is None else f'150={msg.get(150)} 58={text!r}')
+
+
+def test_self_trade_prevention(s, r):
+    """#1: SelfMatchPreventionInstruction (2964) on the aggressor stops a self-match."""
+    print('\n─── test_self_trade_prevention ──────────────────────────────')
+    sym, sell = 'SMPX', order_id('SMS')
+    s.new_order(sell, sym, '2', 10, '2', price=10.00, description=f'SELL 10 {sym} @10.00')
+    r.assert_exec('resting sell acknowledged', s.wait_for(order_id=sell, exec_type='0', timeout=3.0), '0', '0')
+
+    newest = order_id('SMN')
+    s.new_order(newest, sym, '1', 10, '2', price=10.00, extra=[(2964, '1')],
+                description=f'BUY 10 {sym} @10.00 2964=1 (cancel aggressive)')
+    assert_stp_cancel(r, 'cancel-newest cancels the aggressor', s.wait_for(order_id=newest, exec_type='4', timeout=3.0))
+    check(r, s.wait_for(order_id=sell, exec_type='F', timeout=0.5) is None, 'no trade printed for the prevented match')
+
+    oldest = order_id('SMO')
+    s.new_order(oldest, sym, '1', 10, '2', price=10.00, extra=[(2964, '2')],
+                description=f'BUY 10 {sym} @10.00 2964=2 (cancel passive)')
+    assert_stp_cancel(r, 'cancel-oldest cancels the resting order', s.wait_for(order_id=sell, exec_type='4', timeout=3.0))
+    r.assert_exec('aggressor rests after cancel-oldest', s.wait_for(order_id=oldest, exec_type='0', timeout=3.0), '0', '0')
+    check(r, s.wait_for(order_id=sell, exec_type='F', timeout=0.5) is None, 'no trade printed for the prevented match')
+    s.cancel_order(order_id('SMC'), oldest, sym, '1')
+    r.assert_exec('cleanup cancel', s.wait_for(order_id=oldest, exec_type='4', timeout=3.0), '4')
+
+
+def test_mass_cancel(s, r):
+    """#1: 35=q cancels only the caller's orders (stops included) and answers 35=r."""
+    print('\n─── test_mass_cancel ────────────────────────────────────────')
+    mc = FIXSession(s.host, s.port, 'MASSCXL01', s.target, verbose=s.verbose)
+    mc.connect(); mc.logon()
+    try:
+        other = order_id('MCO')
+        s.new_order(other, 'MCX', '1', 10, '2', price=5.00, description='TESTFIRM01 BUY 10 MCX @5.00')
+        r.assert_exec('other owner order acknowledged', s.wait_for(order_id=other, exec_type='0', timeout=3.0), '0', '0')
+        buy, sell, stop = order_id('MCB'), order_id('MCS'), order_id('MCT')
+        mc.new_order(buy, 'MCX', '1', 10, '2', price=5.00, description='BUY 10 MCX @5.00')
+        mc.new_order(sell, 'MCX', '2', 10, '2', price=50.00, description='SELL 10 MCX @50.00')
+        mc.new_order(stop, 'MCY', '1', 10, '3', stop_px=99.00, description='BUY STOP 10 MCY @99.00')
+        for oid in (buy, sell, stop):
+            r.assert_exec(f'{oid} acknowledged', mc.wait_for(order_id=oid, exec_type='0', timeout=3.0), '0', '0')
+
+        def report(clordid, response, affected):
+            rep = mc.wait_for_mass(clordid, timeout=3.0)
+            check(r, rep is not None and rep.get(531) == response and rep.get(533) == str(affected),
+                  f'35=r {clordid}: 531={response} 533={affected}',
+                  None if rep is None else f'531={rep.get(531)} 533={rep.get(533)} 58={rep.get(58)!r}')
+            return rep
+
+        mc.mass_cancel('MC-SYM', '1', symbol='MCX', side='1')
+        report('MC-SYM', '1', 1)
+        r.assert_exec('symbol+side filter cancels the buy', mc.wait_for(order_id=buy, exec_type='4', timeout=3.0), '4')
+
+        mc.mass_cancel('MC-ALL', '7')
+        report('MC-ALL', '7', 2)
+        for oid in (sell, stop):
+            r.assert_exec(f'all-orders cancels {oid}', mc.wait_for(order_id=oid, exec_type='4', timeout=3.0), '4')
+
+        mc.mass_cancel('MC-EMPTY', '7')
+        report('MC-EMPTY', '7', 0)
+
+        mc.mass_cancel('MC-BAD', '3')
+        rep = mc.wait_for_mass('MC-BAD', timeout=3.0)
+        check(r, rep is not None and rep.get(531) == '0' and rep.get(532) == '0'
+              and 'unsupported MassCancelRequestType' in rep.get(58, ''),
+              'unsupported 530=3 rejected (531=0 532=0)', rep)
+
+        s.cancel_order(order_id('MCC'), other, 'MCX', '1')
+        r.assert_exec("another owner's order survived the mass cancels",
+                      s.wait_for(order_id=other, exec_type='4', timeout=3.0), '4')
+    finally:
+        mc.logout()
+
+
 # ── Test registry ─────────────────────────────────────────────────────────────
 
 TESTS = {
@@ -843,6 +955,8 @@ TESTS = {
     'cross_session_cancel': test_cross_session_cancel,
     'outbound_sequence':   test_outbound_sequence,
     'market_data':         test_market_data,
+    'self_trade_prevention': test_self_trade_prevention,
+    'mass_cancel':         test_mass_cancel,
 }
 
 # ── Durable session (bridge killed and restarted between the two phases) ─────
@@ -911,7 +1025,55 @@ def durable_after_restart(args, r):
         sess.logout()
 
 
+def cod_disconnect(args, r):
+    """#1: a cancel-on-disconnect (8013=Y) session whose TCP socket is reset
+    loses its resting and stop orders; the cancels are resent after reconnect."""
+    print('\n─── cod_disconnect ──────────────────────────────────────────')
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.connect()
+    sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD), (8013, 'Y')], 'Logon 8013=Y')
+    time.sleep(0.6)
+    rest, stop = order_id('CDL'), order_id('CDS')
+    sess.new_order(rest, 'CODX', '1', 10, '2', price=5.00, description='BUY 10 CODX @5.00')
+    sess.new_order(stop, 'CODX', '1', 10, '3', stop_px=9.00, description='BUY STOP 10 CODX @9.00')
+    for oid in (rest, stop):
+        r.assert_exec(f'{oid} acknowledged', sess.wait_for(order_id=oid, exec_type='0', timeout=3.0), '0', '0')
+    last_out, next_seq = max(n for _, n in sess.out_seqs), sess.seq
+
+    sess._stop.set()
+    sess.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+    sess.sock.close()  # RST, no Logout
+    time.sleep(1.0)
+
+    chk = FIXSession(args.host, args.port, 'CODCHK01', args.target, verbose=args.verbose)
+    chk.connect(); chk.logon()
+    try:
+        probe = order_id('CDP')
+        chk.new_order(probe, 'CODX', '2', 10, '2', price=1.00, tif='3', description='SELL 10 CODX @1.00 IOC')
+        r.assert_exec('probe IOC finds an empty book', chk.wait_for(order_id=probe, exec_type='4', timeout=3.0), '4')
+        check(r, chk.wait_for(order_id=probe, exec_type='F', timeout=0.5) is None, 'probe IOC did not trade')
+    finally:
+        chk.logout()
+
+    again = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    again.seq = next_seq
+    again.connect()
+    try:
+        again.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset) after disconnect')
+        time.sleep(0.6)
+        check(r, again.out_seqs[:1] == [('A', last_out + 3)],
+              'Logon ack sequence accounts for the two stored cancels', again.out_seqs[:1])
+        again.send('2', [(7, str(last_out + 1)), (16, '0')], f'ResendRequest {last_out + 1}..0')
+        for oid in (rest, stop):
+            m = again.wait_for(order_id=oid, exec_type='4', timeout=3.0)
+            check(r, m is not None and m.get(43) == 'Y' and m.get(58) == 'cancel on disconnect',
+                  f'cancel of {oid} resent (43=Y, 58=cancel on disconnect)', m)
+    finally:
+        again.logout()
+
+
 DURABLE_PHASES = {
+    'cod_disconnect':        cod_disconnect,
     'durable_before_kill':   durable_before_kill,
     'durable_after_restart': durable_after_restart,
 }
