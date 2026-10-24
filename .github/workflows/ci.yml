@@ -123,5 +123,7 @@ jobs:
           lint: true
           format: false
           push: false
+          # Lint/breaking results go to the job log; commenting needs pull-requests: write.
+          pr_comment: false
           breaking: ${{ github.event_name == 'pull_request' }}
           breaking_against: "${{ github.event.repository.clone_url }}#branch=${{ github.base_ref }},subdir=fxp_core/proto"
