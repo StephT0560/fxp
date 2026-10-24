@@ -507,6 +507,21 @@ def test_required_fields(s, r):
         r.failed += 1
 
 
+def test_order_status_request(s, r):
+    """OrderStatusRequest (35=H) is unsupported: BusinessMessageReject 380=3."""
+    print('\n─── test_order_status_request ───────────────────────────────')
+    seq = s.seq
+    s.send('H', [(11, order_id('OSR')), (55, 'MSFT'), (54, '1')], 'OrderStatusRequest')
+    msg = s.wait_for_reject(seq, timeout=3.0)
+    if msg and msg.get(35) == 'j' and msg.get(372) == 'H' and msg.get(380) == '3' \
+            and 'OrderStatusRequest' in msg.get(58, ''):
+        print(f'  {PASS} 35=H rejected: 35=j 380=3 Text={msg[58]}')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} 35=H: want BusinessMessageReject 380=3, got {msg and msg["tags"]}')
+        r.failed += 1
+
+
 def test_stop_order(s, r):
     """
     Stop sell triggered by a fill:
@@ -804,6 +819,7 @@ TESTS = {
     'limit_cross':         test_limit_cross,
     'missing_side':        test_missing_side,
     'required_fields':     test_required_fields,
+    'order_status_request': test_order_status_request,
     'market_empty_book':   test_market_empty_book,
     'cancel_replace':      test_cancel_replace,
     'cancel_resting':      test_cancel_resting,

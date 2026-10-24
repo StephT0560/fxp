@@ -67,6 +67,7 @@ const (
 	MsgTypeMarketDataRequest         = "V"
 	MsgTypeMarketDataSnapshot        = "W"
 	MsgTypeMarketDataIncremental     = "X"
+	MsgTypeOrderStatusRequest        = "H" // not supported: answered with BusinessMessageReject
 )
 
 // ── Session-level tags ────────────────────────────────────────────────────────
@@ -89,6 +90,13 @@ const (
 	TagPassword             = 554 // Logon password
 	TagRefMsgType           = 372 // MsgType being rejected (BusinessMessageReject)
 	TagBusinessRejectReason = 380 // coded reason (BusinessMessageReject)
+)
+
+// ── BusinessRejectReason values (tag 380) ────────────────────────────────────
+
+const (
+	BusinessRejectReasonOther              = "0"
+	BusinessRejectReasonUnsupportedMsgType = "3"
 )
 
 // ── SessionRejectReason values (tag 373) ──────────────────────────────────────

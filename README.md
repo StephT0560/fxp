@@ -223,6 +223,27 @@ NVDA   open=$875.00  last=$875.15  vol=38,359
 
 ---
 
+## FIX Message Support
+
+The FIX 4.4 bridge (`fix_bridge`, port 8083) handles these inbound messages:
+
+| MsgType | Message | Support |
+|---|---|---|
+| `A`, `0`, `1`, `2`, `3`, `4`, `5` | Logon, Heartbeat, TestRequest, ResendRequest, Reject, SequenceReset, Logout | ✅ Session layer |
+| `D` | NewOrderSingle | ✅ |
+| `F` | OrderCancelRequest | ✅ |
+| `G` | OrderCancelReplaceRequest | ✅ |
+| `V` | MarketDataRequest (snapshot, subscribe, unsubscribe) | ✅ |
+| `H` | OrderStatusRequest | ❌ BusinessMessageReject (`35=j`, `380=3`) |
+| any other application type | e.g. `AF`, `q`, `AD` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
+
+Outbound: ExecutionReport (`8`), OrderCancelReject (`9`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`), BusinessMessageReject (`j`) plus the session messages.
+
+Required fields follow the FIX 4.4 spec (`fix_bridge/codec/dictionary.go`):
+`D` needs 11, 55, 54, 60, 40; `F` needs 41, 11, 55, 54, 60; `G` needs 41, 11, 55, 54, 60, 40;
+`V` needs 262, 263, 264, 267, 269, 146, 55. A message missing one of them gets
+Reject (`35=3`) with `373=1` (Required tag missing), `371` (the missing tag) and `372`.
+
 ## FIX Session Store
 
 The FIX bridge keeps each session's sequence numbers and sent messages per

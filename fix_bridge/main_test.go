@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -218,9 +219,13 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	if m := next(); m.MsgType() != codec.MsgTypeOrderCancelReject {
 		t.Fatalf("cancel before gateway: 35=%s", m.MsgType())
 	}
-	go send("H", codec.TagClOrdID, "Q1")
-	if m := next(); m.MsgType() != codec.MsgTypeBusinessMessageReject || m.Get(codec.TagRefMsgType) != "H" {
-		t.Fatalf("unsupported type: 35=%s 372=%s", m.MsgType(), m.Get(codec.TagRefMsgType))
+	go send(codec.MsgTypeOrderStatusRequest, codec.TagClOrdID, "Q1", codec.TagSymbol, "MSFT", codec.TagSide, "1")
+	if m := next(); m.MsgType() != codec.MsgTypeBusinessMessageReject || m.Get(codec.TagRefMsgType) != "H" ||
+		m.Get(codec.TagRefSeqNum) != strconv.Itoa(seq) ||
+		m.Get(codec.TagBusinessRejectReason) != codec.BusinessRejectReasonUnsupportedMsgType ||
+		m.Get(codec.TagText) != "Unsupported MsgType H (OrderStatusRequest); supported: D, F, G, V" {
+		t.Fatalf("unsupported type: 35=%s 45=%s 372=%s 380=%s 58=%q", m.MsgType(), m.Get(codec.TagRefSeqNum),
+			m.Get(codec.TagRefMsgType), m.Get(codec.TagBusinessRejectReason), m.Get(codec.TagText))
 	}
 
 	h.gwClient = gateway.NewClient("TESTFIRM01", "secret", func(*protobuf.FXPMessage) {})

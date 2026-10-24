@@ -277,6 +277,12 @@ func (h *bridgeHandler) OnLogout(sess *session.Session, reason string) {
 // Handle is called by the session for each inbound application message.
 // Translates the FIX message to FXP and forwards to the gateway.
 func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
+	if !supportedAppMsgTypes[msg.MsgType()] {
+		sess.SendWithSeq(func(seq int) []byte {
+			return buildUnsupportedReject(msg, h.bridgeCompID, sess.TargetCompID, seq)
+		})
+		return
+	}
 	if h.gwClient == nil {
 		h.sendBusinessReject(msg, sess, "gateway not connected")
 		return
@@ -392,10 +398,46 @@ func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, 
 			b.Set(codec.TagRefSeqNum, ref)
 		}
 		b.Set(codec.TagRefMsgType, msg.MsgType())
-		b.Set(codec.TagBusinessRejectReason, "0") // Other
+		b.Set(codec.TagBusinessRejectReason, codec.BusinessRejectReasonOther)
 		b.Set(codec.TagText, reason)
 		return b.Build()
 	}
+}
+
+// supportedAppMsgTypes are the inbound application messages the bridge
+// translates; every other application MsgType gets BusinessMessageReject.
+var supportedAppMsgTypes = map[string]bool{
+	codec.MsgTypeNewOrderSingle:            true,
+	codec.MsgTypeOrderCancelRequest:        true,
+	codec.MsgTypeOrderCancelReplaceRequest: true,
+	codec.MsgTypeMarketDataRequest:         true,
+}
+
+// unsupportedMsgTypeNames names common FIX 4.4 requests for reject texts.
+var unsupportedMsgTypeNames = map[string]string{
+	codec.MsgTypeOrderStatusRequest: "OrderStatusRequest",
+	"AF":                            "OrderMassStatusRequest",
+	"q":                             "OrderMassCancelRequest",
+	"AD":                            "TradeCaptureReportRequest",
+	"c":                             "SecurityDefinitionRequest",
+	"x":                             "SecurityListRequest",
+}
+
+// buildUnsupportedReject answers an unsupported application message with
+// BusinessMessageReject(j), BusinessRejectReason(380)=3.
+func buildUnsupportedReject(msg *codec.Message, bridgeCompID, targetCompID string, seq int) []byte {
+	name := msg.MsgType()
+	if n, ok := unsupportedMsgTypeNames[name]; ok {
+		name += " (" + n + ")"
+	}
+	b := codec.NewBuilder(codec.MsgTypeBusinessMessageReject, bridgeCompID, targetCompID, seq)
+	if ref := msg.Get(codec.TagMsgSeqNum); ref != "" {
+		b.Set(codec.TagRefSeqNum, ref)
+	}
+	b.Set(codec.TagRefMsgType, msg.MsgType())
+	b.Set(codec.TagBusinessRejectReason, codec.BusinessRejectReasonUnsupportedMsgType)
+	b.Set(codec.TagText, "Unsupported MsgType "+name+"; supported: D, F, G, V")
+	return b.Build()
 }
 
 // fixRequestFor reconstructs the identifying FIX fields of a queued FXP
