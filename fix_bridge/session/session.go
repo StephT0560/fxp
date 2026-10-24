@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // session.go — FIX 4.4 session state machine
 //
 // Manages the lifecycle of a single FIX session:
@@ -252,6 +254,16 @@ func (s *Session) setState(st State) {
 func (s *Session) readLoop() {
 	for {
 		msg, err := s.parser.ReadMessage()
+		if errors.Is(err, codec.ErrBeginString) {
+			reason := fmt.Sprintf("unsupported BeginString %q", msg.Get(codec.TagBeginString))
+			if st := s.State(); st != StateLoggedOn && st != StateLoggingOut {
+				s.rejectLogon(msg, reason)
+			} else {
+				log.Printf("[%s] %s", s.target(), reason)
+				s.sendLogout(reason)
+			}
+			return
+		}
 		if err != nil {
 			if errors.Is(err, codec.ErrGarbled) {
 				log.Printf("[%s] ignoring garbled message: %v", s.target(), err)
@@ -292,14 +304,7 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		if msgType != codec.MsgTypeLogon {
 			return s.rejectLogon(msg, fmt.Sprintf("first message must be Logon, got 35=%s", msgType))
 		}
-		if msg.Get(codec.TagBeginString) != "FIX.4.4" {
-			return s.rejectLogon(msg, fmt.Sprintf("unsupported BeginString %q", msg.Get(codec.TagBeginString)))
-		}
 		return s.handleLogon(msg, seq)
-	}
-
-	if msg.Get(codec.TagBeginString) != "FIX.4.4" {
-		return fmt.Errorf("BeginString mismatch: %q", msg.Get(codec.TagBeginString))
 	}
 
 	if msg.Get(codec.TagSenderCompID) != s.target() || msg.Get(codec.TagTargetCompID) != s.SenderCompID {

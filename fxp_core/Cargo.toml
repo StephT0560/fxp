@@ -4,17 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rand = "0.8"
 prost = "0.13"
 prost-types = "0.13"
-tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "*"
-futures-util = "0.3"
-url = "2.4"
+tokio = { version = "1.44", features = ["full"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-hex = "0.4"
 
 [build-dependencies]
 prost-build = "0.13"
@@ -25,6 +20,5 @@ path = "src/lib.rs"
 
 [[bench]]
 name = "encoding_benchmark"
-path = "src/benches/encoding_benchmark.rs"
 harness = false
 

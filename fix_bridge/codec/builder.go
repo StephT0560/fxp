@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // builder.go — FIX 4.4 message builder
 //
 // Constructs outbound FIX messages with correct BodyLength and CheckSum.
@@ -34,11 +36,12 @@ type Builder struct {
 }
 
 // NewBuilder creates a builder pre-populated with the standard header fields:
-//   Tag 35 — MsgType
-//   Tag 49 — SenderCompID
-//   Tag 56 — TargetCompID
-//   Tag 34 — MsgSeqNum
-//   Tag 52 — SendingTime (UTC, current time)
+//
+//	Tag 35 — MsgType
+//	Tag 49 — SenderCompID
+//	Tag 56 — TargetCompID
+//	Tag 34 — MsgSeqNum
+//	Tag 52 — SendingTime (UTC, current time)
 func NewBuilder(msgType, senderCompID, targetCompID string, seqNum int) *Builder {
 	b := &Builder{}
 	b.Set(TagMsgType, msgType)
@@ -96,11 +99,15 @@ func (b *Builder) SetPrice(tag int, fixedPoint int64) *Builder {
 // Build serialises the message into a complete FIX frame (bytes ready to send).
 // Computes BodyLength and CheckSum automatically.
 // Tag order in the output:
-//   8=FIX.4.4 | 9=<bodylen> | <body fields> | 10=<checksum>
+//
+//	8=FIX.4.4 | 9=<bodylen> | <body fields> | 10=<checksum>
 func (b *Builder) Build() []byte {
 	// Serialise body fields to compute BodyLength
 	var body strings.Builder
 	for _, f := range b.fields {
+		if f.Value == "" {
+			continue // FIX forbids empty values; an unset field is omitted
+		}
 		body.WriteString(strconv.Itoa(f.Tag))
 		body.WriteByte('=')
 		body.WriteString(f.Value)

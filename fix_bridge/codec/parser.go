@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // parser.go — FIX 4.4 message parser
 //
 // FIX wire format:
@@ -5,12 +7,13 @@
 //
 // Each tag=value pair is terminated by SOH (\x01).
 // BodyLength (tag 9) counts bytes from the character after tag 9's SOH
-// up to and including tag 10's SOH.
+// up to and including the SOH before tag 10.
 //
 // This parser:
 //   1. Reads until it has a complete message (using BodyLength to know when)
-//   2. Validates the checksum
-//   3. Returns a Message (map of tag → value, plus ordered tag list)
+//   2. Validates the checksum and rejects empty or malformed tag=value fields
+//   3. Accepts only the exact configured BeginString (default FIX.4.4)
+//   4. Returns a Message (map of tag → value, plus ordered tag list)
 //
 // It does NOT validate required fields or field types — that is the
 // responsibility of the session and translator layers.
@@ -90,16 +93,30 @@ func garbled(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrGarbled, fmt.Sprintf(format, args...))
 }
 
+// ErrBeginString marks a well-framed message whose BeginString(8) is not the
+// one the parser is configured for. ReadMessage returns the parsed message
+// with it so the session can answer with a Logout.
+var ErrBeginString = errors.New("unsupported BeginString")
+
+// DefaultBeginString is the only BeginString a new Parser accepts.
+const DefaultBeginString = "FIX.4.4"
+
 // Parser reads FIX messages from a buffered reader.
 type Parser struct {
 	r             *bufio.Reader
 	resync        bool
 	maxBodyLength int
+	beginString   string
 }
 
 // NewParser creates a parser reading from r.
 func NewParser(r io.Reader) *Parser {
-	return &Parser{r: bufio.NewReaderSize(r, 65536), maxBodyLength: 1_048_576}
+	return &Parser{r: bufio.NewReaderSize(r, 65536), maxBodyLength: 1_048_576, beginString: DefaultBeginString}
+}
+
+// SetBeginString sets the exact BeginString(8) value the parser accepts.
+func (p *Parser) SetBeginString(beginString string) {
+	p.beginString = beginString
 }
 
 // SetMaxBodyLength sets the maximum accepted BodyLength.
@@ -151,8 +168,8 @@ func (p *Parser) readMessage() (*Message, error) {
 	if tag != TagBeginString {
 		return nil, garbled("expected tag 8 (BeginString), got tag %d", tag)
 	}
-	if !strings.HasPrefix(beginString, "FIX.4") {
-		return nil, garbled("unsupported BeginString: %q (expected FIX.4.x)", beginString)
+	if !strings.HasPrefix(beginString, "FIX") {
+		return nil, garbled("BeginString %q is not FIX", beginString)
 	}
 
 	// Step 2: Read tag 9 (BodyLength)
@@ -164,7 +181,7 @@ func (p *Parser) readMessage() (*Message, error) {
 		return nil, garbled("expected tag 9 (BodyLength), got tag %d", tag)
 	}
 	bodyLen, err := strconv.Atoi(bodyLengthValue)
-	if err != nil {
+	if err != nil || !isDigits(bodyLengthValue) {
 		return nil, garbled("invalid BodyLength %q: %v", bodyLengthValue, err)
 	}
 	if bodyLen <= 0 || bodyLen > p.maxBodyLength {
@@ -236,7 +253,44 @@ func (p *Parser) readMessage() (*Message, error) {
 		msg.Fields[f.Tag] = f.Value
 	}
 
+	if beginString != p.beginString {
+		return msg, fmt.Errorf("%w %q (expected %q)", ErrBeginString, beginString, p.beginString)
+	}
 	return msg, nil
+}
+
+// parseTagValue splits "tag=value" and rejects anything FIX does not allow:
+// the tag must be a positive integer without sign or leading zeros, and the
+// value must be non-empty.
+func parseTagValue(pair string) (int, string, error) {
+	eqIdx := strings.IndexByte(pair, '=')
+	if eqIdx < 0 {
+		return 0, "", fmt.Errorf("malformed field %q: missing '='", pair)
+	}
+	tagStr, value := pair[:eqIdx], pair[eqIdx+1:]
+	if !isDigits(tagStr) || tagStr[0] == '0' {
+		return 0, "", fmt.Errorf("malformed field %q: invalid tag number", pair)
+	}
+	tag, err := strconv.Atoi(tagStr)
+	if err != nil {
+		return 0, "", fmt.Errorf("malformed field %q: %w", pair, err)
+	}
+	if value == "" {
+		return 0, "", fmt.Errorf("malformed field %q: empty value", pair)
+	}
+	return tag, value, nil
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // parseFields splits a byte slice of SOH-delimited "tag=value\x01" fields.
@@ -261,20 +315,12 @@ func parseFields(data []byte) ([]Field, error) {
 		remaining = remaining[idx+1:]
 
 		if pair == "" {
-			continue
+			return nil, fmt.Errorf("empty field (SOH SOH)")
 		}
 
-		eqIdx := strings.IndexByte(pair, '=')
-		if eqIdx <= 0 {
-			return nil, fmt.Errorf("malformed field %q: missing '='", pair)
-		}
-
-		tagStr := pair[:eqIdx]
-		value := pair[eqIdx+1:]
-
-		tag, err := strconv.Atoi(tagStr)
+		tag, value, err := parseTagValue(pair)
 		if err != nil {
-			return nil, fmt.Errorf("invalid tag number %q: %w", tagStr, err)
+			return nil, err
 		}
 
 		fields = append(fields, Field{Tag: tag, Value: value})
@@ -316,15 +362,13 @@ func (p *Parser) readField() (int, string, string, error) {
 	// Strip trailing SOH
 	field := strings.TrimSuffix(raw, string(soh))
 
-	eqIdx := strings.IndexByte(field, '=')
-	if eqIdx <= 0 {
-		return 0, "", "", garbled("malformed field %q: missing '='", field)
+	if field == "" {
+		return 0, "", "", garbled("empty field (SOH SOH)")
 	}
-
-	tag, err := strconv.Atoi(field[:eqIdx])
+	tag, value, err := parseTagValue(field)
 	if err != nil {
-		return 0, "", "", garbled("invalid tag %q: %v", field[:eqIdx], err)
+		return 0, "", "", garbled("%v", err)
 	}
 
-	return tag, field[eqIdx+1:], raw, nil
+	return tag, value, raw, nil
 }

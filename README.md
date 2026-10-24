@@ -231,7 +231,7 @@ Counts observed at this revision:
 |---|---:|
 | `fxp_core` (`cargo test`) | 52 unit tests |
 | `go_gateway/transport` (`go test -v`) | 17 top-level tests |
-| `fix_bridge` (`go test -v ./...`) | 47 top-level tests |
+| `fix_bridge` (`go test -v ./...`) | 53 top-level tests |
 | Python FIX E2E client | 11 scenarios, 27 reported checks |
 
 The Gateway count is from its `transport` test package; package-wide `go test` also reports the existing `benchmark.go:479` vet warning.
@@ -287,13 +287,13 @@ fxp/
 │   ├── src/
 │   │   ├── server.rs            TCP server, per-symbol dispatch, stop trigger logic
 │   │   ├── lib.rs               Unit tests (52 tests)
-│   │   ├── benches/
-│   │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   │   └── order_book/
 │   │       ├── order.rs         Order struct, OrderType, TimeInForce enums
 │   │       ├── order_book.rs    BTreeMap price-time priority book
 │   │       ├── matcher.rs       Aggressive matching: Market/IOC/FOK/Stop
 │   │       └── execution_report.rs
+│   ├── benches/
+│   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   └── proto/
 │       └── fxp.proto            Protocol schema v2.0
 │

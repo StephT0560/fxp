@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // fxp_to_fix.go — FXP Protobuf → FIX 4.4 translator
 //
 // Translates inbound FXP messages from the gateway into FIX frames
@@ -89,12 +91,12 @@ func translateExecutionReport(
 	b := codec.NewBuilder(codec.MsgTypeExecutionReport, senderCompID, targetCompID, seqNum)
 
 	// Required fields
-	b.Set(codec.TagOrderID,  rep.OrderId)
-	b.Set(codec.TagExecID,   rep.ExecutionId)
+	b.Set(codec.TagOrderID, rep.OrderId)
+	b.Set(codec.TagExecID, rep.ExecutionId)
 	b.Set(codec.TagExecType, execType)
 	b.Set(codec.TagOrdStatus, ordStatus)
-	b.Set(codec.TagSymbol,   rep.Symbol)
-	b.Set(codec.TagSide,     side)
+	b.Set(codec.TagSymbol, rep.Symbol)
+	b.Set(codec.TagSide, side)
 	if rep.OrderQuantity > 0 {
 		b.SetInt(codec.TagOrderQty, int(rep.OrderQuantity))
 	}
@@ -118,12 +120,12 @@ func translateExecutionReport(
 
 	// Quantity fields
 	b.SetInt(codec.TagLeavesQty, int(rep.LeavesQuantity))
-	b.SetInt(codec.TagCumQty,    int(rep.CumQuantity))
+	b.SetInt(codec.TagCumQty, int(rep.CumQuantity))
 
 	// Fill-specific fields
 	if rep.ExecutedQuantity > 0 {
 		b.SetInt(codec.TagLastQty, int(rep.ExecutedQuantity))
-		b.Set(codec.TagLastPx,    formatFixedPoint(rep.ExecutionPrice))
+		b.Set(codec.TagLastPx, formatFixedPoint(rep.ExecutionPrice))
 	}
 
 	// Average price (required on every ExecutionReport)
@@ -160,14 +162,14 @@ func translateMarketDataSnapshot(
 	// Bid levels (MDEntryType=0)
 	for _, bid := range snap.BidLevels {
 		b.Set(codec.TagMDEntryType, "0") // Bid
-		b.Set(codec.TagMDEntryPx,   formatFixedPoint(bid.Price))
+		b.Set(codec.TagMDEntryPx, formatFixedPoint(bid.Price))
 		b.SetInt(codec.TagMDEntrySize, int(bid.Size))
 	}
 
 	// Ask levels (MDEntryType=1)
 	for _, ask := range snap.AskLevels {
 		b.Set(codec.TagMDEntryType, "1") // Offer
-		b.Set(codec.TagMDEntryPx,   formatFixedPoint(ask.Price))
+		b.Set(codec.TagMDEntryPx, formatFixedPoint(ask.Price))
 		b.SetInt(codec.TagMDEntrySize, int(ask.Size))
 	}
 
@@ -196,8 +198,8 @@ func translateMarketDataIncremental(
 
 		// MDEntryType — price level changes don't carry side in FXP incremental,
 		// so we emit without MDEntryType (or caller can set it if available)
-		b.Set(codec.TagSymbol,       inc.Symbol)
-		b.Set(codec.TagMDEntryPx,    formatFixedPoint(change.Price))
+		b.Set(codec.TagSymbol, inc.Symbol)
+		b.Set(codec.TagMDEntryPx, formatFixedPoint(change.Price))
 		b.SetInt(codec.TagMDEntrySize, int(change.Quantity))
 	}
 

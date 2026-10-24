@@ -20,7 +20,7 @@ is tested under its best realistic conditions.
 
 ## Part 1 — Encoding Benchmarks (Rust)
 
-**Location:** `fxp_core/src/benches/encoding_benchmark.rs`
+**Location:** `fxp_core/benches/encoding_benchmark.rs`
 **Framework:** [Criterion.rs](https://github.com/bheisler/criterion.rs) v0.5
 **Runtime:** `cargo bench --bench encoding_benchmark`
 

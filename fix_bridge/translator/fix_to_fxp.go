@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // fix_to_fxp.go — FIX 4.4 → FXP Protobuf translator
 //
 // Translates inbound FIX application messages into FXP proto messages
@@ -129,28 +131,28 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 	}
 
 	// Optional fields
-	account    := msg.Get(codec.TagAccount)
+	account := msg.Get(codec.TagAccount)
 	expireDate := msg.Get(codec.TagExpireDate)
-	sender     := msg.Get(codec.TagSenderCompID)
+	sender := msg.Get(codec.TagSenderCompID)
 
 	order := &protobuf.NewOrderSingle{
 		Header: &protobuf.FXPHeader{
 			ProtocolVersion: "1.1",
 		},
-		OrderId:        clOrdID,
-		ClientOrderId:  clOrdID, // FIX ClOrdID maps to both
-		Sender:         sender,
-		Receiver:       "FXPExchange",
-		Symbol:         symbol,
-		Side:           side,
-		Quantity:       int32(qty),
-		OrderType:      ordType,
-		TimeInForce:    tif,
-		Price:          price,
-		StopPrice:      stopPx,
-		Account:        account,
-		ExpireDate:     expireDate,
-		Timestamp:      timestamppb.Now(),
+		OrderId:       clOrdID,
+		ClientOrderId: clOrdID, // FIX ClOrdID maps to both
+		Sender:        sender,
+		Receiver:      "FXPExchange",
+		Symbol:        symbol,
+		Side:          side,
+		Quantity:      int32(qty),
+		OrderType:     ordType,
+		TimeInForce:   tif,
+		Price:         price,
+		StopPrice:     stopPx,
+		Account:       account,
+		ExpireDate:    expireDate,
+		Timestamp:     timestamppb.Now(),
 	}
 
 	return &protobuf.FXPMessage{
