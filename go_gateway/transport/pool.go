@@ -14,24 +14,24 @@ package transport
 //   - Senders acquire a connection, write, release — no global lock
 //   - ExecutionReport routing uses the existing orderClientMap (unchanged)
 //   - Market data fan-out uses the existing ForwardMarketData (unchanged)
-//   - Automatic reconnection on write failure
+//   - Automatic reconnection on write failure; the connection's single
+//     reader goroutine resumes on the new socket
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"runtime"
 	"sync"
-	"time"
 
 	"go_gateway/protobuf"
 
 	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 )
-
-const rustCoreAddr = "127.0.0.1:8080"
 
 // poolSize: one connection per logical CPU. Tunable via SetPoolSize().
 var poolSize = runtime.NumCPU()
@@ -40,11 +40,23 @@ func SetPoolSize(n int) { poolSize = n }
 
 // ── pooledConn ────────────────────────────────────────────────────────────────
 
+// errConnDown is returned by write when the reader has marked the connection
+// dead; the caller reconnects.
+var errConnDown = errors.New("pool connection is down")
+
+// pooledConn is one core connection. Writers share it under mu; exactly one
+// poolReader goroutine owns its read side for the pool's lifetime. reconnect
+// swaps conn and wakes that reader instead of starting another one.
 type pooledConn struct {
-	mu   sync.Mutex
-	conn net.Conn
-	id   int
+	mu      sync.Mutex
+	changed *sync.Cond // signalled when conn is replaced or the pool shuts down
+	conn    net.Conn
+	id      int
+	closed  bool
 }
+
+// coreAddr is a variable so tests can point the pool at a fake core.
+var coreAddr = "127.0.0.1:8080"
 
 // dialCore opens a core connection with Nagle disabled. Go already defaults
 // TCP_NODELAY to on; it is set explicitly so the latency contract is visible
@@ -61,44 +73,87 @@ func dialCore(addr string) (net.Conn, error) {
 	return c, nil
 }
 
+func newPooledConnWith(id int, c net.Conn) *pooledConn {
+	p := &pooledConn{conn: c, id: id}
+	p.changed = sync.NewCond(&p.mu)
+	return p
+}
+
 func newPooledConn(id int) (*pooledConn, error) {
-	c, err := dialCore(rustCoreAddr)
+	c, err := dialCore(coreAddr)
 	if err != nil {
 		return nil, err
 	}
-	return &pooledConn{conn: c, id: id}, nil
+	return newPooledConnWith(id, c), nil
 }
 
 // write sends bytes to FXP Core under the per-connection lock.
 func (p *pooledConn) write(frame []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.conn == nil {
+		return errConnDown
+	}
 	_, err := p.conn.Write(frame)
 	return err
 }
 
-// reconnect replaces the underlying connection.
+// reconnect replaces the underlying connection and hands it to the reader.
 func (p *pooledConn) reconnect() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return net.ErrClosed
+	}
 	if p.conn != nil {
 		p.conn.Close()
 		p.conn = nil
 	}
-	c, err := dialCore(rustCoreAddr)
+	c, err := dialCore(coreAddr)
 	if err != nil {
 		return err
 	}
 	p.conn = c
+	p.changed.Broadcast()
 	log.Printf("🔄 Pool conn %d reconnected", p.id)
 	return nil
 }
 
-// rawConn returns the underlying net.Conn (used by the reader goroutine).
-func (p *pooledConn) rawConn() net.Conn {
+// nextConn blocks until a live connection is available, or returns nil once
+// the pool connection is shut down.
+func (p *pooledConn) nextConn() net.Conn {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	for p.conn == nil && !p.closed {
+		p.changed.Wait()
+	}
+	if p.closed {
+		return nil
+	}
 	return p.conn
+}
+
+// markDead closes c and clears it if it is still the current connection, so
+// the next write reconnects. A conn already replaced by reconnect is left alone.
+func (p *pooledConn) markDead(c net.Conn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_ = c.Close()
+	if p.conn == c {
+		p.conn = nil
+	}
+}
+
+// shutdown closes the connection and stops its reader.
+func (p *pooledConn) shutdown() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	if p.conn != nil {
+		_ = p.conn.Close()
+		p.conn = nil
+	}
+	p.changed.Broadcast()
 }
 
 // ── pool ──────────────────────────────────────────────────────────────────────
@@ -166,8 +221,7 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string, owner string
 			inflightRequests.Delete(orderID)
 			return
 		}
-		// Restart reader on the fresh connection
-		go poolReader(pc)
+		// The connection's existing poolReader picks up the new conn.
 		// Retry once
 		if err = pc.write(frame); err != nil {
 			log.Printf("❌ Pool conn %d retry failed (OrderID %s): %v", pc.id, orderID, err)
@@ -183,56 +237,51 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string, owner string
 
 // ── poolReader ────────────────────────────────────────────────────────────────
 
-// poolReader is the dedicated reader goroutine for one pool connection.
-// It routes ExecutionReports and market data updates from FXP Core.
+// poolReader is the only reader of one pool connection, for its whole life.
+// It routes ExecutionReports and market data updates from FXP Core. On any
+// read or framing error it drops the connection (the stream can no longer be
+// trusted to be frame-aligned) and waits for reconnect to supply a new one.
 func poolReader(pc *pooledConn) {
 	log.Printf("🧵 Pool reader %d started", pc.id)
-	hdr := make([]byte, 4)
-
 	for {
-		c := pc.rawConn()
+		c := pc.nextConn()
 		if c == nil {
-			time.Sleep(50 * time.Millisecond)
-			continue
+			log.Printf("🧵 Pool reader %d stopped", pc.id)
+			return
 		}
-
-		if _, err := io.ReadFull(c, hdr); err != nil {
-			log.Printf("⚠️ Pool reader %d: read error: %v", pc.id, err)
-			// Mark dead so the next SendFramedToCore call will reconnect.
-			pc.mu.Lock()
-			if pc.conn == c {
-				pc.conn = nil
-			}
-			pc.mu.Unlock()
-			// Wait until SendFramedToCore reconnects, then restart reading.
-			for pc.rawConn() == nil {
-				time.Sleep(50 * time.Millisecond)
-			}
-			log.Printf("🧵 Pool reader %d resuming after reconnect", pc.id)
-			continue
-		}
-
-		msgLen := int(binary.BigEndian.Uint32(hdr))
-		if msgLen <= 0 || msgLen > 1_048_576 {
-			log.Printf("⚠️ Pool reader %d: invalid frame length %d", pc.id, msgLen)
-			continue
-		}
-
-		body := make([]byte, msgLen)
-		if _, err := io.ReadFull(c, body); err != nil {
-			log.Printf("⚠️ Pool reader %d: body read error: %v", pc.id, err)
-			continue
-		}
-
-		msg := &protobuf.FXPMessage{}
-		if err := proto.Unmarshal(body, msg); err != nil {
-			log.Printf("⚠️ Pool reader %d: decode error: %v", pc.id, err)
-			continue
-		}
-
-		routeFromCore(msg)
+		err := readCoreFrames(c)
+		log.Printf("⚠️ Pool reader %d: %v — waiting for reconnect", pc.id, err)
+		pc.markDead(c)
 	}
 }
+
+// readCoreFrames reads frames from c until an error, which it returns.
+func readCoreFrames(c net.Conn) error {
+	hdr := make([]byte, 4)
+	for {
+		if _, err := io.ReadFull(c, hdr); err != nil {
+			return fmt.Errorf("read error: %w", err)
+		}
+		msgLen := int(binary.BigEndian.Uint32(hdr))
+		if msgLen <= 0 || msgLen > 1_048_576 {
+			return fmt.Errorf("invalid frame length %d", msgLen)
+		}
+		body := make([]byte, msgLen)
+		if _, err := io.ReadFull(c, body); err != nil {
+			return fmt.Errorf("body read error: %w", err)
+		}
+		msg := &protobuf.FXPMessage{}
+		if err := proto.Unmarshal(body, msg); err != nil {
+			// The frame boundary is intact, so skip just this message.
+			log.Printf("⚠️ Pool reader: decode error: %v", err)
+			continue
+		}
+		onCoreMessage(msg)
+	}
+}
+
+// onCoreMessage handles every frame read from the core; tests replace it.
+var onCoreMessage = routeFromCore
 
 // ── routeFromCore ─────────────────────────────────────────────────────────────
 
