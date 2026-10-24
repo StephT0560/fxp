@@ -149,6 +149,7 @@ class FIXSession:
         self.seq     = 1
         self.sock    = None
         self.inbox   = queue.Queue()  # inbound ExecutionReports
+        self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
 
@@ -236,6 +237,7 @@ class FIXSession:
                     break
 
                 msg_type = msg.get(35, '?')
+                self.out_seqs.append((msg_type, int(msg.get(34, '0'))))
 
                 if self.verbose:
                     name = self.MSG_TYPE.get(msg_type, f'?({msg_type})')
@@ -605,6 +607,43 @@ def test_cross_session_cancel(s, r):
         attacker.logout()
 
 
+def assert_gap_free(r, label, seqs):
+    """Bridge outbound MsgSeqNum must be strictly monotonic and gap-free from 1."""
+    nums = [n for _, n in seqs]
+    if nums and nums == list(range(1, len(nums) + 1)):
+        print(f'  {PASS} {label}: outbound 34=1..{len(nums)} gap-free')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} {label}: outbound MsgSeqNum not 1..N gap-free: {seqs}')
+        r.failed += 1
+
+
+def test_outbound_sequence(s, r):
+    """LogonAck is 34=1, the first ExecutionReport 34=2, no duplicates or gaps."""
+    print('\n─── test_outbound_sequence ──────────────────────────────────')
+    sym    = 'C'
+    ord_id = order_id('SEQ')
+    sess = FIXSession(s.host, s.port, 'SEQCHECK01', s.target, verbose=s.verbose)
+    sess.connect(); sess.logon()
+    try:
+        sess.new_order(ord_id, sym, '1', 10, '2', price=5.00, description=f'BUY 10 {sym} @5.00')
+        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+        sess.cancel_order(order_id('SEQC'), ord_id, sym, '1')
+        r.assert_exec('order cancelled', sess.wait_for(order_id=ord_id, exec_type='4', timeout=3.0), '4')
+    finally:
+        sess.logout()
+
+    seqs = sess.out_seqs
+    first_er = next((n for t, n in seqs if t == '8'), None)
+    if seqs[:1] == [('A', 1)] and first_er == 2:
+        print(f'  {PASS} LogonAck 34=1, first ExecutionReport 34=2')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} expected LogonAck 34=1 and first ER 34=2, got {seqs[:3]}')
+        r.failed += 1
+    assert_gap_free(r, 'fresh session', seqs)
+
+
 # ── Test registry ─────────────────────────────────────────────────────────────
 
 TESTS = {
@@ -617,6 +656,7 @@ TESTS = {
     'fok_no_liquidity':    test_fok_no_liquidity,
     'cancel_filled_order': test_cancel_filled_order,
     'cross_session_cancel': test_cross_session_cancel,
+    'outbound_sequence':   test_outbound_sequence,
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -666,6 +706,7 @@ def main():
 
         session.logout()
         print('Logged out ✓')
+        assert_gap_free(runner, 'main session', session.out_seqs)
 
     except KeyboardInterrupt:
         print('\nInterrupted')
