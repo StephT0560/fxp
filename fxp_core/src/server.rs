@@ -109,9 +109,71 @@ use crate::order_book::order::{Order, OrderSide, OrderType, TimeInForce};
 use crate::order_book::order_book::{OrderBook, OrderReplace};
 
 // ── Output channel ────────────────────────────────────────────────────────────
-// Each connection gets one output channel. All tasks that need to write to
-// this connection send frames here. The write_task drains it exclusively.
-type OutputTx = mpsc::Sender<Vec<u8>>;
+// Each connection has separate bounded queues for critical reports and
+// droppable market data. A single writer drains both queues.
+#[derive(Clone)]
+struct ClientTx {
+    frames: mpsc::Sender<Vec<u8>>,
+    md: mpsc::Sender<Vec<u8>>,
+    slow: Arc<tokio::sync::Notify>,
+    slow_reported: Arc<std::sync::atomic::AtomicBool>,
+    md_dropped: Arc<AtomicU64>,
+}
+
+static MD_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+impl ClientTx {
+    fn channel(
+        frame_capacity: usize,
+        md_capacity: usize,
+    ) -> (Self, mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
+        let (frames, frame_rx) = mpsc::channel(frame_capacity);
+        let (md, md_rx) = mpsc::channel(md_capacity);
+        (
+            Self {
+                frames,
+                md,
+                slow: Arc::new(tokio::sync::Notify::new()),
+                slow_reported: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                md_dropped: Arc::new(AtomicU64::new(0)),
+            },
+            frame_rx,
+            md_rx,
+        )
+    }
+
+    fn same_channel(&self, other: &Self) -> bool {
+        self.frames.same_channel(&other.frames)
+    }
+
+    fn try_send_frame(&self, frame: Vec<u8>) {
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.frames.try_send(frame) {
+            if !self
+                .slow_reported
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                tracing::warn!("critical output queue full; disconnecting slow consumer");
+                self.slow.notify_one();
+            }
+        }
+    }
+
+    // Returns false only after the subscriber is closed. A full queue drops
+    // this market-data frame but leaves the subscriber registered.
+    fn try_send_md(&self, frame: Vec<u8>) -> bool {
+        match self.md.try_send(frame) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                MD_DROPPED.fetch_add(1, AtomicOrdering::Relaxed);
+                self.md_dropped.fetch_add(1, AtomicOrdering::Relaxed);
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    }
+}
+
+type OutputTx = ClientTx;
 
 // ── Messages dispatched to a symbol's task ────────────────────────────────────
 
@@ -121,7 +183,7 @@ struct OrderMsg {
 }
 
 struct SubscribeMsg {
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: OutputTx,
 }
 
 struct CancelMsg {
@@ -314,8 +376,7 @@ async fn scheduled_order_book_task(
                         frame_message(&fxp::FxpMessage {
                             payload: Some(fxp::fxp_message::Payload::TradingSessionStatus(status)),
                         }),
-                    )
-                    .await;
+                    );
                 }
                 Output::AuctionInfo(info) => {
                     broadcast_md(
@@ -323,23 +384,18 @@ async fn scheduled_order_book_task(
                         frame_message(&fxp::FxpMessage {
                             payload: Some(fxp::fxp_message::Payload::AuctionInfo(info)),
                         }),
-                    )
-                    .await;
+                    );
                 }
                 Output::ExecutionReport(tx, report) => {
-                    let _ = tx
-                        .send(frame_message(&fxp::FxpMessage {
-                            payload: Some(fxp::fxp_message::Payload::ExecutionReport(report)),
-                        }))
-                        .await;
+                    tx.try_send_frame(frame_message(&fxp::FxpMessage {
+                        payload: Some(fxp::fxp_message::Payload::ExecutionReport(report)),
+                    }));
                 }
                 Output::Snapshot(tx, snapshot) => {
-                    let _ = tx
-                        .send(frame_message(&fxp::FxpMessage {
-                            payload: Some(fxp::fxp_message::Payload::MarketDataSnapshot(snapshot)),
-                        }))
-                        .await;
-                    if !subscribers.iter().any(|sub| sub.same_channel(&tx)) {
+                    if tx.try_send_md(frame_message(&fxp::FxpMessage {
+                        payload: Some(fxp::fxp_message::Payload::MarketDataSnapshot(snapshot)),
+                    })) && !subscribers.iter().any(|sub| sub.same_channel(&tx))
+                    {
                         subscribers.push(tx);
                     }
                 }
@@ -349,8 +405,7 @@ async fn scheduled_order_book_task(
                         frame_message(&fxp::FxpMessage {
                             payload: Some(fxp::fxp_message::Payload::MarketDataIncremental(update)),
                         }),
-                    )
-                    .await;
+                    );
                 }
             }
         }
@@ -366,10 +421,10 @@ fn next_exec_id() -> String {
 
 // ── Market data broadcast ─────────────────────────────────────────────────────
 
-async fn broadcast_md(subscribers: &mut Vec<mpsc::Sender<Vec<u8>>>, frame: Vec<u8>) {
+fn broadcast_md(subscribers: &mut Vec<ClientTx>, frame: Vec<u8>) {
     let mut dead = vec![];
     for (i, tx) in subscribers.iter().enumerate() {
-        if tx.send(frame.clone()).await.is_err() {
+        if !tx.try_send_md(frame.clone()) {
             dead.push(i);
         }
     }
@@ -428,17 +483,34 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
 
     let (mut read_half, write_half) = stream.into_split();
 
-    // Output channel: all tasks wanting to write to this connection send here.
-    // Capacity 8192: large enough to absorb bursts, bounded to signal back-pressure.
-    let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(8192);
+    let (output_tx, mut output_rx, mut md_rx) = ClientTx::channel(8192, 4096);
 
-    // Write task: drains the output channel and writes to the TCP socket.
-    // Single consumer = no locking needed on the write half.
+    // One writer serializes frames and prioritizes critical reports over MD.
     let writer = tokio::spawn(async move {
         let mut w = write_half;
-        while let Some(frame) = output_rx.recv().await {
-            if w.write_all(&frame).await.is_err() {
-                break;
+        let (mut frames_open, mut md_open) = (true, true);
+        while frames_open || md_open {
+            let frame = tokio::select! {
+                biased;
+                frame = output_rx.recv(), if frames_open => match frame {
+                    Some(frame) => Some(frame),
+                    None => {
+                        frames_open = false;
+                        None
+                    }
+                },
+                frame = md_rx.recv(), if md_open => match frame {
+                    Some(frame) => Some(frame),
+                    None => {
+                        md_open = false;
+                        None
+                    }
+                },
+            };
+            if let Some(frame) = frame {
+                if w.write_all(&frame).await.is_err() {
+                    break;
+                }
             }
         }
         tracing::debug!("Write task exiting for connection");
@@ -446,21 +518,25 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
     // When the client leaves, drop its receiver so reports for its resting
     // orders fail fast instead of filling a channel nobody drains.
     let _writer = AbortOnDrop(writer);
-    // One market-data channel per symbol for this connection, so subscribing
-    // to a symbol again does not stream each update twice.
-    let mut md_channels: HashMap<String, mpsc::Sender<Vec<u8>>> = HashMap::new();
 
     // Read loop: dispatches frames to symbol tasks, never blocks on processing.
     loop {
-        let body = match read_framed_message(&mut read_half).await {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                tracing::info!("Client disconnected.");
+        let body = tokio::select! {
+            biased;
+            _ = output_tx.slow.notified() => {
+                tracing::warn!("disconnecting slow consumer after critical output overflow");
                 return;
             }
-            Err(e) => {
-                tracing::warn!("Read error: {:?}", e);
-                return;
+            body = read_framed_message(&mut read_half) => match body {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    tracing::info!("Client disconnected.");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!("Read error: {:?}", e);
+                    return;
+                }
             }
         };
 
@@ -527,27 +603,11 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     tracing::debug!("MarketDataRequest for {:?}", request.symbols);
                     for symbol in &request.symbols {
-                        let md_tx = match md_channels.get(symbol) {
-                            Some(tx) if !tx.is_closed() => tx.clone(),
-                            _ => {
-                                let (md_tx, mut md_rx) = mpsc::channel::<Vec<u8>>(256);
-                                // Forward market data frames into the connection's output channel.
-                                // No lock needed — output_tx is just an mpsc sender clone.
-                                let out = output_tx.clone();
-                                tokio::spawn(async move {
-                                    while let Some(frame) = md_rx.recv().await {
-                                        if out.send(frame).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                });
-                                md_channels.insert(symbol.clone(), md_tx.clone());
-                                md_tx
-                            }
-                        };
                         let sym_tx = router.get_or_create(symbol).await;
                         let _ = sym_tx
-                            .send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx }))
+                            .send(SymbolMsg::Subscribe(SubscribeMsg {
+                                tx: output_tx.clone(),
+                            }))
                             .await;
                     }
                     tracing::debug!("Subscription setup complete — continuing to accept orders.");
@@ -621,11 +681,9 @@ async fn mass_cancel(
                 nanos: now.subsec_nanos() as i32,
             }),
         };
-        let _ = out
-            .send(frame_message(&fxp::FxpMessage {
-                payload: Some(fxp::fxp_message::Payload::OrderMassCancelReport(report)),
-            }))
-            .await;
+        out.try_send_frame(frame_message(&fxp::FxpMessage {
+            payload: Some(fxp::fxp_message::Payload::OrderMassCancelReport(report)),
+        }));
     });
 }
 
@@ -671,8 +729,9 @@ pub async fn start_server() {
         if path.is_empty() {
             persistence_failure("FXP_EVENT_LOG must be a nonempty path");
         }
-        let (detached, receiver) = mpsc::channel(1);
-        drop(receiver);
+        let (detached, frame_rx, md_rx) = ClientTx::channel(1, 1);
+        drop(frame_rx);
+        drop(md_rx);
         let mut journal =
             Journal::open(std::path::Path::new(&path), schedule, stp_default, detached)
                 .unwrap_or_else(|error| persistence_failure(error));
@@ -749,13 +808,19 @@ mod report_tests {
     }
 
     fn conn() -> (OutputTx, Rx) {
-        mpsc::channel(64)
+        let (tx, rx, md_rx) = conn_with_channels(64, 64);
+        drop(md_rx);
+        (tx, rx)
+    }
+
+    fn conn_with_channels(frame_capacity: usize, md_capacity: usize) -> (OutputTx, Rx, Rx) {
+        ClientTx::channel(frame_capacity, md_capacity)
     }
 
     #[tokio::test]
     async fn resubscribing_one_channel_streams_market_data_once() {
         let book = spawn_book();
-        let (md_tx, mut md_rx) = conn();
+        let (md_tx, _frame_rx, mut md_rx) = conn_with_channels(64, 64);
         for _ in 0..2 {
             book.send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx.clone() }))
                 .await
@@ -781,6 +846,184 @@ mod report_tests {
             ["W", "W", "X"],
             "one snapshot per request, one stream"
         );
+    }
+
+    #[tokio::test]
+    async fn slow_market_data_subscriber_does_not_block_other_orders() {
+        let book = spawn_book();
+        let (md_tx, _frame_rx, _md_rx) = conn_with_channels(64, 1);
+        let counter = md_tx.clone();
+        book.send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx }))
+            .await
+            .unwrap();
+        let (seller, mut seller_rx) = conn();
+        let (buyer, mut buyer_rx) = conn();
+        for i in 0..25 {
+            send_order(
+                &book,
+                nos(&format!("S{i}"), "S", SELL, 10_000, 1, LIMIT, GTC),
+                &seller,
+            )
+            .await;
+            send_order(
+                &book,
+                nos(&format!("B{i}"), "B", BUY, 10_000, 1, LIMIT, DAY),
+                &buyer,
+            )
+            .await;
+        }
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            for _ in 0..50 {
+                next(&mut seller_rx).await;
+                next(&mut buyer_rx).await;
+            }
+        })
+        .await
+        .expect("slow market-data consumer stalled execution reports");
+        assert!(counter.md_dropped.load(AtomicOrdering::Relaxed) > 0);
+    }
+
+    #[tokio::test]
+    async fn slow_resting_owner_does_not_block_aggressor_reports() {
+        let book = spawn_book();
+        let (owner_tx, _owner_rx, _owner_md_rx) = conn_with_channels(1, 64);
+        let (aggressor_tx, mut aggressor_rx) = conn();
+        send_order(
+            &book,
+            nos("SLOW", "S", SELL, 10_000, 10, LIMIT, GTC),
+            &owner_tx,
+        )
+        .await;
+
+        for id in ["FAST1", "FAST2"] {
+            send_order(
+                &book,
+                nos(id, "B", BUY, 10_000, 1, LIMIT, DAY),
+                &aggressor_tx,
+            )
+            .await;
+        }
+        tokio::time::timeout(Duration::from_secs(1), async {
+            for _ in 0..4 {
+                next(&mut aggressor_rx).await;
+            }
+        })
+        .await
+        .expect("slow resting owner stalled aggressor execution reports");
+        tokio::time::timeout(Duration::from_secs(1), owner_tx.slow.notified())
+            .await
+            .expect("slow resting owner did not receive a slow-consumer signal");
+    }
+
+    #[tokio::test]
+    async fn tcp_slow_consumer_probe_keeps_healthy_order_latency_bounded() {
+        use tokio::net::{TcpSocket, TcpStream};
+        use tokio::time::Instant;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = SymbolRouter::new(None);
+
+        let slow_socket = TcpSocket::new_v4().unwrap();
+        slow_socket.set_recv_buffer_size(1024).unwrap();
+        let mut slow_client = slow_socket.connect(addr).await.unwrap();
+        let slow_server = accept_client(&listener).await.unwrap();
+        let slow_handler = tokio::spawn(handle_tcp_client(slow_server, router.clone()));
+
+        let subscribe = fxp::FxpMessage {
+            payload: Some(fxp::fxp_message::Payload::MarketDataRequest(
+                fxp::MarketDataRequest {
+                    symbols: vec!["STALL".into()],
+                    ..Default::default()
+                },
+            )),
+        };
+        let mut resting = nos("REST", "S", SELL, 10_000, 100, LIMIT, GTC);
+        resting.symbol = "STALL".into();
+        slow_client
+            .write_all(&frame_message(&subscribe))
+            .await
+            .unwrap();
+        slow_client
+            .write_all(&frame_message(&fxp::FxpMessage {
+                payload: Some(fxp::fxp_message::Payload::NewOrder(resting)),
+            }))
+            .await
+            .unwrap();
+
+        let mut flood = Vec::new();
+        for i in 0..100_000 {
+            let mut order = nos(&format!("BAD{i}"), "S", 0, 10_000, 1, LIMIT, GTC);
+            order.symbol = "STALL".into();
+            flood.extend_from_slice(&frame_message(&fxp::FxpMessage {
+                payload: Some(fxp::fxp_message::Payload::NewOrder(order)),
+            }));
+        }
+        let flood_task = tokio::spawn(async move {
+            let _ = slow_client.write_all(&flood).await;
+            tokio::time::timeout(Duration::from_secs(15), async {
+                let mut bytes = [0u8; 8192];
+                loop {
+                    match slow_client.read(&mut bytes).await {
+                        Ok(0) | Err(_) => break true,
+                        Ok(_) => {}
+                    }
+                }
+            })
+            .await
+        });
+
+        let mut healthy_client = TcpStream::connect(addr).await.unwrap();
+        let healthy_server = accept_client(&listener).await.unwrap();
+        let healthy_handler = tokio::spawn(handle_tcp_client(healthy_server, router));
+        let mut latencies = Vec::with_capacity(2_000);
+        let total_start = Instant::now();
+        for i in 0..2_000 {
+            let mut order = nos(&format!("FAST{i}"), "B", 0, 10_000, 1, LIMIT, GTC);
+            order.symbol = "FAST".into();
+            let frame = frame_message(&fxp::FxpMessage {
+                payload: Some(fxp::fxp_message::Payload::NewOrder(order)),
+            });
+            let start = Instant::now();
+            healthy_client.write_all(&frame).await.unwrap();
+            let mut len = [0u8; 4];
+            healthy_client.read_exact(&mut len).await.unwrap();
+            let mut body = vec![0; u32::from_be_bytes(len) as usize];
+            healthy_client.read_exact(&mut body).await.unwrap();
+            assert!(matches!(
+                fxp::FxpMessage::decode(body.as_slice()).unwrap().payload,
+                Some(fxp::fxp_message::Payload::ExecutionReport(_))
+            ));
+            latencies.push(start.elapsed());
+        }
+        let total = total_start.elapsed();
+        latencies.sort_unstable();
+        let p50 = latencies[latencies.len() / 2];
+        let p99 = latencies[(latencies.len() * 99 - 1) / 100];
+        println!(
+            "slow-consumer probe: orders=2000 p50_us={} p99_us={} total_ms={}",
+            p50.as_micros(),
+            p99.as_micros(),
+            total.as_millis()
+        );
+        assert!(p99 < Duration::from_millis(50), "p99 latency was {p99:?}");
+        assert!(total < Duration::from_secs(30), "probe took {total:?}");
+
+        let disconnect = flood_task.await.unwrap();
+        assert!(
+            matches!(disconnect, Ok(true)),
+            "stalled client was not disconnected: {disconnect:?}"
+        );
+        tokio::time::timeout(Duration::from_secs(2), slow_handler)
+            .await
+            .expect("slow-consumer handler did not return")
+            .unwrap();
+        healthy_client.shutdown().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), healthy_handler)
+            .await
+            .expect("healthy handler did not return")
+            .unwrap();
     }
 
     #[allow(clippy::too_many_arguments)]
