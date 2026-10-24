@@ -162,13 +162,11 @@ impl OrderBook {
             (OrderType::Stop, _) => self.execute_market(order),
 
             // StopLimit: triggered externally when last_trade_price crosses stop_price.
-            // When triggered, becomes a resting limit order (Day/GTC behaviour).
-            (OrderType::StopLimit, _) => AggressiveResult {
-                fills: Vec::new(),
-                fill_updates: Vec::new(),
-                unfilled_qty: order.quantity,
-                rest_on_book: true,
-            },
+            // When triggered, becomes a limit order with its own TIF.
+            (OrderType::StopLimit, _) => self.process_aggressive(Order {
+                order_type: OrderType::Limit,
+                ..order
+            }),
         }
     }
 
@@ -397,6 +395,10 @@ impl OrderBook {
         }
 
         *stop_book = remaining;
+        // Fire in the order the price path reached them: farthest from the
+        // print first (buy stops ascending, sell stops descending), ties by
+        // arrival (stable sort over arrival-ordered input).
+        triggered.sort_by_key(|o| std::cmp::Reverse((o.stop_price - last_trade_price).abs()));
         triggered
     }
 }

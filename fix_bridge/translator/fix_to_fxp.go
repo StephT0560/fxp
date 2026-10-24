@@ -229,6 +229,16 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		newQty = int32(qty)
 	}
 
+	// New stop price (optional — 0 means no change; parked stops only)
+	var newStopPrice int64
+	if stopStr := msg.Get(codec.TagStopPx); stopStr != "" {
+		var err error
+		newStopPrice, err = parseFixedPoint(stopStr)
+		if err != nil || newStopPrice <= 0 {
+			return nil, fmt.Errorf("invalid StopPx %q", stopStr)
+		}
+	}
+
 	var newTimeInForce protobuf.TimeInForce
 	if tifStr := msg.Get(codec.TagTimeInForce); tifStr != "" {
 		var err error
@@ -251,6 +261,7 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		NewPrice:        newPrice,
 		NewQuantity:     newQty,
 		NewTimeInForce:  newTimeInForce,
+		NewStopPrice:    newStopPrice,
 		Timestamp:       timestamppb.Now(),
 	}
 

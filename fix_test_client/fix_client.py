@@ -479,10 +479,11 @@ def test_stop_order(s, r):
     updated by actual fills. The resting buy + aggressive sell creates the fill.
     """
     print('\n─── test_stop_order ─────────────────────────────────────────')
-    sym      = 'AAPL'
+    sym      = 'STPX'  # own symbol: no earlier prints, so the stop must park
     rest_id  = order_id('STP')   # resting buy that provides liquidity
     stop_id  = order_id('STS')   # buy stop that should trigger
     aggr_id  = order_id('STA')   # aggressive sell that creates the fill
+    liq_id   = order_id('STL')   # resting sell the triggered stop executes against
 
     # Step 1: Place resting buy @ 185.00 (provides liquidity for the aggressive sell)
     s.new_order(rest_id, sym, '1', 100, '2', price=185.00,
@@ -494,6 +495,11 @@ def test_stop_order(s, r):
                 description=f'BUY STOP 50 {sym} stop@185.00')
     time.sleep(0.3)
 
+    # Liquidity above the stop for the triggered stop (market) to execute against
+    s.new_order(liq_id, sym, '2', 50, '2', price=186.00,
+                description=f'SELL 50 {sym} @186.00 (resting, stop liquidity)')
+    r.assert_exec('stop liquidity acknowledged', s.wait_for(order_id=liq_id, exec_type='0', timeout=3.0), '0', '0')
+
     # Step 3: Aggressive sell @ 185.00 crosses the resting buy → sets last_trade=185.00
     s.new_order(aggr_id, sym, '2', 100, '2', price=185.00, tif='3',
                 description=f'SELL IOC 100 {sym} @185.00 (triggers stop)')
@@ -504,13 +510,10 @@ def test_stop_order(s, r):
 
     # Step 5: Stop should now trigger — wait for its fill
     stop_fill = s.wait_for(order_id=stop_id, exec_type='F', timeout=4.0)
-    if stop_fill:
-        r.assert_exec('stop triggered and filled', stop_fill, 'F')
-    else:
-        # Stop may not trigger if book is empty after the IOC — acceptable
-        # since stop triggers require liquidity to execute against
-        print(f'  ⚠️  stop not triggered (empty book after IOC) — parking acknowledged')
-        r.passed += 1  # not a failure — stop is parked correctly
+    r.assert_exec('stop triggered and filled', stop_fill, 'F', '2')
+    if stop_fill and stop_fill.get(31) != '186.00':
+        print(f'  {FAIL} stop filled at {stop_fill.get(31)}, want 186.00')
+        r.failed += 1
 
     s.drain(1.0)
 

@@ -6,3 +6,4 @@ pub mod market_data;
 pub mod matcher;
 pub mod order;
 pub mod order_book;
+pub mod stops;

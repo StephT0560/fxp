@@ -198,6 +198,7 @@ message OrderCancelReplaceRequest {
   int32                     new_quantity      = 9; // 0 = no change
   TimeInForce               new_time_in_force = 10; // TIME_IN_FORCE_UNSPECIFIED (0) = no change
   google.protobuf.Timestamp timestamp         = 11;
+  int64                     new_stop_price    = 12; // 0 = no change (Stop / StopLimit only)
 }
 
 // OrderAcknowledgment: legacy. Prefer ExecutionReport with exec_type=EXEC_NEW.
