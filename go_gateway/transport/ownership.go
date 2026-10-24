@@ -81,6 +81,9 @@ func bindOwner(msg *protobuf.FXPMessage, traderID string) {
 	case *protobuf.FXPMessage_NewOrder:
 		p.NewOrder.Sender = traderID
 		p.NewOrder.OrderId = namespacedOrderID(traderID, p.NewOrder.OrderId)
+		// STP groups are scoped to the trader so a client cannot name another
+		// trader's group (and, e.g., cancel its resting orders with cancel-oldest).
+		p.NewOrder.StpGroup = namespacedOrderID(traderID, p.NewOrder.StpGroup)
 	case *protobuf.FXPMessage_OrderCancel:
 		p.OrderCancel.Sender = traderID
 		p.OrderCancel.OrderId = namespacedOrderID(traderID, p.OrderCancel.OrderId)
@@ -88,6 +91,8 @@ func bindOwner(msg *protobuf.FXPMessage, traderID string) {
 		p.OrderCancelReplace.Sender = traderID
 		p.OrderCancelReplace.OrderId = namespacedOrderID(traderID, p.OrderCancelReplace.OrderId)
 		p.OrderCancelReplace.NewOrderId = namespacedOrderID(traderID, p.OrderCancelReplace.NewOrderId)
+	case *protobuf.FXPMessage_OrderMassCancel:
+		p.OrderMassCancel.Sender = traderID
 	}
 }
 

@@ -64,6 +64,42 @@ func GetTraderID(sessionID string) string {
 	return ""
 }
 
+// sessionCOD holds the sessions that asked for cancel-on-disconnect at Logon.
+var sessionCOD sync.Map // session_id (string) → struct{}
+
+// endSession ends a session because its client logged out or disconnected.
+// For a cancel-on-disconnect session the core cancels every live order of
+// the trader, including parked stops.
+func endSession(sessionID string) {
+	traderID := GetTraderID(sessionID)
+	_, cod := sessionCOD.LoadAndDelete(sessionID)
+	invalidateSession(sessionID)
+	if cod && traderID != "" {
+		cancelOnDisconnect(traderID)
+	}
+}
+
+// cancelOnDisconnect sends the internal owner-scoped mass cancel.
+var cancelOnDisconnect = func(traderID string) {
+	msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderMassCancel{
+		OrderMassCancel: &protobuf.OrderMassCancelRequest{
+			Sender:    traderID,
+			Reason:    protobuf.MassCancelReason_MASS_CANCEL_REASON_DISCONNECT,
+			Timestamp: timestamppb.Now(),
+		},
+	}}
+	raw, err := proto.Marshal(msg)
+	if err != nil {
+		log.Printf("❌ cancel-on-disconnect encode failed for %s: %v", traderID, err)
+		return
+	}
+	if err := writeToCore(frameBytes(raw)); err != nil {
+		log.Printf("❌ cancel-on-disconnect for %s not sent: %v", traderID, err)
+		return
+	}
+	log.Printf("🧹 cancel-on-disconnect sent for trader %s", traderID)
+}
+
 // invalidateSession removes a session (called on Logout or disconnect).
 func invalidateSession(sessionID string) {
 	sessionStore.Delete(sessionID)
@@ -346,6 +382,9 @@ func HandleLogon(logon *protobuf.Logon) (traderID, sessionID string, err error) 
 
 	sessionID = newSessionID()
 	sessionStore.Store(sessionID, claims.Sub)
+	if logon.CancelOnDisconnect {
+		sessionCOD.Store(sessionID, struct{}{})
+	}
 	log.Printf("✅ Logon accepted: session=%s trader=%s", sessionID, claims.Sub)
 
 	return claims.Sub, sessionID, nil
@@ -428,8 +467,10 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 			return
 		}
 
-		// A repeated Logon replaces this connection's previous session.
+		// A repeated Logon replaces this connection's previous session; the
+		// connection stays up, so this is not a disconnect.
 		if *sessionID != "" {
+			sessionCOD.Delete(*sessionID)
 			invalidateSession(*sessionID)
 		}
 		*sessionID = newID
@@ -439,7 +480,7 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 	case *protobuf.FXPMessage_Logout:
 		// Logout is allowed whether authenticated or not
 		if *sessionID != "" {
-			invalidateSession(*sessionID)
+			endSession(*sessionID)
 			*sessionID = ""
 		}
 		closeConn(conn)
