@@ -616,12 +616,31 @@ async fn handle_tcp_client_with_shutdown(
     let (output_tx, mut output_rx, mut md_rx) = ClientTx::channel(8192, 4096);
 
     // One writer serializes frames and prioritizes critical reports over MD.
+    let mut writer_shutdown = shutdown.clone();
     let writer = tokio::spawn(async move {
         let mut w = write_half;
         let (mut frames_open, mut md_open) = (true, true);
         while frames_open || md_open {
             let frame = tokio::select! {
                 biased;
+                changed = writer_shutdown.changed() => {
+                    if changed.is_err() || *writer_shutdown.borrow() {
+                        while let Ok(frame) = output_rx.try_recv() {
+                            if w.write_all(&frame).await.is_err() {
+                                break;
+                            }
+                        }
+                        while let Ok(frame) = md_rx.try_recv() {
+                            if w.write_all(&frame).await.is_err() {
+                                break;
+                            }
+                        }
+                        let _ = w.flush().await;
+                        let _ = w.shutdown().await;
+                        break;
+                    }
+                    continue;
+                }
                 frame = output_rx.recv(), if frames_open => match frame {
                     Some(frame) => Some(frame),
                     None => {
@@ -2695,6 +2714,8 @@ mod snapshot_tests {
 #[cfg(test)]
 mod shutdown_tests {
     use super::*;
+    use crate::event_log::{Journal, tests::TestDir};
+    use crate::order_book::order::StpMode;
 
     #[tokio::test]
     async fn run_server_stops_handlers_and_listener_after_shutdown() {
@@ -2712,5 +2733,94 @@ mod shutdown_tests {
             .expect("server task panicked")
             .expect("server shutdown failed");
         assert!(tokio::net::TcpStream::connect(address).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn persisted_resting_order_does_not_hold_writer_open_during_shutdown() {
+        use tokio::io::AsyncReadExt;
+        use tokio::time::Instant;
+
+        let dir = TestDir::new();
+        let path = dir.log();
+        let detached = ClientTx::channel(1, 1).0;
+        let journal = Journal::open(&path, None, StpMode::None, detached).unwrap();
+        let mut router = SymbolRouter::new(None);
+        router.persistence = Some(Arc::new(std::sync::Mutex::new(journal)));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(run_server_with_router(
+            listener,
+            router.clone(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+            Duration::from_secs(2),
+        ));
+        let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+        let symbol = "PERSIST-SHUTDOWN";
+        let order = fxp::FxpMessage {
+            payload: Some(fxp::fxp_message::Payload::NewOrder(fxp::NewOrderSingle {
+                symbol: symbol.into(),
+                sender: "owner".into(),
+                order_id: "resting-gtc".into(),
+                price: 12_345,
+                quantity: 7,
+                side: 1,
+                order_type: 2,
+                time_in_force: 2,
+                ..Default::default()
+            })),
+        };
+        client.write_all(&frame_message(&order)).await.unwrap();
+        let mut length = [0; 4];
+        client.read_exact(&mut length).await.unwrap();
+        let mut body = vec![0; u32::from_be_bytes(length) as usize];
+        client.read_exact(&mut body).await.unwrap();
+        let ack = fxp::FxpMessage::decode(body.as_slice()).unwrap();
+        let Some(fxp::fxp_message::Payload::ExecutionReport(ack)) = ack.payload else {
+            panic!("resting order did not receive an execution report");
+        };
+        assert_eq!(ack.execution_type, fxp::ExecutionType::ExecNew as i32);
+
+        let started = Instant::now();
+        let _ = shutdown_tx.send(());
+        let result = tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .expect("server shutdown hung")
+            .expect("server task panicked");
+        assert!(result.is_ok(), "server shutdown failed: {result:?}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let eof = tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0; 1]))
+            .await
+            .expect("client did not observe EOF")
+            .unwrap();
+        assert_eq!(eof, 0);
+
+        drop(router);
+        let recovered_client = ClientTx::channel(1, 1).0;
+        let mut recovered =
+            Journal::open(&path, None, StpMode::None, recovered_client.clone()).unwrap();
+        assert_eq!(recovered.symbols(), vec![symbol]);
+        let outputs = recovered
+            .engines
+            .get_mut(symbol)
+            .unwrap()
+            .cancel(crate::engine::CancelMsg {
+                order_id: "resting-gtc".into(),
+                sender: "owner".into(),
+                client_cancel_id: "cancel-check".into(),
+                output_tx: recovered_client,
+            });
+        assert!(
+            outputs.iter().any(|output| matches!(
+                output,
+                crate::engine::Output::ExecutionReport(_, report)
+                    if report.execution_type == fxp::ExecutionType::ExecCanceled as i32
+            )),
+            "resting order was not restored from the journal"
+        );
     }
 }

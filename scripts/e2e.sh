@@ -129,11 +129,28 @@ start_persistent_core() {
     wait_for_port 8080
 }
 start_persistent_core
-(cd "$repo_root/go_gateway" && go run ./test_clients/persistence_client seed)
+hold_log="$log_dir/core-persistence-hold.log"
+(cd "$repo_root/go_gateway" && go run ./test_clients/persistence_client hold) >"$hold_log" 2>&1 &
+persistence_client_pid=$!
+for _ in $(seq 1 200); do
+    if grep -q '^READY$' "$hold_log"; then
+        break
+    fi
+    if ! kill -0 "$persistence_client_pid" 2>/dev/null; then
+        cat "$hold_log"
+        exit 1
+    fi
+    sleep 0.05
+done
+grep -q '^READY$' "$hold_log"
 kill -TERM "$core_pid"
 core_exit=0
 wait "$core_pid" || core_exit=$?
 [[ $core_exit -eq 0 ]]
+client_exit=0
+wait "$persistence_client_pid" || client_exit=$?
+[[ $client_exit -eq 0 ]]
+grep -q '^EOF$' "$hold_log"
 start_persistent_core
 (cd "$repo_root/go_gateway" && go run ./test_clients/persistence_client verify)
 kill -TERM "$core_pid"
