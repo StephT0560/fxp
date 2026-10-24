@@ -7,6 +7,21 @@ cut a release yet, so everything is under Unreleased.
 ## [Unreleased]
 
 ### Changed
+- **Token format (breaking):** the gateway now requires JWT header
+  `alg: HS256` and the claims `iss` (default `fxp-dev`) and `aud` (default
+  `fxp-gateway`) in addition to `sub`/`exp`/`iat`, honours `nbf`, and accepts
+  an optional `kid` that selects the current or previous key
+  (`FXP_JWT_KID`, `FXP_JWT_PREVIOUS_KID`, `FXP_JWT_PREVIOUS_SECRET`). Tokens
+  minted by other issuers must add `iss`/`aud`. The bridge, `devjwt`, the
+  benchmark and the simulation now mint `iss`, `aud`, `nbf`, `jti` (and `kid`
+  when set). Optional `jti` replay cache: `FXP_JWT_REPLAY_CACHE=on`.
+- WebSocket upgrades are same-origin only by default; extra browser origins
+  via `FXP_GW_WS_ALLOWED_ORIGINS`. Clients without an `Origin` header are
+  unaffected.
+- Sockets between core, gateway and bridge set `TCP_NODELAY`, removing the
+  ~40 ms Nagle/delayed-ACK stall on back-to-back execution reports.
+- Gateway pool: exactly one reader goroutine per pooled core connection
+  across reconnects.
 - FIX codec rejects empty fields (SOH SOH), malformed `tag=value` pairs and
   any BeginString other than the configured one (default `FIX.4.4`).
 - Benchmarks moved to `fxp_core/benches/`; `go_gateway/test_clients` split

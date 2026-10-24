@@ -38,7 +38,7 @@ func testJWT(t *testing.T, sub string) string {
 	enc := base64.RawURLEncoding.EncodeToString
 	now := time.Now().Unix()
 	head := enc([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	body := enc([]byte(fmt.Sprintf(`{"sub":%q,"exp":%d,"iat":%d}`, sub, now+3600, now)))
+	body := enc([]byte(fmt.Sprintf(`{"sub":%q,"iss":%q,"aud":%q,"exp":%d,"iat":%d}`, sub, DefaultJWTIssuer, DefaultJWTAudience, now+3600, now)))
 	mac := hmac.New(sha256.New, []byte("test-secret"))
 	mac.Write([]byte(head + "." + body))
 	return head + "." + body + "." + enc(mac.Sum(nil))
