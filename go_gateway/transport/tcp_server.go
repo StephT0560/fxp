@@ -2,9 +2,10 @@ package transport
 
 import (
 	"encoding/binary"
-	"io"
+	"errors"
 	"log"
 	"net"
+	"time"
 
 	"go_gateway/protobuf"
 
@@ -22,30 +23,58 @@ func StartTCPServer() {
 	}
 	defer listener.Close()
 	log.Println("✅ TCP Server started on 127.0.0.1:8082")
+	serveTCP(listener)
+}
+
+func serveTCP(listener net.Listener) {
+	lim, conns := currentLimits(), tcpConnsP.Load()
 	for {
 		clientConn, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			log.Println("❌ Failed to accept TCP connection:", err)
 			continue
 		}
-		go handleTCPClient(clientConn)
+		if !conns.tryAcquire() {
+			log.Printf("⛔ TCP connection limit (%d) reached — rejecting %s", lim.MaxConns, clientConn.RemoteAddr())
+			clientConn.Close()
+			continue
+		}
+		go func() {
+			defer conns.release()
+			handleTCPClient(clientConn)
+		}()
 	}
 }
 
 func handleTCPClient(clientConn net.Conn) {
 	defer clientConn.Close()
+	lim := currentLimits()
 	sessionID := ""
+	defer func() {
+		if sessionID != "" {
+			invalidateSession(sessionID)
+		}
+	}()
+	bucket := newTokenBucket(lim.RatePerSec, lim.RateBurst)
+	authed := false
+	// Logon must complete within the handshake timeout.
+	_ = clientConn.SetReadDeadline(time.Now().Add(lim.HandshakeTimeout))
 	for {
-		lenBuf := make([]byte, 4)
-		if _, err := io.ReadFull(clientConn, lenBuf); err != nil {
-			log.Printf("❌ Failed to read message length: %v", err)
+		maxFrame := lim.MaxFramePreAuth
+		if authed {
+			maxFrame = lim.MaxFrame
+		}
+		msgBuf, err := readFrame(clientConn, maxFrame)
+		if err != nil {
+			log.Printf("❌ Closing TCP client: %v", err)
 			return
 		}
-		msgLen := binary.BigEndian.Uint32(lenBuf)
-		msgBuf := make([]byte, msgLen)
-		if _, err := io.ReadFull(clientConn, msgBuf); err != nil {
-			log.Printf("❌ Failed to read full FXPMessage: %v", err)
-			return
+		if !bucket.allow(time.Now()) {
+			sendSessionError(clientConn, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "message rate limit exceeded")
+			continue
 		}
 		msg := &protobuf.FXPMessage{}
 		if err := proto.Unmarshal(msgBuf, msg); err != nil {
@@ -57,6 +86,10 @@ func handleTCPClient(clientConn net.Conn) {
 			continue
 		}
 		HandleFXPMessageAuthenticated(clientConn, msg, &sessionID)
+		if !authed && sessionID != "" {
+			authed = true
+			_ = clientConn.SetReadDeadline(time.Time{})
+		}
 	}
 }
 
