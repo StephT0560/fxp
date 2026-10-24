@@ -337,7 +337,7 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 	sess.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", sess.MaxLatency)
 	if err := sess.ConfigureSchedule(); err != nil {
 		log.Printf("FIX schedule: %v", err)
-		conn.Close()
+		_ = conn.Close()
 		return
 	}
 	sess.Auth = auth

@@ -84,12 +84,18 @@ func TestScheduledStoreResetSurvivesRestart(t *testing.T) {
 	if _, ok := st.Get(7); ok {
 		t.Fatal("old frame retained")
 	}
-	st.Close()
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
 	st, err = OpenFileStore(dir, FileStoreOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if in, out := st.SeqNums(); in != 1 || out != 1 {
 		t.Fatalf("reopened: %d %d", in, out)
 	}
@@ -109,7 +115,11 @@ func TestSessionScheduleLogoutAndReconnect(t *testing.T) {
 	clock.Store(at.Unix())
 	sched, _ := ParseSchedule("09:00:00", "17:00:00", "", "", "UTC")
 	reg := NewRegistry(FileStoreFactory(t.TempDir(), FileStoreOptions{}))
-	defer reg.Close()
+	defer func() {
+		if err := reg.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	configure := func(s *Session) {
 		s.Schedule = sched
 		s.Now = func() time.Time { return time.Unix(clock.Load(), 0) }
@@ -150,8 +160,12 @@ func TestSessionResetPolicies(t *testing.T) {
 		t.Run(policy, func(t *testing.T) {
 			store := NewMemoryStore()
 			if policy == "logon" {
-				store.Save(9, []byte("prior"))
-				store.SetNextInSeq(10)
+				if err := store.Save(9, []byte("prior")); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.SetNextInSeq(10); err != nil {
+					t.Fatal(err)
+				}
 			}
 			p := newPeerConfigured(t, func(s *Session) {
 				s.Store = store
@@ -171,7 +185,7 @@ func TestSessionResetPolicies(t *testing.T) {
 				p.send(codec.MsgTypeLogout)
 				p.expect(codec.MsgTypeLogout)
 			} else {
-				p.conn.Close()
+				_ = p.conn.Close()
 			}
 			deadline := time.Now().Add(time.Second)
 			for time.Now().Before(deadline) {
@@ -216,9 +230,15 @@ func TestPendingEpochResetCannotResurrectFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.Save(8, []byte("old"))
-	st.SetNextInSeq(9)
-	st.Close()
+	if err := st.Save(8, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetNextInSeq(9); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
 	// Simulate a crash after archiving and recording the synced reset intent,
 	// before truncate/sequence replacement. The opener must finish the reset.
 	archive := filepath.Join(dir, "archive", "123")
@@ -241,7 +261,11 @@ func TestPendingEpochResetCannotResurrectFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if in, out := st.SeqNums(); in != 1 || out != 1 {
 		t.Fatalf("resurrected %d %d", in, out)
 	}

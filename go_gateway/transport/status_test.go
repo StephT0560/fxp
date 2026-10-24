@@ -19,11 +19,10 @@ func TestStatusOwnerBindingAndIndependentRoutes(t *testing.T) {
 		t.Fatalf("unbound %+v", req)
 	}
 	srv, cli := routedPipes(t)
-	defer srv.Close()
-	defer cli.Close()
+
 	other, peer := net.Pipe()
-	defer other.Close()
-	defer peer.Close()
+	defer func() { _ = other.Close() }()
+	defer func() { _ = peer.Close() }()
 	key := registerStatusRoute(srv, req)
 	req2 := proto.Clone(req).(*protobuf.OrderStatusRequest)
 	req2.RequestId = "same"
@@ -40,7 +39,9 @@ func TestStatusOwnerBindingAndIndependentRoutes(t *testing.T) {
 		routeFromCore(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderStatusResponse{OrderStatusResponse: &protobuf.OrderStatusResponse{RequestId: key, Sender: "TRADER", Complete: true, Reports: []*protobuf.ExecutionReport{{OrderId: namespacedOrderID("TRADER", "O1"), OrderStatus: protobuf.OrderStatus_ORDER_FILLED}}}}})
 		close(done)
 	}()
-	cli.SetReadDeadline(time.Now().Add(time.Second))
+	if err := cli.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	var h [4]byte
 	if _, err := io.ReadFull(cli, h[:]); err != nil {
 		t.Fatal(err)
