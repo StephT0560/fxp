@@ -88,7 +88,7 @@ func run(mode string) error {
 		return err
 	}
 	switch mode {
-	case "seed":
+	case "seed", "hold":
 		err := send(conn, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_NewOrder{NewOrder: &protobuf.NewOrderSingle{
 			Symbol: symbol, Sender: "persistence-check", OrderId: "resting-gtc",
 			Price: 12345, Quantity: 7, Side: protobuf.OrderSide_BUY,
@@ -104,7 +104,20 @@ func run(mode string) error {
 		if ack.ExecutionType != protobuf.ExecutionType_EXEC_NEW || ack.ExecutionId != "X1" {
 			return fmt.Errorf("unexpected seed acknowledgement: %v", ack)
 		}
-		fmt.Println("✅ Results: 1/1 passed (core persistence seed)")
+		if mode == "hold" {
+			fmt.Println("READY")
+			if err := conn.SetDeadline(time.Time{}); err != nil {
+				return err
+			}
+			var b [1]byte
+			n, err := conn.Read(b[:])
+			if n != 0 || err != io.EOF {
+				return fmt.Errorf("expected core shutdown EOF, read n=%d err=%v", n, err)
+			}
+			fmt.Println("EOF")
+		} else {
+			fmt.Println("✅ Results: 1/1 passed (core persistence seed)")
+		}
 	case "verify":
 		book, err := snapshot(conn)
 		if err != nil {
@@ -134,14 +147,14 @@ func run(mode string) error {
 		}
 		fmt.Println("✅ Results: 3/3 passed (core persistence restart, cancel, next ExecID)")
 	default:
-		return fmt.Errorf("expected seed or verify, got %q", mode)
+		return fmt.Errorf("expected seed, hold, or verify, got %q", mode)
 	}
 	return nil
 }
 
 func main() {
 	if len(os.Args) != 2 {
-		log.Fatal("usage: persistence_client seed|verify")
+		log.Fatal("usage: persistence_client seed|hold|verify")
 	}
 	if err := run(os.Args[1]); err != nil {
 		log.Fatal(err)

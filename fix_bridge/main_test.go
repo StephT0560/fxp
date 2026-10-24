@@ -84,6 +84,139 @@ func TestAcceptFIXClientsConnectionLimit(t *testing.T) {
 	}
 }
 
+func TestSessionTrackerInitiatesLogout(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = client.Close() }()
+	sess := session.NewSession(server, "FXPBRIDGE", shutdownTestHandler{})
+	sess.Auth = session.NewCredentialAuth(map[string]string{"GRACE01": "test"})
+	sess.LogoutTimeout = time.Second
+	done := make(chan struct{})
+	go func() {
+		sess.Run()
+		close(done)
+	}()
+	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := client.Write(codec.NewBuilder(codec.MsgTypeLogon, "GRACE01", "FXPBRIDGE", 1).
+		SetInt(codec.TagEncryptMethod, 0).
+		SetInt(codec.TagHeartBtInt, 30).
+		Set(codec.TagPassword, "test").
+		Build()); err != nil {
+		t.Fatal(err)
+	}
+	parser := codec.NewParser(client)
+	if _, err := parser.ReadMessage(); err != nil {
+		t.Fatalf("read Logon acknowledgement: %v", err)
+	}
+
+	tracker := newSessionTracker()
+	tracker.track(sess)
+	tracker.beginShutdown()
+	logout, err := parser.ReadMessage()
+	if err != nil {
+		t.Fatalf("read server Logout: %v", err)
+	}
+	if logout.MsgType() != codec.MsgTypeLogout || logout.Get(codec.TagText) != "server shutdown" {
+		t.Fatalf("Logout = %v, want server-shutdown Logout", logout)
+	}
+	if _, err := client.Write(codec.NewBuilder(codec.MsgTypeLogout, "GRACE01", "FXPBRIDGE", 2).Build()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not finish after Logout exchange")
+	}
+	tracker.untrack(sess)
+}
+
+func TestShutdownSessionsBoundsConcurrentLogouts(t *testing.T) {
+	tracker := newSessionTracker()
+	peers := make([]net.Conn, 2)
+	sessionDone := make([]<-chan struct{}, 2)
+	fillersReady := make([]chan struct{}, 2)
+	fillersDone := make([]chan struct{}, 2)
+	for i := range peers {
+		server, peer := net.Pipe()
+		peers[i] = peer
+		compID := fmt.Sprintf("STALL%02d", i)
+		sess := session.NewSession(server, "FXPBRIDGE", shutdownTestHandler{})
+		sess.Auth = session.NewCredentialAuth(map[string]string{compID: "test"})
+		sess.LogoutTimeout = 5 * time.Second
+		done := make(chan struct{})
+		go func() {
+			sess.Run()
+			close(done)
+		}()
+		_ = peer.SetDeadline(time.Now().Add(time.Second))
+		if _, err := peer.Write(codec.NewBuilder(codec.MsgTypeLogon, compID, "FXPBRIDGE", 1).
+			SetInt(codec.TagEncryptMethod, 0).
+			SetInt(codec.TagHeartBtInt, 30).
+			Set(codec.TagPassword, "test").
+			Build()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := codec.NewParser(peer).ReadMessage(); err != nil {
+			t.Fatalf("read Logon acknowledgement: %v", err)
+		}
+		_ = peer.SetDeadline(time.Time{})
+		tracker.track(sess)
+		fillersReady[i] = make(chan struct{})
+		fillersDone[i] = make(chan struct{})
+		go func() {
+			defer close(fillersDone[i])
+			for n := 0; n < 513; n++ {
+				sess.SendMsg(codec.NewBuilder(codec.MsgTypeHeartbeat, "FXPBRIDGE", compID, 0))
+			}
+			close(fillersReady[i])
+			sess.SendMsg(codec.NewBuilder(codec.MsgTypeHeartbeat, "FXPBRIDGE", compID, 0))
+		}()
+		sessionDone[i] = done
+	}
+	for _, ready := range fillersReady {
+		select {
+		case <-ready:
+		case <-time.After(time.Second):
+			t.Fatal("send queue did not fill")
+		}
+	}
+	acceptDone := make(chan struct{})
+	go func() {
+		for _, done := range sessionDone {
+			<-done
+		}
+		close(acceptDone)
+	}()
+
+	started := time.Now()
+	err := shutdownSessions(tracker, acceptDone, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected shutdown deadline to close stalled sessions")
+	}
+	if elapsed := time.Since(started); elapsed >= 1500*time.Millisecond {
+		t.Fatalf("shutdown took %v, want under 1.5s", elapsed)
+	}
+	for i, peer := range peers {
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := peer.Read(make([]byte, 1)); err != io.EOF {
+			t.Fatalf("peer %d read error = %v, want EOF", i, err)
+		}
+		_ = peer.Close()
+	}
+	for _, done := range fillersDone {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("session send queue filler did not stop")
+		}
+	}
+}
+
+type shutdownTestHandler struct{}
+
+func (shutdownTestHandler) Handle(*codec.Message, *session.Session) {}
+func (shutdownTestHandler) OnLogon(*session.Session)                {}
+func (shutdownTestHandler) OnLogout(*session.Session, string)       {}
+
 // seqTestHandler drives the real bridgeHandler.onFXPMessage path without a
 // gateway connection.
 type seqTestHandler struct {
@@ -155,7 +288,7 @@ func TestAuctionPayloadsIgnoredWithoutBreakingSession(t *testing.T) {
 func TestOutboundSeqSingleCounter(t *testing.T) {
 	const reports = 50
 	srv, cli := net.Pipe()
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	h := &seqTestHandler{bridgeHandler: &bridgeHandler{bridgeCompID: "FXPBRIDGE"}}
 	h.onLogon = func() {
@@ -208,7 +341,7 @@ func TestOutboundSeqSingleCounter(t *testing.T) {
 // silently dropped: before the gateway client exists and after it closed.
 func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	srv, cli := net.Pipe()
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 	h := &seqTestHandler{bridgeHandler: &bridgeHandler{bridgeCompID: "FXPBRIDGE"}, onLogon: func() {}}
 	sess := session.NewSession(srv, "FXPBRIDGE", h)
 	sess.Auth = session.NewCredentialAuth(map[string]string{"TESTFIRM01": "pw"})
@@ -286,7 +419,7 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 // valid FIX ExecutionReport; they must reach the client as OrderCancelReject.
 func TestCancelRequestRejectsBecomeOrderCancelReject(t *testing.T) {
 	srv, cli := net.Pipe()
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 	loggedOn := make(chan struct{})
 	h := &seqTestHandler{bridgeHandler: &bridgeHandler{bridgeCompID: "FXPBRIDGE"}, onLogon: func() { close(loggedOn) }}
 	sess := session.NewSession(srv, "FXPBRIDGE", h)

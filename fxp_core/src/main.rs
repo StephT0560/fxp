@@ -15,6 +15,29 @@ async fn main() {
         .with_writer(std::io::stderr)
         .with_ansi(std::io::stderr().is_terminal())
         .init();
-    // Start the FXP TCP server
-    server::start_server().await;
+    if let Err(error) = server::start_server(shutdown_signal()).await {
+        tracing::error!("{error}");
+        std::process::exit(1);
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("register SIGTERM handler");
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                if let Err(error) = result {
+                    tracing::error!("failed to listen for SIGINT: {error}");
+                }
+            }
+            _ = terminate.recv() => tracing::info!("received SIGTERM"),
+        }
+    }
+    #[cfg(not(unix))]
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!("failed to listen for shutdown signal: {error}");
+    }
 }

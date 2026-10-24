@@ -294,18 +294,7 @@ func writeFXPMessage(conn any, msg *protobuf.FXPMessage) error {
 	if err != nil {
 		return err
 	}
-	frame := make([]byte, 4+len(raw))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
-	copy(frame[4:], raw)
-	switch c := conn.(type) {
-	case net.Conn:
-		_, err = c.Write(frame)
-	case *websocket.Conn:
-		err = c.WriteMessage(websocket.BinaryMessage, raw)
-	default:
-		return fmt.Errorf("unsupported connection type: %T", conn)
-	}
-	return err
+	return enqueueClientData(conn, raw, false)
 }
 
 // ==================================================================
@@ -335,36 +324,16 @@ func ForwardMarketData(update proto.Message) {
 		return
 	}
 
-	// Frame with length prefix for TCP clients
-	frame := make([]byte, 4+len(data))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(data)))
-	copy(frame[4:], data)
-
 	slog.Debug("forwarding market data", "symbol", symbol, "bytes", len(data))
 
 	if clients, ok := clientSubs.Load(symbol); ok {
 		count := 0
 		clients.(*sync.Map).Range(func(key, _ interface{}) bool {
 			count++
-			var sendErr error
-			switch c := key.(type) {
-			case net.Conn:
-				// TCP clients expect length-prefixed frames
-				_, sendErr = c.Write(frame)
-			case *websocket.Conn:
-				// WebSocket clients get raw Protobuf bytes (WS has its own framing)
-				sendErr = c.WriteMessage(websocket.BinaryMessage, data)
-			default:
-				log.Println("❌ Unknown client type for market data forward")
-				return true
-			}
-
-			if sendErr != nil {
+			if sendErr := enqueueClientData(key, data, true); sendErr != nil {
 				log.Printf("❌ Failed to send market data to client (%T): %v", key, sendErr)
 				closeConn(key)
 				clients.(*sync.Map).Delete(key)
-			} else {
-				slog.Debug("market data sent", "client", fmt.Sprintf("%T", key), "symbol", symbol)
 			}
 			return true
 		})

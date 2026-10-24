@@ -185,7 +185,19 @@ Logs go to stderr. Per-order, per-fill and per-message events are logged at debu
 | `fxp_core` | `RUST_LOG` ([`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax) | `info` | `RUST_LOG=fxp_core=debug` |
 | `fxp_core` | `FXP_SESSION_SCHEDULE` | unset (no Day expiry) | `close=16:30:00` |
 | `fxp_core` | `FXP_STP_DEFAULT` (`none`, `cancel-newest`, `cancel-oldest`, `cancel-both`, `decrement-and-cancel`): self-trade prevention for orders that do not set `stp_mode` | `none` | `FXP_STP_DEFAULT=cancel-newest` |
+| `fxp_core` | `FXP_SYMBOLS` (comma-separated symbol allow-list; unset allows any symbol) | unset | `FXP_SYMBOLS=BTC-USD,ETH-USD` |
+| `fxp_core` | `FXP_MAX_SYMBOLS` (positive maximum number of admitted symbols) | unlimited | `FXP_MAX_SYMBOLS=500` |
+| `fxp_core`, `go_gateway`, `fix_bridge` | `FXP_SHUTDOWN_TIMEOUT_SEC` (graceful-shutdown deadline) | `5` | `FXP_SHUTDOWN_TIMEOUT_SEC=10` |
 | `go_gateway`, `fix_bridge` | `FXP_LOG_LEVEL` (`debug`, `info`, `warn`, `error`) | `info` | `FXP_LOG_LEVEL=debug` |
+
+Existing symbols restored from the core event log remain available even if
+they are outside the current allow-list or symbol limit; new symbols still
+follow the configured admission policy.
+
+Core, gateway, and bridge handle SIGINT/SIGTERM and shut down within
+`FXP_SHUTDOWN_TIMEOUT_SEC` (default 5 seconds). Compose grants each service a
+15-second stop grace period and uses an init process to forward signals. See
+[docs/operations.md](docs/operations.md) for backpressure and shutdown behavior.
 
 The optional core session schedule is a strict comma-separated `key=value`
 list of UTC `HH:MM[:SS]` times. Only two forms are valid:
@@ -351,6 +363,8 @@ the simulation read the same variables when minting.
 | `FXP_JWT_LEEWAY_SEC` | `30` | Clock-skew leeway on `nbf` |
 | `FXP_JWT_REPLAY_CACHE` | off | `on`: require `jti` and reject a reused `jti` until its token expires (per gateway process) |
 | `FXP_GW_WS_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to open the WebSocket. Same-origin requests and clients sending no `Origin` header are always allowed; any other origin gets 403 |
+| `FXP_GW_CLIENT_QUEUE` | `8192` | Bounded per-client queue for execution reports and other critical output; overflow closes the client |
+| `FXP_GW_MD_QUEUE` | `4096` | Bounded per-client market-data queue; overflow drops market data and increments `MarketDataDropped()` |
 
 ## Tests
 

@@ -267,6 +267,10 @@ impl EventLog {
         self.next_seq = next_seq;
         Ok(())
     }
+
+    fn sync(&mut self) -> io::Result<()> {
+        self.file.sync_all()
+    }
 }
 
 #[derive(Clone)]
@@ -338,6 +342,10 @@ impl<R: Clone> Journal<R> {
         let mut symbols: Vec<_> = self.engines.keys().cloned().collect();
         symbols.sort();
         symbols
+    }
+
+    pub(crate) fn sync(&mut self) -> io::Result<()> {
+        self.log.sync()
     }
 
     pub(crate) fn apply(

@@ -7,6 +7,11 @@ cut a release yet, so everything is under Unreleased.
 ## [Unreleased]
 
 ### Added
+- Bounded core and gateway client output queues isolate slow consumers; critical
+  output overflow disconnects the client while market-data overflow is dropped.
+- Core symbol admission controls via `FXP_SYMBOLS` and `FXP_MAX_SYMBOLS`, with
+  graceful SIGINT/SIGTERM handling across core, gateway, and FIX bridge.
+- Operations guidance for backpressure, symbol admission, and graceful shutdown.
 - Self-trade prevention (FXP v2.2, additive): per-order `stp_mode`/`stp_group`
   with cancel-newest, cancel-oldest, cancel-both and decrement-and-cancel,
   scoped to the owner or a per-trader STP group; engine default
@@ -37,6 +42,13 @@ cut a release yet, so everything is under Unreleased.
 - `RUST_LOG` (core) and `FXP_LOG_LEVEL` (gateway, bridge) log-level control (#10).
 
 ### Changed
+- Gateway authentication failures and pre-authentication errors are flushed
+  before the TCP or WebSocket connection closes. The FIX bridge synthesizes a
+  unique tag 17 for ExecutionReports without an execution ID, including
+  gateway-generated rejects; non-empty core execution IDs are unchanged.
+- Core shutdown drains connected-client writers without waiting for
+  journal-held senders, and FIX bridge Logout requests share one shutdown
+  deadline before remaining sessions are closed.
 - Unsupported FIX application messages (e.g. OrderStatusRequest `35=H`) get
   `BusinessMessageReject(35=j)` with `380=3` and an explicit text, even while
   the gateway is disconnected (#9).

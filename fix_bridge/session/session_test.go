@@ -52,6 +52,34 @@ func TestSendWithSeqBackpressureClosesSession(t *testing.T) {
 	}
 }
 
+func TestStalledSessionDoesNotBlockHealthySession(t *testing.T) {
+	stalledConn, stalledPeer := net.Pipe()
+	healthyConn, healthyPeer := net.Pipe()
+	stalled := NewSession(stalledConn, "FXPBRIDGE", nil)
+	healthy := NewSession(healthyConn, "FXPBRIDGE", nil)
+	go stalled.writeLoop()
+	go healthy.writeLoop()
+	defer func() {
+		_ = stalledPeer.Close()
+		_ = healthyPeer.Close()
+		_ = stalledConn.Close()
+		_ = healthyConn.Close()
+	}()
+
+	stalled.SendWithSeq(func(int) []byte { return []byte("stalled") })
+	healthy.SendWithSeq(func(int) []byte { return []byte("healthy") })
+	if err := healthyPeer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len("healthy"))
+	if _, err := healthyPeer.Read(got); err != nil {
+		t.Fatalf("healthy session output blocked behind stalled session: %v", err)
+	}
+	if string(got) != "healthy" {
+		t.Fatalf("healthy session output = %q", got)
+	}
+}
+
 type failingStore struct {
 	*MemoryStore
 	failSave, failIn bool

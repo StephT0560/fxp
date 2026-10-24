@@ -166,6 +166,7 @@ class FIXSession:
         self.md_inbox = queue.Queue() # inbound MarketData W/X
         self.reject_inbox = queue.Queue() # inbound Reject(3) / BusinessMessageReject(j)
         self.mass_inbox = queue.Queue()   # inbound OrderMassCancelReport(r)
+        self.logout_inbox = queue.Queue()
         self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
@@ -321,6 +322,8 @@ class FIXSession:
                     self.reject_inbox.put(msg)
                 elif msg_type == 'r':
                     self.mass_inbox.put(msg)
+                elif msg_type == '5':
+                    self.logout_inbox.put(msg)
 
             except socket.timeout:
                 continue
@@ -1024,6 +1027,95 @@ def durable_after_restart(args, r):
     finally:
         sess.logout()
 
+def graceful_shutdown(args, r):
+    """Keep a filled, durable FIX session open for the bridge SIGTERM check."""
+    print('\n─── graceful_shutdown ───────────────────────────────────────')
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.connect()
+    try:
+        sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset)')
+        time.sleep(0.6)
+        oid = order_id('GRACE')
+        sess.new_order(oid, 'GRACEX', '2', 10, '2', price=5.00, description='resting sell')
+        ack = sess.wait_for(order_id=oid, exec_type='0', timeout=3.0)
+        r.assert_exec('resting order acknowledged', ack, '0', '0')
+        path = os.environ['FXP_E2E_GRACE_STATE']
+        state = {'next_seq': sess.seq, 'order_id': oid}
+        with open(path + '.tmp', 'w') as f:
+            json.dump(state, f)
+        os.replace(path + '.tmp', path)
+        fill = sess.wait_for(order_id=oid, exec_type='F', timeout=10.0)
+        if not r.assert_exec('resting order filled before shutdown', fill, 'F', '2'):
+            return
+        state.update({'er_seq': int(fill.get(34)), 'exec_id': fill.get(17)})
+        with open(path + '.tmp', 'w') as f:
+            json.dump(state, f)
+        os.replace(path + '.tmp', path)
+        try:
+            logout = sess.logout_inbox.get(timeout=20)
+        except queue.Empty:
+            logout = None
+        if logout is None or logout.get(58) != 'server shutdown':
+            print(f'  {FAIL} did not receive server-shutdown Logout: {logout}')
+            r.failed += 1
+            return
+        state['logout_seq'] = int(logout.get(34))
+        with open(path + '.tmp', 'w') as f:
+            json.dump(state, f)
+        os.replace(path + '.tmp', path)
+        print(f'  {PASS} received server Logout at 34={state["logout_seq"]}')
+        r.passed += 1
+        sess.send('5', [(58, 'shutdown acknowledged')], 'Logout acknowledgement')
+        state['next_seq'] = sess.seq
+        with open(path + '.tmp', 'w') as f:
+            json.dump(state, f)
+        os.replace(path + '.tmp', path)
+    finally:
+        sess._stop.set()
+        if sess.sock:
+            sess.sock.close()
+
+def graceful_fill(args, r):
+    print('\n─── graceful_fill ───────────────────────────────────────────')
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.connect()
+    try:
+        sess.logon()
+        oid = order_id('GRACEFILL')
+        sess.new_order(oid, 'GRACEX', '1', 10, '2', price=5.00, description='cross resting sell')
+        fill = sess.wait_for(order_id=oid, exec_type='F', timeout=4.0)
+        r.assert_exec('crossing order filled', fill, 'F', '2')
+    finally:
+        sess.logout()
+
+def graceful_after_restart(args, r):
+    print('\n─── graceful_after_restart ──────────────────────────────────')
+    with open(os.environ['FXP_E2E_GRACE_STATE']) as f:
+        state = json.load(f)
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.seq = state['next_seq']
+    sess.connect()
+    try:
+        sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset)')
+        time.sleep(0.6)
+        if sess.out_seqs[:1] == [('A', state['logout_seq'] + 1)]:
+            print('  ✅ Logon sequence resumed after graceful shutdown')
+            r.passed += 1
+        else:
+            print(f'  ❌ Logon sequence after restart: {sess.out_seqs[:1]}')
+            r.failed += 1
+        seq = str(state['er_seq'])
+        sess.send('2', [(7, seq), (16, seq)], f'ResendRequest {seq}..{seq}')
+        resent = sess.wait_for(order_id=state['order_id'], exec_type='F', timeout=4.0)
+        if resent and resent.get(43) == 'Y' and resent.get(17) == state['exec_id']:
+            print('  ✅ persisted fill resent with original ExecID')
+            r.passed += 1
+        else:
+            print(f'  ❌ persisted fill not resent: {resent}')
+            r.failed += 1
+    finally:
+        sess.logout()
+
 
 def cod_disconnect(args, r):
     """#1: a cancel-on-disconnect (8013=Y) session whose TCP socket is reset
@@ -1076,6 +1168,9 @@ DURABLE_PHASES = {
     'cod_disconnect':        cod_disconnect,
     'durable_before_kill':   durable_before_kill,
     'durable_after_restart': durable_after_restart,
+    'graceful_shutdown':     graceful_shutdown,
+    'graceful_fill':         graceful_fill,
+    'graceful_after_restart': graceful_after_restart,
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────

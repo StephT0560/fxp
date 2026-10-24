@@ -25,6 +25,8 @@ type Limits struct {
 	RatePerSec       float64       // FXP_GW_RATE messages/second per connection
 	RateBurst        int           // FXP_GW_RATE_BURST
 	HandshakeTimeout time.Duration // FXP_GW_HANDSHAKE_TIMEOUT_MS to complete Logon
+	ClientQueue      int           // FXP_GW_CLIENT_QUEUE critical messages per client
+	MDQueue          int           // FXP_GW_MD_QUEUE market-data messages per client
 }
 
 // Active limits and per-listener connection limiters. Servers and connections
@@ -45,6 +47,10 @@ func setLimits(l Limits) {
 
 func currentLimits() Limits { return *limitsP.Load() }
 
+func shutdownTimeout() time.Duration {
+	return time.Duration(envInt("FXP_SHUTDOWN_TIMEOUT_SEC", 5)) * time.Second
+}
+
 func loadLimits() Limits {
 	return Limits{
 		MaxFramePreAuth:  envInt("FXP_GW_MAX_FRAME_PREAUTH", 4096),
@@ -53,6 +59,8 @@ func loadLimits() Limits {
 		RatePerSec:       float64(envInt("FXP_GW_RATE", 2000)),
 		RateBurst:        envInt("FXP_GW_RATE_BURST", 4000),
 		HandshakeTimeout: time.Duration(envInt("FXP_GW_HANDSHAKE_TIMEOUT_MS", 10000)) * time.Millisecond,
+		ClientQueue:      envInt("FXP_GW_CLIENT_QUEUE", 8192),
+		MDQueue:          envInt("FXP_GW_MD_QUEUE", 4096),
 	}
 }
 

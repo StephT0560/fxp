@@ -26,3 +26,6 @@ path = "src/lib.rs"
 name = "encoding_benchmark"
 harness = false
 
+[[bench]]
+name = "router_benchmark"
+harness = false
