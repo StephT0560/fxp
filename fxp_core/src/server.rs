@@ -275,6 +275,46 @@ impl SymbolRouter {
     }
 }
 
+#[doc(hidden)]
+pub mod bench_support {
+    use super::*;
+
+    pub struct RouterBenchmark {
+        router: SymbolRouter,
+        symbols: Arc<Vec<String>>,
+    }
+
+    impl RouterBenchmark {
+        pub async fn new(symbol_count: usize) -> Self {
+            let symbols: Arc<Vec<_>> = Arc::new(
+                (0..symbol_count.max(1))
+                    .map(|index| format!("BENCH{index}"))
+                    .collect(),
+            );
+            let router = SymbolRouter::new(None);
+            for symbol in symbols.iter() {
+                router.get_or_create(symbol).await;
+            }
+            Self { router, symbols }
+        }
+
+        pub async fn concurrent_lookups(&self, task_count: usize, lookups_per_task: usize) {
+            let mut tasks = tokio::task::JoinSet::new();
+            for task_index in 0..task_count.max(1) {
+                let router = self.router.clone();
+                let symbols = self.symbols.clone();
+                tasks.spawn(async move {
+                    for lookup_index in 0..lookups_per_task {
+                        let symbol = &symbols[(lookup_index + task_index) % symbols.len()];
+                        router.get_or_create(symbol).await;
+                    }
+                });
+            }
+            while tasks.join_next().await.is_some() {}
+        }
+    }
+}
+
 struct WallClock;
 impl crate::engine::Clock for WallClock {
     fn now(&self) -> crate::engine::Time {
@@ -1024,6 +1064,94 @@ mod report_tests {
             .await
             .expect("healthy handler did not return")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn router_contention_socket_probe_reports_three_runs() {
+        use tokio::net::TcpStream;
+        use tokio::time::Instant;
+
+        const CONNECTIONS: usize = 8;
+        const SYMBOLS: usize = 25;
+        const ORDERS_PER_CONNECTION: usize = 1_000;
+
+        for run in 1..=3 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let router = SymbolRouter::new(None);
+            let mut clients = Vec::with_capacity(CONNECTIONS);
+            let mut handlers = Vec::with_capacity(CONNECTIONS);
+            for _ in 0..CONNECTIONS {
+                let client = TcpStream::connect(address).await.unwrap();
+                let server = accept_client(&listener).await.unwrap();
+                handlers.push(tokio::spawn(handle_tcp_client(server, router.clone())));
+                clients.push(client);
+            }
+
+            let total_start = Instant::now();
+            let mut tasks = tokio::task::JoinSet::new();
+            for (connection, mut client) in clients.into_iter().enumerate() {
+                tasks.spawn(async move {
+                    let mut latencies = Vec::with_capacity(ORDERS_PER_CONNECTION);
+                    for index in 0..ORDERS_PER_CONNECTION {
+                        let mut order = nos(
+                            &format!("R{run}-C{connection}-O{index}"),
+                            &format!("T{connection}"),
+                            0,
+                            10_000,
+                            1,
+                            LIMIT,
+                            GTC,
+                        );
+                        order.symbol = format!("PROBE{}", index % SYMBOLS);
+                        let frame = frame_message(&fxp::FxpMessage {
+                            payload: Some(fxp::fxp_message::Payload::NewOrder(order)),
+                        });
+                        let start = Instant::now();
+                        client.write_all(&frame).await.unwrap();
+                        let mut length = [0u8; 4];
+                        tokio::time::timeout(
+                            Duration::from_secs(5),
+                            client.read_exact(&mut length),
+                        )
+                        .await
+                        .expect("timed out reading router-probe response")
+                        .unwrap();
+                        let mut body = vec![0; u32::from_be_bytes(length) as usize];
+                        client.read_exact(&mut body).await.unwrap();
+                        assert!(matches!(
+                            fxp::FxpMessage::decode(body.as_slice()).unwrap().payload,
+                            Some(fxp::fxp_message::Payload::ExecutionReport(_))
+                        ));
+                        latencies.push(start.elapsed());
+                    }
+                    latencies
+                });
+            }
+
+            let mut latencies = Vec::with_capacity(CONNECTIONS * ORDERS_PER_CONNECTION);
+            while let Some(result) = tasks.join_next().await {
+                latencies.extend(result.unwrap());
+            }
+            let total = total_start.elapsed();
+            latencies.sort_unstable();
+            let p50 = latencies[latencies.len() / 2];
+            let p99 = latencies[(latencies.len() * 99 - 1) / 100];
+            let orders_per_second = latencies.len() as f64 / total.as_secs_f64();
+            println!(
+                "router probe run={run} connections={CONNECTIONS} symbols={SYMBOLS} orders={} orders_per_sec={orders_per_second:.0} p50_us={} p99_us={} total_ms={}",
+                latencies.len(),
+                p50.as_micros(),
+                p99.as_micros(),
+                total.as_millis()
+            );
+            for handler in handlers {
+                tokio::time::timeout(Duration::from_secs(2), handler)
+                    .await
+                    .expect("router-probe handler did not exit")
+                    .unwrap();
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
