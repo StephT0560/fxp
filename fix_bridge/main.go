@@ -257,26 +257,43 @@ func (c *codState) start() <-chan struct{} {
 	return c.done
 }
 
-// observe reports whether msg was the COD report, which is not forwarded.
-func (c *codState) observe(msg *protobuf.FXPMessage) bool {
+// observeReport consumes the COD mass-cancel report, which is not forwarded.
+func (c *codState) observeReport(msg *protobuf.FXPMessage) bool {
+	rep := msg.GetOrderMassCancelReport()
+	if rep == nil || rep.ClientRequestId != codRequestID {
+		return false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return false
 	}
-	consumed := false
-	if rep := msg.GetOrderMassCancelReport(); rep != nil && rep.ClientRequestId == codRequestID {
-		consumed = true
-		c.total = int(rep.TotalAffected)
-	} else if er := msg.GetExecutionReport(); er != nil &&
-		er.ExecutionType == protobuf.ExecutionType_EXEC_CANCELED && er.RejectReason == "cancel on disconnect" {
-		c.canceled++
+	c.total = int(rep.TotalAffected)
+	c.finishLocked()
+	return true
+}
+
+// countCancel counts a COD cancel. Call it only once the ER is in the Store,
+// so completion implies every cancel is available for resend.
+func (c *codState) countCancel(msg *protobuf.FXPMessage) {
+	er := msg.GetExecutionReport()
+	if er == nil || er.ExecutionType != protobuf.ExecutionType_EXEC_CANCELED || er.RejectReason != "cancel on disconnect" {
+		return
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return
+	}
+	c.canceled++
+	c.finishLocked()
+}
+
+func (c *codState) finishLocked() {
 	if c.total >= 0 && c.canceled >= c.total {
 		c.active = false
 		close(c.done)
 	}
-	return consumed
 }
 
 // OnLogon is called by the session after Logon is accepted.
@@ -429,9 +446,10 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 // onFXPMessage is called by the gateway client for every inbound FXP frame.
 // Translates the FXP message to FIX and delivers to the FIX client.
 func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
-	if h.cod.observe(msg) {
+	if h.cod.observeReport(msg) {
 		return
 	}
+	defer h.cod.countCancel(msg) // after SendWithSeq stored the ER
 	if rep := msg.GetExecutionReport(); rep != nil {
 		if req := h.pending.cancelRequestReject(rep); req != nil {
 			h.sess.SendWithSeq(func(seq int) []byte {
