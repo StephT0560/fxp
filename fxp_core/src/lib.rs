@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 
+pub mod engine;
 pub mod order_book;
 pub mod server;
+
+#[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
+pub mod fxp {
+    include!(concat!(env!("OUT_DIR"), "/fxp.rs"));
+}
 
 pub const PROTOCOL_VERSION: &str = "2.0";
 
