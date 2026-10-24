@@ -56,12 +56,14 @@ struct SubscribeMsg {
 
 struct CancelMsg {
     order_id:         String,
+    sender:           String,  // requesting trader; must own the order
     client_cancel_id: String,
     output_tx:        OutputTx,
 }
 
 struct CancelReplaceMsg {
     order_id:          String,
+    sender:            String,  // requesting trader; must own the order
     new_order_id:      String,
     client_replace_id: String,
     new_price:         i64,   // 0 = no change
@@ -141,8 +143,8 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     nanos:   now.subsec_nanos() as i32,
                 });
 
-                match book.cancel_order(&cancel_msg.order_id) {
-                    Some(md_update) => {
+                match book.cancel_order_for(&cancel_msg.order_id, &cancel_msg.sender) {
+                    Ok(md_update) => {
                         // Order found and cancelled — send EXEC_CANCELED report
                         let report = make_exec_report(
                             &cancel_msg.order_id,
@@ -177,19 +179,17 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         broadcast_md(&mut subscribers, md_frame).await;
                         println!("🗑️ Cancelled order {} on {}", cancel_msg.order_id, symbol);
                     }
-                    None => {
-                        // Order not found — already filled, cancelled, or unknown
-                        let report = make_exec_report(
+                    Err(reject) => {
+                        // Not live (filled, cancelled, unknown) or not owned by the requester
+                        let report = make_reject_report(
                             &cancel_msg.order_id,
                             &symbol,
                             &cancel_msg.client_cancel_id,
-                            fxp::ExecutionType::ExecRejected,
-                            fxp::OrderStatus::OrderRejected,
-                            0, 0, 0, 0, 0,
+                            reject.reason(),
                             &ts,
                         );
                         let _ = cancel_msg.output_tx.send(report).await;
-                        println!("⚠️ Cancel rejected: order {} not found on {}", cancel_msg.order_id, symbol);
+                        println!("⚠️ Cancel rejected: order {} on {}: {:?}", cancel_msg.order_id, symbol, reject);
                     }
                 }
             }
@@ -201,46 +201,27 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     nanos:   now.subsec_nanos() as i32,
                 });
 
-                // Find original order to get current state
-                let original = book.order_lookup.get(&cr_msg.order_id).cloned();
+                let result = book.replace_order(
+                    &cr_msg.order_id,
+                    &cr_msg.new_order_id,
+                    cr_msg.new_price,
+                    cr_msg.new_quantity.max(0) as u32,
+                    &cr_msg.client_replace_id,
+                    &cr_msg.sender,
+                    now.as_millis() as u64,
+                );
 
-                match original {
-                    None => {
-                        // Order not found — reject
-                        let report = make_exec_report(
+                match result {
+                    Err(reject) => {
+                        let report = make_reject_report(
                             &cr_msg.order_id, &symbol, &cr_msg.client_replace_id,
-                            fxp::ExecutionType::ExecRejected,
-                            fxp::OrderStatus::OrderRejected,
-                            0, 0, 0, 0, 0, &ts,
+                            reject.reason(), &ts,
                         );
                         let _ = cr_msg.output_tx.send(report).await;
-                        println!("⚠️ CancelReplace rejected: order {} not found on {}", cr_msg.order_id, symbol);
+                        println!("⚠️ CancelReplace rejected: order {} on {}: {:?}", cr_msg.order_id, symbol, reject);
                     }
-                    Some(orig) => {
-                        // Cancel the original
-                        let _ = book.cancel_order(&cr_msg.order_id);
-
-                        // Build replacement order with amended fields
-                        let new_price    = if cr_msg.new_price    > 0 { cr_msg.new_price    } else { orig.price };
-                        let new_quantity = if cr_msg.new_quantity  > 0 { cr_msg.new_quantity as u32 } else { orig.quantity };
-
-                        let replacement = crate::order_book::order::Order {
-                            order_id:       cr_msg.new_order_id.clone(),
-                            trader_id:      orig.trader_id.clone(),
-                            symbol:         symbol.clone(),
-                            price:          new_price,
-                            quantity:       new_quantity,
-                            side:           orig.side,
-                            order_type:     orig.order_type,
-                            time_in_force:  orig.time_in_force,
-                            timestamp:      now.as_millis() as u64,
-                            stop_price:     orig.stop_price,
-                            expire_date:    orig.expire_date.clone(),
-                            account:        orig.account.clone(),
-                            client_order_id: cr_msg.client_replace_id.clone(),
-                        };
-
-                        let inc = book.add_order(replacement);
+                    Ok((replacement, inc)) => {
+                        let new_quantity = replacement.quantity;
                         let (passive_fills, fill_updates) = book.match_orders();
 
                         // Send EXEC_REPLACED for the original order
@@ -628,6 +609,38 @@ fn make_exec_report(
     })
 }
 
+/// Execution report rejecting a cancel or cancel/replace request.
+fn make_reject_report(
+    order_id:      &str,
+    symbol:        &str,
+    exec_id_extra: &str,
+    reason:        &str,
+    ts:            &Option<Timestamp>,
+) -> Vec<u8> {
+    frame_message(&fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::ExecutionReport(
+            fxp::ExecutionReport {
+                header:            Some(fxp::FxpHeader { protocol_version: "1.1".to_string(), sequence_number: 0 }),
+                execution_id:      format!("{}-{}-{}", fxp::ExecutionType::ExecRejected.as_str_name(), order_id, exec_id_extra),
+                order_id:          order_id.to_string(),
+                symbol:            symbol.to_string(),
+                execution_type:    fxp::ExecutionType::ExecRejected.into(),
+                order_status:      fxp::OrderStatus::OrderRejected.into(),
+                execution_price:   0,
+                executed_quantity: 0,
+                timestamp:         ts.clone(),
+                leaves_quantity:   0,
+                avg_px:            0,
+                cum_quantity:      0,
+                account:           String::new(),
+                client_order_id:   String::new(),
+                orig_order_id:     order_id.to_string(), // marks a request reject: the target order is unchanged
+                reject_reason:     reason.to_string(),
+            },
+        )),
+    })
+}
+
 // ── Cancel report helper ──────────────────────────────────────────────────────
 // Sent when an aggressive order (Market/IOC/FOK) has unfilled remainder.
 
@@ -763,6 +776,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                     let tx = router.get_or_create(&symbol).await;
                     if tx.send(SymbolMsg::Cancel(CancelMsg {
                         order_id:         cancel.order_id.clone(),
+                        sender:           cancel.sender.clone(),
                         client_cancel_id: cancel.client_cancel_id.clone(),
                         output_tx:        output_tx.clone(),
                     })).await.is_err() {
@@ -775,6 +789,7 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                     let tx = router.get_or_create(&symbol).await;
                     if tx.send(SymbolMsg::CancelReplace(CancelReplaceMsg {
                         order_id:          cr.order_id.clone(),
+                        sender:            cr.sender.clone(),
                         new_order_id:      cr.new_order_id.clone(),
                         client_replace_id: cr.client_replace_id.clone(),
                         new_price:         cr.new_price,

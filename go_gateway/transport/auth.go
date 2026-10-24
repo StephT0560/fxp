@@ -261,7 +261,8 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 			return
 		}
 
-		// Authenticated: route normally
+		// Authenticated: bind order-entry messages to the session's trader, then route
+		bindOwner(msg, GetTraderID(*sessionID))
 		HandleFXPMessage(conn, msg)
 	}
 }

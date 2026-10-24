@@ -81,7 +81,7 @@ func SendOrderToRust(clientConn net.Conn, orderData []byte) {
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
 	copy(frame[4:], encoded)
 	log.Printf("🧠 Registered OrderID %s to TCP clientConn", orderID)
-	SendFramedToCore(clientConn, frame, orderID)
+	SendFramedToCore(clientConn, frame, orderID, order.NewOrder.Sender, false)
 }
 
 func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame []byte) {
@@ -92,7 +92,7 @@ func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame 
 	}
 	orderID := order.NewOrder.OrderId
 	log.Printf("🧠 Registered WS OrderID %s to wsConn", orderID)
-	SendFramedToCore(wsConn, frame, orderID)
+	SendFramedToCore(wsConn, frame, orderID, order.NewOrder.Sender, false)
 	log.Println("📤 WS order forwarded to FXP Core via pool connection")
 }
 
@@ -150,7 +150,7 @@ func SendCancelToRust(clientConn net.Conn, rawMsg []byte, orderID string) {
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
 	copy(frame[4:], encoded)
 	log.Printf("🗑️ Sending cancel for OrderID %s to Rust Core", orderID)
-	SendFramedToCore(clientConn, frame, orderID)
+	SendFramedToCore(clientConn, frame, orderID, orderOwner(msg), true)
 }
 
 // SendCancelWSToRust forwards a cancel/replace from a WebSocket client.
@@ -169,5 +169,5 @@ func SendCancelWSToRust(wsConn *websocket.Conn, rawMsg []byte, orderID string) {
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
 	copy(frame[4:], encoded)
 	log.Printf("🗑️ Sending WS cancel for OrderID %s to Rust Core", orderID)
-	SendFramedToCore(wsConn, frame, orderID)
+	SendFramedToCore(wsConn, frame, orderID, orderOwner(msg), true)
 }

@@ -120,19 +120,36 @@ func (p *Parser) ReadMessage() (*Message, error) {
 		return nil, fmt.Errorf("BodyLength %d out of range", bodyLen)
 	}
 
-	// Step 3: Read exactly bodyLen bytes (the body + tag 10's content)
-	// BodyLength counts from after tag 9's SOH up to AND including tag 10's SOH.
+	// Step 3: Read exactly bodyLen bytes. BodyLength counts from after tag 9's
+	// SOH up to and including the SOH immediately before tag 10.
 	body := make([]byte, bodyLen)
 	if _, err := io.ReadFull(p.r, body); err != nil {
 		return nil, fmt.Errorf("reading body: %w", err)
 	}
+	if body[bodyLen-1] != soh {
+		return nil, fmt.Errorf("incorrect BodyLength %d: body does not end at a field boundary", bodyLen)
+	}
 
 	// Step 4: Parse the body into tag=value fields
-	// The last field must be tag 10 (CheckSum).
 	fields, err := parseFields(body)
 	if err != nil {
 		return nil, fmt.Errorf("parsing body: %w", err)
 	}
+	for _, f := range fields {
+		if f.Tag == TagCheckSum {
+			return nil, fmt.Errorf("incorrect BodyLength %d: CheckSum inside body", bodyLen)
+		}
+	}
+
+	// The field immediately after the body must be tag 10 (CheckSum).
+	tag, val, err = p.readField()
+	if err != nil {
+		return nil, fmt.Errorf("reading CheckSum: %w", err)
+	}
+	if tag != TagCheckSum {
+		return nil, fmt.Errorf("incorrect BodyLength %d: expected tag 10 after body, got tag %d", bodyLen, tag)
+	}
+	fields = append(fields, Field{TagCheckSum, val})
 
 	// Step 5: Build message — prepend tag 8 and 9
 	msg := &Message{

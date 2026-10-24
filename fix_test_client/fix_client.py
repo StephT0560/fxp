@@ -53,7 +53,8 @@ def build_message(msg_type, sender, target, seq_num, fields):
     ] + fields
 
     body = ''.join(f'{tag}={val}{SOH}' for tag, val in body_fields)
-    body_len = len(body) + 7  # tag 10 is always "10=XXX\x01" = 7 bytes
+    # BodyLength = bytes after the SOH ending tag 9, up to and including the SOH before tag 10
+    body_len = len(body.encode())
     prefix = f'8=FIX.4.4{SOH}9={body_len}{SOH}'
     full = prefix + body
     checksum = sum(ord(c) for c in full) % 256
@@ -105,6 +106,19 @@ def read_message(sock):
         buf += chunk
         remaining -= len(chunk)
 
+    # BodyLength stops before tag 10 — read the trailing "10=XXX\x01" field
+    if not buf.endswith(b'\x01'):
+        return None
+    trailer = b''
+    while not trailer.endswith(b'\x01'):
+        chunk = sock.recv(1)
+        if not chunk:
+            return None
+        trailer += chunk
+    if not trailer.startswith(b'10='):
+        return None
+    buf += trailer
+
     return parse_message(buf)
 
 # ── Session ───────────────────────────────────────────────────────────────────
@@ -135,6 +149,7 @@ class FIXSession:
         self.seq     = 1
         self.sock    = None
         self.inbox   = queue.Queue()  # inbound ExecutionReports
+        self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
 
@@ -222,6 +237,7 @@ class FIXSession:
                     break
 
                 msg_type = msg.get(35, '?')
+                self.out_seqs.append((msg_type, int(msg.get(34, '0'))))
 
                 if self.verbose:
                     name = self.MSG_TYPE.get(msg_type, f'?({msg_type})')
@@ -506,7 +522,7 @@ def test_fok_no_liquidity(s, r):
 
 
 def test_cancel_filled_order(s, r):
-    """Cancel of an already-filled order should return OrderCancelReject or Canceled."""
+    """Cancel of an already-filled order must be rejected (never Canceled)."""
     print('\n─── test_cancel_filled_order ────────────────────────────────')
     sym     = 'BAC'
     buy_id  = order_id('CFB')
@@ -529,23 +545,103 @@ def test_cancel_filled_order(s, r):
     # Now try to cancel the already-filled buy
     s.cancel_order(cxl_id, buy_id, sym, '1')
 
-    # Should receive either OrderCancelReject (35=9) or ExecType=Canceled
-    # Both are acceptable — Rust returns a cancel confirm even for filled orders
+    # Must be rejected: OrderCancelReject (35=9) or ExecutionReport ExecType=Rejected (150=8)
     msg = s.wait_for(order_id=buy_id, timeout=3.0)
     if msg is None:
-        print(f'  ⚠️  no response to cancel of filled order')
-        r.passed += 1
+        print(f'  {FAIL} no response to cancel of filled order')
+        r.failed += 1
     elif msg.get(35) == '9':
-        print(f'  {PASS} OrderCancelReject received (correct)')
+        print(f'  {PASS} OrderCancelReject received')
         r.passed += 1
-    elif msg.get(150) == '4':
-        print(f'  {PASS} ExecType=Canceled received (Rust processed cancel)')
+    elif msg.get(35) == '8' and msg.get(150) == '8':
+        print(f'  {PASS} cancel rejected (ExecType=Rejected, Text={msg.get(58)!r})')
         r.passed += 1
     else:
         print(f'  {FAIL} unexpected response: MsgType={msg.get(35)} ExecType={msg.get(150)}')
         r.failed += 1
 
     s.drain()
+
+
+def test_cross_session_cancel(s, r):
+    """§3.6: a FIX session must not cancel (or probe) another session's order."""
+    print('\n─── test_cross_session_cancel ───────────────────────────────')
+    sym    = 'WFC'
+    vic_id = order_id('XVO')
+
+    victim   = FIXSession(s.host, s.port, 'VICTIM01',   s.target, verbose=s.verbose)
+    attacker = FIXSession(s.host, s.port, 'ATTACKER01', s.target, verbose=s.verbose)
+    victim.connect();   victim.logon()
+    attacker.connect(); attacker.logon()
+    try:
+        victim.new_order(vic_id, sym, '1', 100, '2', price=30.00,
+                         description=f'VICTIM BUY 100 {sym} @30.00')
+        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+
+        # Attacker guesses the victim's ClOrdID and tries to cancel it
+        attacker.cancel_order(order_id('XAC'), vic_id, sym, '1')
+        msg = attacker.wait_for(order_id=vic_id, timeout=3.0)
+        if msg is not None and (msg.get(35) == '9' or (msg.get(35) == '8' and msg.get(150) == '8')):
+            print(f'  {PASS} attacker cancel rejected (Text={msg.get(58)!r})')
+            r.passed += 1
+        else:
+            got = None if msg is None else f'MsgType={msg.get(35)} ExecType={msg.get(150)}'
+            print(f'  {FAIL} attacker cancel not rejected: {got}')
+            r.failed += 1
+
+        # The victim must see nothing from the attacker's request ...
+        leaked = victim.wait_for(order_id=vic_id, timeout=1.0)
+        if leaked is None:
+            print(f'  {PASS} victim received no report from attacker request')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} victim received MsgType={leaked.get(35)} ExecType={leaked.get(150)}')
+            r.failed += 1
+
+        # ... and still owns a live order whose reports reach it
+        victim.cancel_order(order_id('XVC'), vic_id, sym, '1')
+        cxl = victim.wait_for(order_id=vic_id, exec_type='4', timeout=3.0)
+        r.assert_exec('victim cancel still routed to victim', cxl, '4')
+    finally:
+        victim.logout()
+        attacker.logout()
+
+
+def assert_gap_free(r, label, seqs):
+    """Bridge outbound MsgSeqNum must be strictly monotonic and gap-free from 1."""
+    nums = [n for _, n in seqs]
+    if nums and nums == list(range(1, len(nums) + 1)):
+        print(f'  {PASS} {label}: outbound 34=1..{len(nums)} gap-free')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} {label}: outbound MsgSeqNum not 1..N gap-free: {seqs}')
+        r.failed += 1
+
+
+def test_outbound_sequence(s, r):
+    """LogonAck is 34=1, the first ExecutionReport 34=2, no duplicates or gaps."""
+    print('\n─── test_outbound_sequence ──────────────────────────────────')
+    sym    = 'C'
+    ord_id = order_id('SEQ')
+    sess = FIXSession(s.host, s.port, 'SEQCHECK01', s.target, verbose=s.verbose)
+    sess.connect(); sess.logon()
+    try:
+        sess.new_order(ord_id, sym, '1', 10, '2', price=5.00, description=f'BUY 10 {sym} @5.00')
+        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+        sess.cancel_order(order_id('SEQC'), ord_id, sym, '1')
+        r.assert_exec('order cancelled', sess.wait_for(order_id=ord_id, exec_type='4', timeout=3.0), '4')
+    finally:
+        sess.logout()
+
+    seqs = sess.out_seqs
+    first_er = next((n for t, n in seqs if t == '8'), None)
+    if seqs[:1] == [('A', 1)] and first_er == 2:
+        print(f'  {PASS} LogonAck 34=1, first ExecutionReport 34=2')
+        r.passed += 1
+    else:
+        print(f'  {FAIL} expected LogonAck 34=1 and first ER 34=2, got {seqs[:3]}')
+        r.failed += 1
+    assert_gap_free(r, 'fresh session', seqs)
 
 
 # ── Test registry ─────────────────────────────────────────────────────────────
@@ -559,6 +655,8 @@ TESTS = {
     'ioc_partial':         test_ioc_partial,
     'fok_no_liquidity':    test_fok_no_liquidity,
     'cancel_filled_order': test_cancel_filled_order,
+    'cross_session_cancel': test_cross_session_cancel,
+    'outbound_sequence':   test_outbound_sequence,
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -608,6 +706,7 @@ def main():
 
         session.logout()
         print('Logged out ✓')
+        assert_gap_free(runner, 'main session', session.out_seqs)
 
     except KeyboardInterrupt:
         print('\nInterrupted')

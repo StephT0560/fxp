@@ -456,3 +456,274 @@ fn test_drain_no_triggers_when_price_unchanged() {
     assert_eq!(triggered.len(), 0);
     assert_eq!(stop_book.len(), 2, "Both stops should remain");
 }
+// ── Critical-fix regression tests (ANALYSIS.md §2.7) ──────────────────────────
+
+#[cfg(test)]
+mod critical_tests {
+    use crate::order_book::order::{OrderSide, OrderType, TimeInForce};
+    use super::test_helpers::*;
+
+    // #1 — P01: FIFO within a price level on the aggressive path.
+    #[test]
+    fn p01_time_priority_fifo_within_level() {
+        let mut book = make_book();
+        book.add_order(make_order("S-FIRST",  OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("S-SECOND", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let r = book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(r.fills[0].sell_order_id, "S-FIRST");
+    }
+
+    // #1 — P02: FIFO within a price level on the passive match_orders path.
+    #[test]
+    fn p02_time_priority_passive_match() {
+        let mut book = make_book();
+        book.add_order(make_order("B-FIRST",  OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("B-SECOND", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("S",        OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let (fills, _) = book.match_orders();
+        assert_eq!(fills[0].buy_order_id, "B-FIRST");
+    }
+
+    // #1 — a partially filled order keeps its place at the front of the queue.
+    #[test]
+    fn partial_fill_keeps_front_of_queue() {
+        let mut book = make_book();
+        book.add_order(make_order("S-FIRST",  OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("S-SECOND", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let r1 = book.process_aggressive(make_order("B1", OrderSide::Buy, 100_00, 4, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(r1.fills[0].sell_order_id, "S-FIRST");
+        let r2 = book.process_aggressive(make_order("B2", OrderSide::Buy, 100_00, 8, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(r2.fills.len(), 2);
+        assert_eq!((r2.fills[0].sell_order_id.as_str(), r2.fills[0].trade_quantity), ("S-FIRST", 6));
+        assert_eq!((r2.fills[1].sell_order_id.as_str(), r2.fills[1].trade_quantity), ("S-SECOND", 2));
+    }
+
+    // #2 — P04: a fully filled resting order leaves order_lookup; cancel is rejected.
+    #[test]
+    fn p04_filled_order_removed_from_lookup() {
+        let mut book = make_book();
+        book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::IOC));
+        assert!(!book.order_lookup.contains_key("S"));
+        assert!(book.cancel_order("S").is_none());
+    }
+
+    // #2 — P05: a partial fill keeps the order in order_lookup with its remaining quantity.
+    #[test]
+    fn p05_partial_fill_updates_lookup_quantity() {
+        let mut book = make_book();
+        book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 4, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(book.order_lookup["S"].quantity, 6);
+    }
+
+    // #2 — P11: cancelling a partially filled order reports the remaining quantity.
+    #[test]
+    fn p11_partial_fill_cancel_reports_remaining_qty() {
+        let mut book = make_book();
+        book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 4, OrderType::Limit, TimeInForce::IOC));
+        let md = book.cancel_order("S").unwrap();
+        assert_eq!(md.changes[0].quantity, 6);
+        assert!(book.order_lookup.is_empty());
+    }
+
+    // #2 — passive match_orders path keeps order_lookup in sync for both sides.
+    #[test]
+    fn passive_match_syncs_lookup() {
+        let mut book = make_book();
+        book.add_order(make_order("B", OrderSide::Buy,  100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("S", OrderSide::Sell, 100_00, 4,  OrderType::Limit, TimeInForce::GTC));
+        book.match_orders();
+        assert!(!book.order_lookup.contains_key("S"));
+        assert_eq!(book.order_lookup["B"].quantity, 6);
+    }
+
+    // #2 — order_lookup does not grow without bound: fill N orders, lookup returns to 0.
+    #[test]
+    fn lookup_does_not_grow_after_fills() {
+        const N: usize = 10_000;
+        let mut book = make_book();
+        for i in 0..N {
+            book.add_order(make_order(&format!("S{}", i), OrderSide::Sell, 100_00 + (i % 7) as i64, 5, OrderType::Limit, TimeInForce::GTC));
+            if i % 2 == 0 {
+                book.process_aggressive(make_order(&format!("B{}", i), OrderSide::Buy, 200_00, 5, OrderType::Limit, TimeInForce::IOC));
+            } else {
+                book.add_order(make_order(&format!("B{}", i), OrderSide::Buy, 200_00, 5, OrderType::Limit, TimeInForce::GTC));
+                book.match_orders();
+            }
+        }
+        assert!(book.buy_orders.is_empty() && book.sell_orders.is_empty());
+        assert_eq!(book.order_lookup.len(), 0);
+    }
+
+    // #2 — replace of a filled order is rejected and never resurrects quantity.
+    #[test]
+    fn replace_filled_order_rejected() {
+        use crate::order_book::order_book::OrderReject;
+        let mut book = make_book();
+        book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(book.replace_order("S", "S2", 0, 0, "S2", "T", 0).unwrap_err(), OrderReject::UnknownOrder);
+        assert!(book.order_lookup.is_empty() && book.sell_orders.is_empty());
+    }
+
+    // #2 — replace of a partially filled order keeps only the remaining quantity.
+    #[test]
+    fn replace_partial_never_resurrects_original_qty() {
+        use crate::order_book::order_book::OrderReject;
+        let mut book = make_book();
+        book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 4, OrderType::Limit, TimeInForce::IOC));
+
+        // Price-only amend: remaining 6 carries over.
+        let (r, _) = book.replace_order("S", "S2", 101_00, 0, "S2", "T", 0).unwrap();
+        assert_eq!(r.quantity, 6);
+        // Re-stating the original total (10) leaves 10 - 4 filled = 6 open.
+        let (r, _) = book.replace_order("S2", "S3", 0, 10, "S3", "T", 0).unwrap();
+        assert_eq!(r.quantity, 6);
+        // A total at or below the filled quantity is rejected.
+        assert_eq!(book.replace_order("S3", "S4", 0, 4, "S4", "T", 0).unwrap_err(), OrderReject::QuantityNotAboveFilled);
+        assert_eq!(book.order_lookup.len(), 1);
+        assert_eq!(book.sell_orders[&101_00].iter().map(|o| o.quantity).sum::<u32>(), 6);
+    }
+
+    // #2 — cancel of an already cancelled order is rejected.
+    #[test]
+    fn cancel_twice_rejected() {
+        let mut book = make_book();
+        book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        assert!(book.cancel_order("S").is_some());
+        assert!(book.cancel_order("S").is_none());
+    }
+
+    // #3 — only the owner may cancel; a foreign cancel leaves the order untouched.
+    #[test]
+    fn ownership_cancel_requires_owner() {
+        use crate::order_book::order_book::OrderReject;
+        let mut book = make_book();
+        let mut o = make_order("ORD-1", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC);
+        o.trader_id = "VICTIM".to_string();
+        book.add_order(o);
+
+        assert_eq!(book.cancel_order_for("ORD-1", "ATTACKER").unwrap_err(), OrderReject::NotOwner);
+        assert_eq!(book.cancel_order_for("ORD-X", "ATTACKER").unwrap_err(), OrderReject::UnknownOrder);
+        // Same reject text either way, so a foreign order's existence is not revealed.
+        assert_eq!(OrderReject::NotOwner.reason(), OrderReject::UnknownOrder.reason());
+        assert_eq!(book.order_lookup["ORD-1"].quantity, 10);
+        assert_eq!(book.sell_orders[&100_00].len(), 1);
+
+        assert!(book.cancel_order_for("ORD-1", "VICTIM").is_ok());
+        assert!(book.order_lookup.is_empty() && book.sell_orders.is_empty());
+    }
+
+    // #3 — only the owner may cancel/replace.
+    #[test]
+    fn ownership_replace_requires_owner() {
+        use crate::order_book::order_book::OrderReject;
+        let mut book = make_book();
+        let mut o = make_order("ORD-1", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::GTC);
+        o.trader_id = "VICTIM".to_string();
+        book.add_order(o);
+
+        assert_eq!(book.replace_order("ORD-1", "ORD-2", 1_00, 0, "ORD-2", "ATTACKER", 0).unwrap_err(), OrderReject::NotOwner);
+        assert_eq!(book.buy_orders[&100_00][0].order_id, "ORD-1");
+
+        let (r, _) = book.replace_order("ORD-1", "ORD-2", 101_00, 0, "ORD-2", "VICTIM", 0).unwrap();
+        assert_eq!((r.trader_id.as_str(), r.price, r.quantity), ("VICTIM", 101_00, 10));
+    }
+
+    // ── Reference model: price-time priority with a flat Vec ──────────────────
+
+    #[derive(Clone)]
+    struct RefOrder { id: String, side: OrderSide, price: i64, qty: u32, seq: u64 }
+
+    #[derive(Default)]
+    struct RefBook { orders: Vec<RefOrder>, seq: u64 }
+
+    type RefFill = (String, String, i64, u32); // (buy_id, sell_id, price, qty)
+
+    impl RefBook {
+        /// Match an incoming order against the opposite side: best price first,
+        /// then earliest arrival. `passive_rest` = true models Day/GTC limits
+        /// (remainder rests; trade price = ask price, mirroring match_orders).
+        fn submit(&mut self, id: &str, side: OrderSide, price: i64, mut qty: u32, passive_rest: bool) -> Vec<RefFill> {
+            let mut fills = Vec::new();
+            while qty > 0 {
+                let best = self.orders.iter().enumerate()
+                    .filter(|(_, o)| o.side != side && match side {
+                        OrderSide::Buy  => o.price <= price,
+                        OrderSide::Sell => o.price >= price,
+                    })
+                    .min_by_key(|(_, o)| (match side { OrderSide::Buy => o.price, OrderSide::Sell => -o.price }, o.seq))
+                    .map(|(i, _)| i);
+                let Some(i) = best else { break };
+                let q = qty.min(self.orders[i].qty);
+                let resting = self.orders[i].clone();
+                let px = if passive_rest {
+                    match side { OrderSide::Buy => resting.price, OrderSide::Sell => price }
+                } else { resting.price };
+                fills.push(match side {
+                    OrderSide::Buy  => (id.to_string(), resting.id.clone(), px, q),
+                    OrderSide::Sell => (resting.id.clone(), id.to_string(), px, q),
+                });
+                qty -= q;
+                self.orders[i].qty -= q;
+                if self.orders[i].qty == 0 { self.orders.remove(i); }
+            }
+            if passive_rest && qty > 0 {
+                self.seq += 1;
+                self.orders.push(RefOrder { id: id.to_string(), side, price, qty, seq: self.seq });
+            }
+            fills
+        }
+
+        fn cancel(&mut self, id: &str) {
+            self.orders.retain(|o| o.id != id);
+        }
+    }
+
+    fn xorshift(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        *state = x;
+        x
+    }
+
+    #[test]
+    fn property_matches_reference_model() {
+        for seed in 1..=300u64 {
+            let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            let mut book = make_book();
+            let mut model = RefBook::default();
+            let mut ids: Vec<String> = Vec::new();
+
+            for step in 0..200 {
+                let roll = xorshift(&mut rng) % 10;
+                if roll < 2 && !ids.is_empty() {
+                    let id = ids[(xorshift(&mut rng) as usize) % ids.len()].clone();
+                    let _ = book.cancel_order(&id);
+                    model.cancel(&id);
+                    continue;
+                }
+                let id    = format!("O{}-{}", seed, step);
+                let side  = if xorshift(&mut rng) % 2 == 0 { OrderSide::Buy } else { OrderSide::Sell };
+                let price = 98_00 + (xorshift(&mut rng) % 5) as i64 * 1_00;
+                let qty   = 1 + (xorshift(&mut rng) % 20) as u32;
+                let ioc   = roll >= 8;
+
+                let engine_fills: Vec<RefFill> = if ioc {
+                    let r = book.process_aggressive(make_order(&id, side, price, qty, OrderType::Limit, TimeInForce::IOC));
+                    r.fills.into_iter().map(|f| (f.buy_order_id, f.sell_order_id, f.trade_price, f.trade_quantity)).collect()
+                } else {
+                    book.add_order(make_order(&id, side, price, qty, OrderType::Limit, TimeInForce::GTC));
+                    ids.push(id.clone());
+                    let (fills, _) = book.match_orders();
+                    fills.into_iter().map(|f| (f.buy_order_id, f.sell_order_id, f.trade_price, f.trade_quantity)).collect()
+                };
+                let model_fills = model.submit(&id, side, price, qty, !ioc);
+                assert_eq!(engine_fills, model_fills, "seed {} step {} order {}", seed, step, id);
+            }
+        }
+    }
+}

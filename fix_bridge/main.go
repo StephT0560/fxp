@@ -42,7 +42,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"sync/atomic"
 
 	"fix_bridge/codec"
 	"fix_bridge/gateway"
@@ -123,14 +122,6 @@ type bridgeHandler struct {
 	jwtSecret    string
 	sess         *session.Session
 	gwClient     *gateway.Client
-	outSeqNum    int64 // FIX outbound sequence number for translated FXP messages
-}
-
-// nextSeq returns the next outbound FIX sequence number for gateway-originated messages.
-// The session manages its own sequence numbers for session-level messages (Logon, Heartbeat).
-// We use a separate counter here because the session's counter is managed internally.
-func (h *bridgeHandler) nextSeq() int {
-	return int(atomic.AddInt64(&h.outSeqNum, 1))
 }
 
 // OnLogon is called by the session after Logon is accepted.
@@ -150,10 +141,10 @@ func (h *bridgeHandler) OnLogon(sess *session.Session) {
 		if err := h.gwClient.Connect(); err != nil {
 			log.Printf("[%s] gateway connection failed: %v", traderID, err)
 			// Send Logout to FIX client — gateway is unavailable
-			h.sess.Send(codec.NewLogout(
-				h.bridgeCompID, sess.TargetCompID, 1,
-				fmt.Sprintf("gateway unavailable: %v", err),
-			))
+			h.sess.SendWithSeq(func(seq int) []byte {
+				return codec.NewLogout(h.bridgeCompID, sess.TargetCompID, seq,
+					fmt.Sprintf("gateway unavailable: %v", err))
+			})
 		}
 	}()
 }
@@ -189,23 +180,25 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 // onFXPMessage is called by the gateway client for every inbound FXP frame.
 // Translates the FXP message to FIX and delivers to the FIX client.
 func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
-	seq := h.nextSeq()
-	frame := translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq)
-	if frame == nil {
-		return // message type not translated (e.g. LogonAck)
-	}
-	h.sess.Send(frame)
+	// Sequence numbers come from the session; untranslated types (nil) consume none.
+	h.sess.SendWithSeq(func(seq int) []byte {
+		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq)
+	})
 }
 
 // sendBusinessReject sends a FIX ExecutionReport with OrdStatus=Rejected
 // when a NewOrderSingle cannot be translated.
 // For cancel/replace failures, sends an OrderCancelReject.
 func (h *bridgeHandler) sendBusinessReject(msg *codec.Message, sess *session.Session, reason string) {
-	seq := h.nextSeq()
+	sess.SendWithSeq(func(seq int) []byte {
+		return buildBusinessReject(msg, h.bridgeCompID, sess.TargetCompID, seq, reason)
+	})
+}
 
+func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, seq int, reason string) []byte {
 	switch msg.MsgType() {
 	case codec.MsgTypeNewOrderSingle:
-		b := codec.NewBuilder(codec.MsgTypeExecutionReport, h.bridgeCompID, sess.TargetCompID, seq)
+		b := codec.NewBuilder(codec.MsgTypeExecutionReport, bridgeCompID, targetCompID, seq)
 		b.Set(codec.TagOrderID,   "NONE")
 		b.Set(codec.TagExecID,    fmt.Sprintf("REJ-%s", msg.Get(codec.TagClOrdID)))
 		b.Set(codec.TagExecType,  codec.ExecTypeRejected)
@@ -216,10 +209,10 @@ func (h *bridgeHandler) sendBusinessReject(msg *codec.Message, sess *session.Ses
 		b.SetInt(codec.TagCumQty,    0)
 		b.Set(codec.TagOrdRejReason, codec.OrdRejReasonOther)
 		b.Set(codec.TagText, reason)
-		sess.Send(b.Build())
+		return b.Build()
 
 	case codec.MsgTypeOrderCancelRequest, codec.MsgTypeOrderCancelReplaceRequest:
-		b := codec.NewBuilder(codec.MsgTypeOrderCancelReject, h.bridgeCompID, sess.TargetCompID, seq)
+		b := codec.NewBuilder(codec.MsgTypeOrderCancelReject, bridgeCompID, targetCompID, seq)
 		b.Set(codec.TagOrderID,     "NONE")
 		b.Set(codec.TagClOrdID,     msg.Get(codec.TagClOrdID))
 		b.Set(codec.TagOrigClOrdID, msg.Get(codec.TagOrigClOrdID))
@@ -231,10 +224,11 @@ func (h *bridgeHandler) sendBusinessReject(msg *codec.Message, sess *session.Ses
 			b.Set(codec.TagCxlRejResponseTo, "1")
 		}
 		b.Set(codec.TagText, reason)
-		sess.Send(b.Build())
+		return b.Build()
 
 	default:
 		// For other message types, just log — no standard rejection message
-		log.Printf("[%s] cannot send business reject for %s: %s", sess.TargetCompID, msg.MsgType(), reason)
+		log.Printf("[%s] cannot send business reject for %s: %s", targetCompID, msg.MsgType(), reason)
+		return nil
 	}
 }

@@ -125,10 +125,16 @@ func release(pc *pooledConn) { corePool <- pc }
 // SendFramedToCore sends a pre-framed FXP message to Rust Core via the pool.
 // orderID is registered in orderClientMap BEFORE acquiring the pool slot so
 // the reader goroutine can always route the ExecutionReport back correctly.
-func SendFramedToCore(clientConn any, frame []byte, orderID string) {
+// provisional is true for cancel/replace requests (see registerRoute).
+func SendFramedToCore(clientConn any, frame []byte, orderID string, owner string, provisional bool) {
 	// Register before acquiring pool slot — avoids a race where the
 	// ExecutionReport arrives before the map entry is written.
-	orderClientMap.Store(orderID, clientConn)
+	var stored bool
+	if provisional {
+		stored = registerRequest(orderID, clientConn, owner)
+	} else {
+		stored = registerRoute(orderID, orderRoute{conn: clientConn, owner: owner})
+	}
 
 	pc := acquire()
 	defer release(pc)
@@ -137,7 +143,10 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string) {
 		log.Printf("❌ Pool conn %d write failed (OrderID %s): %v — reconnecting", pc.id, orderID, err)
 		if rerr := pc.reconnect(); rerr != nil {
 			log.Printf("❌ Pool conn %d reconnect failed: %v", pc.id, rerr)
-			orderClientMap.Delete(orderID)
+			if stored {
+				orderClientMap.Delete(orderID)
+			}
+			inflightRequests.Delete(orderID)
 			return
 		}
 		// Restart reader on the fresh connection
@@ -145,7 +154,10 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string) {
 		// Retry once
 		if err = pc.write(frame); err != nil {
 			log.Printf("❌ Pool conn %d retry failed (OrderID %s): %v", pc.id, orderID, err)
-			orderClientMap.Delete(orderID)
+			if stored {
+				orderClientMap.Delete(orderID)
+			}
+			inflightRequests.Delete(orderID)
 			return
 		}
 	}
@@ -218,32 +230,33 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		status := protobuf.OrderStatus(rep.OrderStatus)
 		log.Printf("📩 ExecutionReport for OrderID %s status=%s", orderID, status)
 
-		clientAny, ok := orderClientMap.Load(orderID)
+		routeAny, ok := orderClientMap.Load(orderID)
 		if !ok {
 			log.Printf("⚠️ No registered client for OrderID %s", orderID)
 			return
 		}
+		route := routeAny.(orderRoute)
+		clientAny := route.conn
+		// The core marks rejects of cancel/replace requests with orig_order_id:
+		// the targeted order itself is unchanged.
+		requestReject := status == protobuf.OrderStatus_ORDER_REJECTED && rep.OrigOrderId != ""
+		stripOwner(rep, route.owner)
 
 		encoded, _ := proto.Marshal(msg)
-		var sendErr error
-
-		switch client := clientAny.(type) {
-		case net.Conn:
-			frame := make([]byte, 4+len(encoded))
-			binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
-			copy(frame[4:], encoded)
-			_, sendErr = client.Write(frame)
-		case *websocket.Conn:
-			sendErr = client.WriteMessage(websocket.BinaryMessage, encoded)
-		default:
-			log.Printf("⚠️ Unknown client type for OrderID %s: %T", orderID, clientAny)
-			return
+		targets := []any{clientAny}
+		isRequestReply := requestReject || status == protobuf.OrderStatus_ORDER_REPLACED ||
+			(status == protobuf.OrderStatus_ORDER_CANCELED && rep.LeavesQuantity == 0)
+		if isRequestReply {
+			if req, ok := inflightRequests.LoadAndDelete(orderID); ok {
+				if requestReject {
+					targets = []any{req} // only the requester asked
+				} else {
+					targets = append(targets, req)
+				}
+			}
 		}
-
-		if sendErr != nil {
-			log.Printf("❌ ExecutionReport delivery failed for OrderID %s: %v", orderID, sendErr)
-		} else {
-			log.Printf("✅ ExecutionReport delivered for OrderID %s", orderID)
+		for _, c := range targets {
+			deliverReport(c, encoded, orderID)
 		}
 
 		// Remove from orderClientMap only when the order is truly done.
@@ -254,6 +267,19 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		//
 		// ORDER_CANCELED with leaves_quantity == 0 means a full cancel (resting
 		// limit cancelled, or no fill at all) — safe to remove.
+		if requestReject {
+			if route.provisional {
+				orderClientMap.Delete(orderID)
+			}
+			if newID, ok := pendingReplace.LoadAndDelete(orderID); ok {
+				dropProvisional(newID.(string))
+			}
+			return
+		}
+		if status == protobuf.OrderStatus_ORDER_REPLACED {
+			pendingReplace.Delete(orderID)
+		}
+
 		isCanceled := status == protobuf.OrderStatus_ORDER_CANCELED
 		fullCancel := isCanceled && rep.LeavesQuantity == 0
 
@@ -266,7 +292,11 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		if terminal {
 			orderClientMap.Delete(orderID)
 			log.Printf("🗑️ OrderID %s removed from client map (terminal)", orderID)
-		} else if isCanceled {
+		} else if route.provisional {
+			route.provisional = false
+			orderClientMap.Store(orderID, route)
+		}
+		if !terminal && isCanceled {
 			log.Printf("📬 OrderID %s cancel with leaves>0 — keeping in map for partial fill", orderID)
 		}
 
@@ -280,5 +310,27 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 
 	default:
 		log.Printf("⚠️ Pool reader: unhandled payload type: %T", msg.Payload)
+	}
+}
+
+// deliverReport writes an encoded ExecutionReport to a TCP or WebSocket client.
+func deliverReport(clientAny any, encoded []byte, orderID string) {
+	var sendErr error
+	switch client := clientAny.(type) {
+	case net.Conn:
+		frame := make([]byte, 4+len(encoded))
+		binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
+		copy(frame[4:], encoded)
+		_, sendErr = client.Write(frame)
+	case *websocket.Conn:
+		sendErr = client.WriteMessage(websocket.BinaryMessage, encoded)
+	default:
+		log.Printf("⚠️ Unknown client type for OrderID %s: %T", orderID, clientAny)
+		return
+	}
+	if sendErr != nil {
+		log.Printf("❌ ExecutionReport delivery failed for OrderID %s: %v", orderID, sendErr)
+	} else {
+		log.Printf("✅ ExecutionReport delivered for OrderID %s", orderID)
 	}
 }
