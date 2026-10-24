@@ -307,6 +307,26 @@ fn stp_group_scopes_matching_and_different_owners_trade() {
 }
 
 #[test]
+fn stp_group_never_collides_with_an_owner_id() {
+    // A trader whose id looks like a namespaced group is not in that group.
+    let mut e = engine();
+    e.new_order(buy("B", "T1::desk", 5, 100, Stp::Unspecified), 2);
+    let out = e.new_order(
+        fxp::NewOrderSingle {
+            stp_group: "T1::desk".into(),
+            ..sell("S", "T2", 5, 100, Stp::CancelOldest)
+        },
+        1,
+    );
+    assert_eq!(
+        fills(&out).len(),
+        2,
+        "group key must not match an owner key"
+    );
+    assert!(of(&out, "B").iter().all(|r| r.reject_reason.is_empty()));
+}
+
+#[test]
 fn ioc_remainder_canceled_by_stp_after_filling_other_owners() {
     let mut e = engine();
     e.new_order(buy("B1", "U", 2, 101, Stp::Unspecified), 2);

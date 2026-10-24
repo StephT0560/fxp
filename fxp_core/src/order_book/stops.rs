@@ -604,7 +604,7 @@ mod property_tests {
                         };
                         keys.insert(
                             new_id.clone(),
-                            (o.stp_key().to_string(), o.trader_id.clone()),
+                            (format!("{:?}", o.stp_key()), o.trader_id.clone()),
                         );
                         ids.push(new_id);
                         let is_stop =

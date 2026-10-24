@@ -21,13 +21,21 @@ pub struct Order {
 
 impl Order {
     /// Self-trade prevention scope: the STP group if set, otherwise the owner.
-    pub fn stp_key(&self) -> &str {
+    pub fn stp_key(&self) -> StpKey<'_> {
         if self.stp.group.is_empty() {
-            &self.trader_id
+            StpKey::Owner(&self.trader_id)
         } else {
-            &self.stp.group
+            StpKey::Group(&self.stp.group)
         }
     }
+}
+
+/// Self-match identity. An explicit group never equals an owner id, even if
+/// the strings are equal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StpKey<'a> {
+    Owner(&'a str),
+    Group(&'a str),
 }
 
 /// Self-trade prevention instruction carried by an order. The aggressing

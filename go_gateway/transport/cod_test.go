@@ -201,12 +201,27 @@ func TestBindOwnerScopesSTPGroupToTheTrader(t *testing.T) {
 		NewOrder: &protobuf.NewOrderSingle{OrderId: "O1", StpGroup: "desk"},
 	}}
 	bindOwner(msg, "T1")
-	if g := msg.GetNewOrder().StpGroup; g != "T1::desk" {
+	if g := msg.GetNewOrder().StpGroup; g != "2:T1::desk" {
 		t.Fatalf("stp group = %q", g)
 	}
 	msg = &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_NewOrder{NewOrder: &protobuf.NewOrderSingle{OrderId: "O2"}}}
 	bindOwner(msg, "T1")
 	if g := msg.GetNewOrder().StpGroup; g != "" {
 		t.Fatalf("empty stp group must stay empty (owner scope), got %q", g)
+	}
+}
+
+// Trader IDs may contain the separator, so "a" + "x::y" and "a::x" + "y"
+// must still yield different groups.
+func TestSTPGroupNamespaceIsUnambiguous(t *testing.T) {
+	group := func(trader, g string) string {
+		msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_NewOrder{
+			NewOrder: &protobuf.NewOrderSingle{OrderId: "O", StpGroup: g},
+		}}
+		bindOwner(msg, trader)
+		return msg.GetNewOrder().StpGroup
+	}
+	if a, b := group("a", "x::y"), group("a::x", "y"); a == b {
+		t.Fatalf("groups of different traders collide: %q", a)
 	}
 }

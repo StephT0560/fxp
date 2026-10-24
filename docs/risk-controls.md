@@ -8,8 +8,10 @@ a client that sends none of the new fields sees exactly the v2.1 behavior.
 A *self-match* is a potential fill where both orders have the same STP key.
 The key is the order's STP group (`NewOrderSingle.stp_group`, FIX tag 2362)
 when set, otherwise the owner (the gateway-authenticated JWT `sub`). The
-gateway namespaces groups per trader (`<sub>::<group>`), so one trader can
-never name another trader's group.
+gateway namespaces groups per trader (`<len(sub)>:<sub>::<group>`, the
+length prefix keeps it unambiguous when `sub` contains `::`), and the engine
+never treats a group as equal to an owner id, so one trader can never name
+another trader's group or owner scope.
 
 The **aggressor's** (incoming order's) instruction decides what happens:
 
