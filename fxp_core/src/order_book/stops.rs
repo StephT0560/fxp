@@ -173,6 +173,11 @@ impl OrderBook {
 
 /// Check every print in `out.fills` against the parked stops and execute
 /// triggered stops until no new print triggers anything.
+///
+/// The incoming order finishes matching before any stop it triggers runs:
+/// it arrived first, so a stop elected mid-sweep never takes liquidity
+/// ahead of it. A stop's trigger is still decided by the print that
+/// crossed it, not by the batch's last price.
 pub fn run_stop_cascade(
     book: &mut OrderBook,
     stops: &mut StopBook,

@@ -177,8 +177,9 @@ func (s *Session) logonTimeoutLoop() {
 }
 
 // SendWithSeq allocates the next outbound MsgSeqNum, builds the frame with it,
-// enqueues it and records it in the Store under one lock, so frames reach the
-// wire in sequence order with no gaps. A nil frame consumes no number.
+// records it in the Store and enqueues it under one lock, so frames reach the
+// wire in sequence order with no gaps. A nil frame consumes no number; a frame
+// the Store cannot persist is never sent and the session closes.
 func (s *Session) SendWithSeq(build func(seq int) []byte) {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
@@ -190,10 +191,13 @@ func (s *Session) SendWithSeq(build func(seq int) []byte) {
 	if frame == nil {
 		return
 	}
-	if s.enqueueLocked(frame) {
-		s.Store.Save(seq, frame)
-		s.outSeqNum++
+	if err := s.Store.Save(seq, frame); err != nil {
+		log.Printf("[%s] %v — closing session", s.target(), err)
+		s.close()
+		return
 	}
+	s.outSeqNum++
+	s.enqueueLocked(frame)
 }
 
 // enqueueLocked queues a frame; the caller holds sendMu. A client that stops
@@ -353,7 +357,9 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		s.requestResend(seq)
 		return nil
 	}
-	s.setInSeq(s.inSeqNum + 1)
+	if err := s.setInSeq(s.inSeqNum + 1); err != nil {
+		return err
+	}
 	if s.resendTo != 0 && s.inSeqNum > s.resendTo {
 		s.resendTo = 0
 	}
@@ -497,14 +503,18 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	}
 	if reset {
 		s.resetOutbound()
-		s.setInSeq(1)
+		if err := s.setInSeq(1); err != nil {
+			return err
+		}
 	}
 	if seq < s.inSeqNum {
 		return s.rejectLogon(msg, fmt.Sprintf("MsgSeqNum too low, expecting %d but received %d", s.inSeqNum, seq))
 	}
 	gap := seq > s.inSeqNum
 	if !gap {
-		s.setInSeq(seq + 1)
+		if err := s.setInSeq(seq + 1); err != nil {
+			return err
+		}
 	}
 
 	s.stateMu.Lock()
@@ -545,7 +555,9 @@ func (s *Session) handleInSessionReset(seq int) {
 	}
 	log.Printf("[%s] Logon with ResetSeqNumFlag=Y — resetting sequence numbers", s.target())
 	s.resetOutbound()
-	s.setInSeq(2)
+	if s.setInSeq(2) != nil {
+		return
+	}
 	s.resendTo = 0
 	hbi := int(s.heartbeatInterval() / heartbeatUnit)
 	s.SendWithSeq(func(n int) []byte {
@@ -581,10 +593,16 @@ func (s *Session) releaseStore() {
 	}
 }
 
-// setInSeq advances the next expected inbound MsgSeqNum and persists it.
-func (s *Session) setInSeq(n int) {
+// setInSeq advances the next expected inbound MsgSeqNum and persists it. If
+// it cannot be persisted the session closes rather than run ahead of its store.
+func (s *Session) setInSeq(n int) error {
 	s.inSeqNum = n
-	s.Store.SetNextInSeq(n)
+	if err := s.Store.SetNextInSeq(n); err != nil {
+		log.Printf("[%s] %v — closing session", s.target(), err)
+		s.close()
+		return err
+	}
+	return nil
 }
 
 func (s *Session) resetOutbound() {
@@ -711,7 +729,9 @@ func (s *Session) applyNewSeqNo(msg *codec.Message, seq int) {
 			fmt.Sprintf("NewSeqNo %d lower than expected %d", newSeq, s.inSeqNum))
 		return
 	}
-	s.setInSeq(newSeq)
+	if s.setInSeq(newSeq) != nil {
+		return
+	}
 	if s.resendTo != 0 && s.inSeqNum > s.resendTo {
 		s.resendTo = 0
 	}

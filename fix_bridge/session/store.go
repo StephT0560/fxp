@@ -7,12 +7,13 @@ import "sync"
 // MessageStore keeps sent frames by MsgSeqNum so a ResendRequest can be
 // served, plus the session's next inbound and outbound MsgSeqNum.
 type MessageStore interface {
-	// Save records a sent frame; the next outbound MsgSeqNum becomes seq+1.
-	Save(seq int, frame []byte)
+	// Save records a frame before it is sent; the next outbound MsgSeqNum
+	// becomes seq+1. An error means it is not durable and must not be sent.
+	Save(seq int, frame []byte) error
 	// Get returns a stored frame; false if unknown or past retention.
 	Get(seq int) ([]byte, bool)
 	// SetNextInSeq records the next expected inbound MsgSeqNum.
-	SetNextInSeq(n int)
+	SetNextInSeq(n int) error
 	// SeqNums returns the next expected inbound and next outbound MsgSeqNum.
 	SeqNums() (nextIn, nextOut int)
 	// Reset drops all messages and sets both sequence numbers back to 1.
@@ -32,11 +33,12 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{msgs: make(map[int][]byte), nextIn: 1, nextOut: 1}
 }
 
-func (m *MemoryStore) Save(seq int, frame []byte) {
+func (m *MemoryStore) Save(seq int, frame []byte) error {
 	m.mu.Lock()
 	m.msgs[seq] = frame
 	m.nextOut = seq + 1
 	m.mu.Unlock()
+	return nil
 }
 
 func (m *MemoryStore) Get(seq int) ([]byte, bool) {
@@ -46,10 +48,11 @@ func (m *MemoryStore) Get(seq int) ([]byte, bool) {
 	return f, ok
 }
 
-func (m *MemoryStore) SetNextInSeq(n int) {
+func (m *MemoryStore) SetNextInSeq(n int) error {
 	m.mu.Lock()
 	m.nextIn = n
 	m.mu.Unlock()
+	return nil
 }
 
 func (m *MemoryStore) SeqNums() (int, int) {

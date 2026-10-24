@@ -42,9 +42,13 @@ func TestFileStoreSurvivesReopenAndAbruptClose(t *testing.T) {
 			dir := t.TempDir()
 			fs := openStore(t, dir, FileStoreOptions{Fsync: mode})
 			for i := 1; i <= 5; i++ {
-				fs.Save(i, frameN(i))
+				if err := fs.Save(i, frameN(i)); err != nil {
+					t.Error(err)
+				}
 			}
-			fs.SetNextInSeq(7)
+			if err := fs.SetNextInSeq(7); err != nil {
+				t.Error(err)
+			}
 			// No Close: simulates the process being killed (data reached the OS).
 			re := openStore(t, dir, FileStoreOptions{Fsync: mode})
 			defer func() { _ = re.Close() }()
@@ -65,7 +69,9 @@ func TestFileStoreRecoversTornTail(t *testing.T) {
 	dir := t.TempDir()
 	fs := openStore(t, dir, FileStoreOptions{})
 	for i := 1; i <= 3; i++ {
-		fs.Save(i, frameN(i))
+		if err := fs.Save(i, frameN(i)); err != nil {
+			t.Error(err)
+		}
 	}
 	_ = fs.Close()
 	logPath := filepath.Join(dir, outboundLogName)
@@ -79,7 +85,9 @@ func TestFileStoreRecoversTornTail(t *testing.T) {
 	if _, out := re.SeqNums(); out != 4 {
 		t.Fatalf("next out after torn header = %d, want 4", out)
 	}
-	re.Save(4, frameN(4))
+	if err := re.Save(4, frameN(4)); err != nil {
+		t.Error(err)
+	}
 	_ = re.Close()
 	re = openStore(t, dir, FileStoreOptions{})
 	if f, ok := re.Get(4); !ok || string(f) != "frame-4" {
@@ -108,7 +116,9 @@ func TestFileStoreRetentionCapsLog(t *testing.T) {
 	dir := t.TempDir()
 	fs := openStore(t, dir, FileStoreOptions{MaxMessages: 10})
 	for i := 1; i <= 95; i++ {
-		fs.Save(i, frameN(i))
+		if err := fs.Save(i, frameN(i)); err != nil {
+			t.Error(err)
+		}
 	}
 	_ = fs.Close()
 	fs = openStore(t, dir, FileStoreOptions{MaxMessages: 10})
@@ -133,8 +143,12 @@ func TestFileStoreRetentionCapsLog(t *testing.T) {
 func TestFileStoreReset(t *testing.T) {
 	dir := t.TempDir()
 	fs := openStore(t, dir, FileStoreOptions{})
-	fs.Save(1, frameN(1))
-	fs.SetNextInSeq(9)
+	if err := fs.Save(1, frameN(1)); err != nil {
+		t.Error(err)
+	}
+	if err := fs.SetNextInSeq(9); err != nil {
+		t.Error(err)
+	}
 	fs.Reset()
 	_ = fs.Close()
 	fs = openStore(t, dir, FileStoreOptions{})
@@ -162,8 +176,12 @@ func TestFileStoreConcurrentSessions(t *testing.T) {
 				return
 			}
 			for i := 1; i <= 50; i++ {
-				st.Save(i, []byte(fmt.Sprintf("%d-%d", c, i)))
-				st.SetNextInSeq(i + 1)
+				if err := st.Save(i, []byte(fmt.Sprintf("%d-%d", c, i))); err != nil {
+					t.Error(err)
+				}
+				if err := st.SetNextInSeq(i + 1); err != nil {
+					t.Error(err)
+				}
 			}
 			reg.Release(key)
 		}(c)
@@ -303,5 +321,25 @@ func TestConcurrentLogonSameCompIDRejected(t *testing.T) {
 	p.send(codec.MsgTypeTestRequest, "112", "T")
 	if hb := p.expect(codec.MsgTypeHeartbeat); hb.GetInt(codec.TagMsgSeqNum) != 2 {
 		t.Fatalf("live session Heartbeat 34=%d, want 2", hb.GetInt(codec.TagMsgSeqNum))
+	}
+}
+
+func TestFileStoreWriteFailureIsReported(t *testing.T) {
+	fs, err := OpenFileStore(t.TempDir(), FileStoreOptions{Fsync: FsyncStrict, MaxMessages: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Save(1, frameN(1)); err != nil {
+		t.Fatal(err)
+	}
+	_ = fs.log.Close() // the disk goes away
+	if err := fs.Save(2, frameN(2)); err == nil {
+		t.Fatal("Save must report a failed append")
+	}
+	if err := fs.Save(3, frameN(3)); err == nil {
+		t.Fatal("store must stay failed once a partial record cannot be removed")
+	}
+	if _, out := fs.SeqNums(); out != 2 {
+		t.Fatalf("nextOut = %d, want 2 (failed saves must not advance it)", out)
 	}
 }

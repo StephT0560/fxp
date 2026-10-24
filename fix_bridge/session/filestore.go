@@ -44,6 +44,7 @@ type FileStore struct {
 	stop    chan struct{}
 	done    chan struct{}
 	closed  bool
+	failed  error // unrecoverable write failure, returned by every later write
 }
 
 // FsyncMode selects when FileStore calls fsync.
@@ -189,26 +190,40 @@ func recordCRC(seq, frame []byte) uint32 {
 	return crc32.Update(crc32.ChecksumIEEE(seq), crc32.IEEETable, frame)
 }
 
-func (fs *FileStore) Save(seq int, frame []byte) {
+var errStoreClosed = errors.New("FIX store closed")
+
+func (fs *FileStore) writableLocked() error {
+	if fs.closed {
+		return errStoreClosed
+	}
+	return fs.failed
+}
+
+func (fs *FileStore) Save(seq int, frame []byte) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	if fs.closed {
-		return
+	if err := fs.writableLocked(); err != nil {
+		return err
 	}
 	off, err := fs.appendLocked(fs.log, seq, frame)
 	if err != nil {
-		log.Printf("FIX store %s: append seq %d: %v", fs.dir, seq, err)
-		return
+		return fmt.Errorf("FIX store %s: append seq %d: %w", fs.dir, seq, err)
 	}
 	fs.index[seq] = recordLoc{off: off, n: len(frame)}
 	fs.nextOut = seq + 1
-	fs.syncLocked(fs.log)
-	fs.writeSeqNumsLocked()
+	if err := fs.syncLocked(fs.log); err != nil {
+		return err
+	}
+	if err := fs.writeSeqNumsLocked(); err != nil {
+		return err
+	}
 	if len(fs.index) >= 2*fs.opts.MaxMessages {
+		// The old log stays valid if compaction fails, so only log it.
 		if err := fs.compactLocked(); err != nil {
 			log.Printf("FIX store %s: compact: %v", fs.dir, err)
 		}
 	}
+	return nil
 }
 
 // appendLocked writes one record at the end of f and returns the frame offset.
@@ -223,24 +238,31 @@ func (fs *FileStore) appendLocked(f *os.File, seq int, frame []byte) (int64, err
 	binary.BigEndian.PutUint32(rec[4:8], recordCRC(rec[8:16], frame))
 	copy(rec[recordHeaderLen:], frame)
 	if _, err := f.Write(rec); err != nil {
+		// A partial record would hide every later one from recovery.
+		if terr := f.Truncate(end); terr != nil && f == fs.log {
+			fs.failed = fmt.Errorf("FIX store %s: partial record left in %s: %w", fs.dir, outboundLogName, terr)
+		}
 		return 0, err
 	}
 	return end + recordHeaderLen, nil
 }
 
-// syncLocked fsyncs f now (strict) or marks the store dirty (group).
-func (fs *FileStore) syncLocked(f *os.File) {
+// syncLocked fsyncs f now (strict) or marks the store dirty (group). A failed
+// fsync leaves the file state unknown, so the store refuses further writes.
+func (fs *FileStore) syncLocked(f *os.File) error {
 	switch fs.opts.Fsync {
 	case FsyncStrict:
 		if err := f.Sync(); err != nil {
-			log.Printf("FIX store %s: fsync: %v", fs.dir, err)
+			fs.failed = fmt.Errorf("FIX store %s: fsync: %w", fs.dir, err)
+			return fs.failed
 		}
 	case FsyncGroup:
 		fs.dirty = true
 	}
+	return nil
 }
 
-func (fs *FileStore) writeSeqNumsLocked() {
+func (fs *FileStore) writeSeqNumsLocked() error {
 	tmp := filepath.Join(fs.dir, seqNumsName+".tmp")
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err == nil {
@@ -256,14 +278,13 @@ func (fs *FileStore) writeSeqNumsLocked() {
 		err = os.Rename(tmp, filepath.Join(fs.dir, seqNumsName))
 	}
 	if err != nil {
-		log.Printf("FIX store %s: write %s: %v", fs.dir, seqNumsName, err)
-		return
+		return fmt.Errorf("FIX store %s: write %s: %w", fs.dir, seqNumsName, err)
 	}
 	if fs.opts.Fsync == FsyncStrict {
 		fs.syncDir()
-	} else {
-		fs.syncLocked(nil)
+		return nil
 	}
+	return fs.syncLocked(nil)
 }
 
 func (fs *FileStore) syncDir() {
@@ -329,14 +350,14 @@ func (fs *FileStore) Get(seq int) ([]byte, bool) {
 	return fs.readLocked(seq)
 }
 
-func (fs *FileStore) SetNextInSeq(n int) {
+func (fs *FileStore) SetNextInSeq(n int) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	if fs.closed {
-		return
+	if err := fs.writableLocked(); err != nil {
+		return err
 	}
 	fs.nextIn = n
-	fs.writeSeqNumsLocked()
+	return fs.writeSeqNumsLocked()
 }
 
 func (fs *FileStore) SeqNums() (int, int) {
@@ -356,8 +377,9 @@ func (fs *FileStore) Reset() {
 	}
 	fs.index = make(map[int]recordLoc)
 	fs.nextIn, fs.nextOut = 1, 1
-	fs.syncLocked(fs.log)
-	fs.writeSeqNumsLocked()
+	if err := errors.Join(fs.syncLocked(fs.log), fs.writeSeqNumsLocked()); err != nil {
+		log.Printf("FIX store %s: reset: %v", fs.dir, err)
+	}
 }
 
 func (fs *FileStore) groupFlusher() {
@@ -381,6 +403,9 @@ func (fs *FileStore) groupFlusher() {
 func (fs *FileStore) flushLocked() {
 	if err := fs.log.Sync(); err != nil {
 		log.Printf("FIX store %s: fsync: %v", fs.dir, err)
+		if fs.failed == nil {
+			fs.failed = fmt.Errorf("FIX store %s: fsync: %w", fs.dir, err)
+		}
 	}
 	if f, err := os.Open(filepath.Join(fs.dir, seqNumsName)); err == nil {
 		_ = f.Sync()
