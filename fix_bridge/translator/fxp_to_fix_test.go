@@ -65,6 +65,25 @@ func TestExecutionReportFieldMapping(t *testing.T) {
 	}
 }
 
+func TestExecutionReportWithoutExecIDGetsUniqueSyntheticValue(t *testing.T) {
+	rep := &protobuf.ExecutionReport{
+		OrderId: "REJECT", Symbol: "AAPL", Side: protobuf.OrderSide_BUY,
+		ExecutionType: protobuf.ExecutionType_EXEC_REJECTED,
+		OrderStatus:   protobuf.OrderStatus_ORDER_REJECTED,
+	}
+	first := parseER(t, translateExecutionReport(rep, "FXPBRIDGE", "CLIENT", 2)).Get(codec.TagExecID)
+	second := parseER(t, translateExecutionReport(rep, "FXPBRIDGE", "CLIENT", 3)).Get(codec.TagExecID)
+	if first == "" || second == "" || first == second {
+		t.Fatalf("synthetic ExecIDs = %q and %q, want distinct non-empty values", first, second)
+	}
+
+	rep.ExecutionId = "core-exec-id"
+	preserved := parseER(t, translateExecutionReport(rep, "FXPBRIDGE", "CLIENT", 4)).Get(codec.TagExecID)
+	if preserved != "core-exec-id" {
+		t.Fatalf("non-empty ExecID = %q, want core-exec-id", preserved)
+	}
+}
+
 func TestExpiredExecutionReportMapping(t *testing.T) {
 	rep := &protobuf.ExecutionReport{
 		OrderId: "GTD", ExecutionId: "X1", Symbol: "AAPL", Side: protobuf.OrderSide_BUY,

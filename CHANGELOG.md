@@ -42,6 +42,13 @@ cut a release yet, so everything is under Unreleased.
 - `RUST_LOG` (core) and `FXP_LOG_LEVEL` (gateway, bridge) log-level control (#10).
 
 ### Changed
+- Gateway authentication failures and pre-authentication errors are flushed
+  before the TCP or WebSocket connection closes. The FIX bridge synthesizes a
+  unique tag 17 for ExecutionReports without an execution ID, including
+  gateway-generated rejects; non-empty core execution IDs are unchanged.
+- Core shutdown drains connected-client writers without waiting for
+  journal-held senders, and FIX bridge Logout requests share one shutdown
+  deadline before remaining sessions are closed.
 - Unsupported FIX application messages (e.g. OrderStatusRequest `35=H`) get
   `BusinessMessageReject(35=j)` with `380=3` and an explicit text, even while
   the gateway is disconnected (#9).

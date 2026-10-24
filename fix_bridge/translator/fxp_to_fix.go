@@ -29,11 +29,18 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync/atomic"
+	"time"
 
 	"fix_bridge/codec"
 	"go_gateway/protobuf"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+var (
+	processStartUnixNano = time.Now().UnixNano()
+	syntheticExecCounter atomic.Uint64
 )
 
 // TranslateFXPtoFIX converts an inbound FXP message to a FIX frame.
@@ -121,7 +128,11 @@ func translateExecutionReport(
 
 	// Required fields
 	b.Set(codec.TagOrderID, rep.OrderId)
-	b.Set(codec.TagExecID, rep.ExecutionId)
+	execID := rep.ExecutionId
+	if execID == "" {
+		execID = fmt.Sprintf("R%d-%d", processStartUnixNano, syntheticExecCounter.Add(1))
+	}
+	b.Set(codec.TagExecID, execID)
 	b.Set(codec.TagExecType, execType)
 	b.Set(codec.TagOrdStatus, ordStatus)
 	b.Set(codec.TagSymbol, rep.Symbol)
