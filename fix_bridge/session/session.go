@@ -118,6 +118,7 @@ func NewSession(conn net.Conn, senderCompID string, handler Handler) *Session {
 		sendCh:       make(chan []byte, 512),
 		done:         make(chan struct{}),
 	}
+	s.parser.SetMaxBodyLength(4096)
 	s.lastReceived.Store(time.Now().UnixNano())
 	return s
 }
@@ -438,6 +439,7 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	}
 	hbi := s.heartBtInt
 	s.state = StateLoggedOn
+	s.parser.SetMaxBodyLength(1_048_576)
 	s.stateMu.Unlock()
 	log.Printf("[%s] Logon accepted (HeartBtInt=%ds, reset=%v)", sender, hbi, reset)
 

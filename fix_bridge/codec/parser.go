@@ -92,13 +92,21 @@ func garbled(format string, args ...any) error {
 
 // Parser reads FIX messages from a buffered reader.
 type Parser struct {
-	r      *bufio.Reader
-	resync bool
+	r             *bufio.Reader
+	resync        bool
+	maxBodyLength int
 }
 
 // NewParser creates a parser reading from r.
 func NewParser(r io.Reader) *Parser {
-	return &Parser{r: bufio.NewReaderSize(r, 65536)}
+	return &Parser{r: bufio.NewReaderSize(r, 65536), maxBodyLength: 1_048_576}
+}
+
+// SetMaxBodyLength sets the maximum accepted BodyLength.
+func (p *Parser) SetMaxBodyLength(n int) {
+	if n > 0 {
+		p.maxBodyLength = n
+	}
 }
 
 // ReadMessage reads one complete FIX message from the stream.
@@ -159,7 +167,7 @@ func (p *Parser) readMessage() (*Message, error) {
 	if err != nil {
 		return nil, garbled("invalid BodyLength %q: %v", bodyLengthValue, err)
 	}
-	if bodyLen <= 0 || bodyLen > 1_048_576 {
+	if bodyLen <= 0 || bodyLen > p.maxBodyLength {
 		return nil, garbled("BodyLength %d out of range", bodyLen)
 	}
 

@@ -42,6 +42,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 
 	"fix_bridge/codec"
 	"fix_bridge/gateway"
@@ -86,14 +87,50 @@ func main() {
 	log.Printf("   FXP_JWT_SECRET: set ✓")
 	log.Printf("   FIX CompIDs allowed: %d", len(creds))
 
+	acceptFIXClients(listener, fixMaxConnections(), func(conn net.Conn) {
+		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
+		handleFIXClient(conn, *bridgeCompID, jwtSecret, auth)
+	})
+}
+
+func fixMaxConnections() int {
+	const defaultMax = 1024
+	value := os.Getenv("FXP_FIX_MAX_CONNS")
+	if value == "" {
+		return defaultMax
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		log.Printf("⚠️ ignoring invalid FXP_FIX_MAX_CONNS=%q, using %d", value, defaultMax)
+		return defaultMax
+	}
+	return n
+}
+
+func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net.Conn)) {
+	if maxConnections <= 0 {
+		maxConnections = 1
+	}
+	slots := make(chan struct{}, maxConnections)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Printf("accept error: %v", err)
-			continue
+			return
 		}
-		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
-		go handleFIXClient(conn, *bridgeCompID, jwtSecret, auth)
+		select {
+		case slots <- struct{}{}:
+			go func(conn net.Conn) {
+				defer func() {
+					_ = conn.Close()
+					<-slots
+				}()
+				handle(conn)
+			}(conn)
+		default:
+			log.Printf("FIX connection limit reached (%d); closing %s", maxConnections, conn.RemoteAddr())
+			_ = conn.Close()
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -13,6 +14,72 @@ import (
 	"fix_bridge/session"
 	"go_gateway/protobuf"
 )
+
+func TestAcceptFIXClientsConnectionLimit(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := make(chan net.Conn, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseHandler := func() { releaseOnce.Do(func() { close(release) }) }
+	done := make(chan struct{})
+	go func() {
+		acceptFIXClients(listener, 1, func(conn net.Conn) {
+			accepted <- conn
+			<-release
+		})
+		close(done)
+	}()
+	t.Cleanup(func() {
+		releaseHandler()
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("accept loop did not stop")
+		}
+	})
+	dial := func() net.Conn {
+		t.Helper()
+		conn, err := net.Dial("tcp", listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		return conn
+	}
+
+	first := dial()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("first connection was not accepted")
+	}
+
+	second := dial()
+	_ = second.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := second.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("second connection read error = %v, want EOF", err)
+	}
+
+	releaseHandler()
+	_ = first.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := first.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("first connection read error = %v, want EOF after handler returns", err)
+	}
+	third := dial()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("connection was not accepted after the first session ended")
+	}
+	_ = third.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := third.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("third connection read error = %v, want EOF after handler returns", err)
+	}
+}
 
 // seqTestHandler drives the real bridgeHandler.onFXPMessage path without a
 // gateway connection.

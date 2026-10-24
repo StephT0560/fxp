@@ -244,6 +244,19 @@ func TestLogonRejectsOtherBeginString(t *testing.T) {
 	}
 }
 
+func TestBodyLengthLimitBeforeAndAfterLogon(t *testing.T) {
+	p := newPeer(t)
+	payload := strings.Repeat("x", 5000)
+	p.write(p.frame(codec.MsgTypeLogout, 1, strconv.Itoa(codec.TagText), payload))
+
+	p.logon()
+	p.sendSeq(codec.MsgTypeTestRequest, 2, strconv.Itoa(codec.TagTestReqID), payload)
+	heartbeat := p.expect(codec.MsgTypeHeartbeat)
+	if got := heartbeat.Get(codec.TagTestReqID); len(got) != len(payload) {
+		t.Fatalf("TestReqID length = %d, want %d", len(got), len(payload))
+	}
+}
+
 func TestApplicationMessageRejectsOtherBeginString(t *testing.T) {
 	p := newPeer(t)
 	p.logon()
