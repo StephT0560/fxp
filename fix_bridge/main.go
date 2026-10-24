@@ -43,6 +43,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"time"
 
 	"fix_bridge/codec"
 	"fix_bridge/gateway"
@@ -150,6 +151,9 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 
 	// Create the FIX session — TargetCompID is filled in when Logon arrives
 	sess := session.NewSession(conn, bridgeCompID, h)
+	sess.LogonTimeout = sessionDurationEnv("FXP_FIX_LOGON_TIMEOUT", sess.LogonTimeout)
+	sess.LogoutTimeout = sessionDurationEnv("FXP_FIX_LOGOUT_TIMEOUT", sess.LogoutTimeout)
+	sess.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", sess.MaxLatency)
 	sess.Auth = auth
 	h.sess = sess
 
@@ -193,13 +197,22 @@ func (h *bridgeHandler) OnLogon(sess *session.Session) {
 					h.sendBusinessReject(req, h.sess, "gateway unavailable")
 				}
 			}
-			// Send Logout to FIX client — gateway is unavailable
-			h.sess.SendWithSeq(func(seq int) []byte {
-				return codec.NewLogout(h.bridgeCompID, sess.TargetCompID, seq,
-					fmt.Sprintf("gateway unavailable: %v", err))
-			})
+			h.sess.Logout(fmt.Sprintf("gateway unavailable: %v", err))
 		}
 	}()
+}
+
+func sessionDurationEnv(name string, fallback time.Duration) time.Duration {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d < 0 {
+		log.Printf("⚠️ ignoring invalid %s=%q, using %v", name, value, fallback)
+		return fallback
+	}
+	return d
 }
 
 // OnLogout is called by the session when the FIX client logs out or disconnects.

@@ -22,9 +22,10 @@ var testPassword = func() string {
 }()
 
 type recHandler struct {
-	mu     sync.Mutex
-	app    []*codec.Message
-	logons int
+	mu      sync.Mutex
+	app     []*codec.Message
+	logons  int
+	logouts int
 }
 
 func (h *recHandler) Handle(m *codec.Message, _ *Session) {
@@ -32,9 +33,14 @@ func (h *recHandler) Handle(m *codec.Message, _ *Session) {
 	h.app = append(h.app, m)
 	h.mu.Unlock()
 }
-func (h *recHandler) OnLogon(*Session)          { h.mu.Lock(); h.logons++; h.mu.Unlock() }
-func (h *recHandler) OnLogout(*Session, string) {}
-func (h *recHandler) appCount() int             { h.mu.Lock(); defer h.mu.Unlock(); return len(h.app) }
+func (h *recHandler) OnLogon(*Session) { h.mu.Lock(); h.logons++; h.mu.Unlock() }
+func (h *recHandler) OnLogout(*Session, string) {
+	h.mu.Lock()
+	h.logouts++
+	h.mu.Unlock()
+}
+func (h *recHandler) appCount() int    { h.mu.Lock(); defer h.mu.Unlock(); return len(h.app) }
+func (h *recHandler) logoutCount() int { h.mu.Lock(); defer h.mu.Unlock(); return h.logouts }
 
 // peer is the client end of a session under test.
 type peer struct {
@@ -49,11 +55,18 @@ type peer struct {
 }
 
 func newPeer(t *testing.T) *peer {
+	return newPeerConfigured(t, nil)
+}
+
+func newPeerConfigured(t *testing.T, configure func(*Session)) *peer {
 	t.Helper()
 	srv, cli := net.Pipe()
 	h := &recHandler{}
 	s := NewSession(srv, "FXPBRIDGE", h)
 	s.Auth = NewCredentialAuth(map[string]string{"CLIENT": testPassword})
+	if configure != nil {
+		configure(s)
+	}
 	p := &peer{t: t, conn: cli, in: make(chan *codec.Message, 1024), closed: make(chan struct{}),
 		sess: s, h: h, sender: "CLIENT", target: "FXPBRIDGE"}
 	go s.Run()
@@ -242,6 +255,95 @@ func TestLogonRejectsOtherBeginString(t *testing.T) {
 	if logons != 0 {
 		t.Fatalf("OnLogon called %d times for mismatched BeginString", logons)
 	}
+}
+
+func TestLogonTimeoutClosesWithoutLogout(t *testing.T) {
+	p := newPeerConfigured(t, func(s *Session) { s.LogonTimeout = 30 * time.Millisecond })
+	p.expectClosed()
+	p.expectQuiet(20 * time.Millisecond)
+}
+
+func TestInitiatedLogoutHandshake(t *testing.T) {
+	p := newPeerConfigured(t, func(s *Session) { s.LogoutTimeout = 250 * time.Millisecond })
+	p.logon()
+	p.sess.Logout("gateway unavailable")
+	if logout := p.expect(codec.MsgTypeLogout); logout.Get(codec.TagText) != "gateway unavailable" {
+		t.Fatalf("Logout text = %q", logout.Get(codec.TagText))
+	}
+	p.send(codec.MsgTypeLogout, strconv.Itoa(codec.TagText), "ack")
+	p.expectClosed()
+	p.expectQuiet(20 * time.Millisecond)
+	if got := p.h.logoutCount(); got != 1 {
+		t.Fatalf("OnLogout called %d times, want 1", got)
+	}
+}
+
+func TestInitiatedLogoutTimeoutCloses(t *testing.T) {
+	p := newPeerConfigured(t, func(s *Session) { s.LogoutTimeout = 30 * time.Millisecond })
+	p.logon()
+	p.sess.Logout("shutdown")
+	p.expect(codec.MsgTypeLogout)
+	p.expectClosed()
+}
+
+func TestInvalidLogonSendingTimeRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		time string
+	}{
+		{"stale", fixTime(time.Now().Add(-2 * time.Minute))},
+		{"malformed", "not-a-time"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newPeerConfigured(t, func(s *Session) { s.MaxLatency = 30 * time.Millisecond })
+			p.sendSeq(codec.MsgTypeLogon, 1, "98", "0", "108", "30", "554", testPassword,
+				strconv.Itoa(codec.TagSendingTime), tc.time)
+			if logout := p.expect(codec.MsgTypeLogout); logout.Get(codec.TagText) == "" {
+				t.Fatal("rejected Logon Logout has no reason")
+			}
+			p.expectClosed()
+		})
+	}
+}
+
+func TestInvalidApplicationSendingTime(t *testing.T) {
+	t.Run("stale disconnects", func(t *testing.T) {
+		p := newPeerConfigured(t, func(s *Session) { s.MaxLatency = 30 * time.Millisecond })
+		p.logon()
+		p.sendSeq("D", 2, strconv.Itoa(codec.TagClOrdID), "O1",
+			strconv.Itoa(codec.TagSendingTime), fixTime(time.Now().Add(-2*time.Minute)))
+		reject := p.expect(codec.MsgTypeReject)
+		if reject.Get(codec.TagSessionRejectReason) != codec.RejectSendingTimeAccuracy {
+			t.Fatalf("Reject 373=%q, want %s", reject.Get(codec.TagSessionRejectReason), codec.RejectSendingTimeAccuracy)
+		}
+		p.expect(codec.MsgTypeLogout)
+		p.expectClosed()
+		if got := p.h.appCount(); got != 0 {
+			t.Fatalf("stale application message reached handler; count=%d", got)
+		}
+	})
+
+	t.Run("malformed gets format reject", func(t *testing.T) {
+		p := newPeerConfigured(t, func(s *Session) { s.MaxLatency = time.Second })
+		p.logon()
+		p.sendSeq("D", 2, strconv.Itoa(codec.TagClOrdID), "O1", strconv.Itoa(codec.TagSendingTime), "not-a-time")
+		reject := p.expect(codec.MsgTypeReject)
+		if reject.Get(codec.TagSessionRejectReason) != codec.RejectIncorrectDataFormat {
+			t.Fatalf("Reject 373=%q, want %s", reject.Get(codec.TagSessionRejectReason), codec.RejectIncorrectDataFormat)
+		}
+		if p.sess.State() != StateLoggedOn {
+			t.Fatalf("malformed SendingTime disconnected session: %s", p.sess.State())
+		}
+	})
+}
+
+func TestInToleranceApplicationSendingTimeAccepted(t *testing.T) {
+	p := newPeerConfigured(t, func(s *Session) { s.MaxLatency = time.Second })
+	p.logon()
+	p.sendSeq("D", 2, strconv.Itoa(codec.TagClOrdID), "O1",
+		strconv.Itoa(codec.TagSendingTime), fixTime(time.Now().Add(-100*time.Millisecond)))
+	waitFor(t, "in-tolerance application message", func() bool { return p.h.appCount() == 1 })
 }
 
 func TestBodyLengthLimitBeforeAndAfterLogon(t *testing.T) {
