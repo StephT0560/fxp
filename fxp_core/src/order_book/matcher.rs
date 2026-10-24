@@ -30,15 +30,15 @@ impl OrderBook {
             match (best_bid, best_ask) {
                 (Some(bid_price), Some(ask_price)) if bid_price >= ask_price => {
                     let bid_orders = self.buy_orders.get_mut(&bid_price).unwrap();
-                    let mut bid = match bid_orders.pop() {
+                    let mut bid = match bid_orders.pop_front() {
                         Some(o) => o,
                         None    => break,
                     };
                     let ask_orders = self.sell_orders.get_mut(&ask_price).unwrap();
-                    let mut ask = match ask_orders.pop() {
+                    let mut ask = match ask_orders.pop_front() {
                         Some(o) => o,
                         None    => {
-                            self.buy_orders.get_mut(&bid_price).unwrap().push(bid);
+                            self.buy_orders.get_mut(&bid_price).unwrap().push_front(bid);
                             break;
                         }
                     };
@@ -68,9 +68,9 @@ impl OrderBook {
                     });
 
                     if buy_done  { if bid_orders.is_empty() { self.buy_orders.remove(&bid_price);  } }
-                    else         { bid_orders.push(bid); }
+                    else         { bid_orders.push_front(bid); }
                     if sell_done { if ask_orders.is_empty() { self.sell_orders.remove(&ask_price); } }
-                    else         { ask_orders.push(ask); }
+                    else         { ask_orders.push_front(ask); }
                 }
                 _ => break,
             }
@@ -226,7 +226,7 @@ impl OrderBook {
         let mut filled = 0u32;
 
         while !resting.is_empty() && filled < want {
-            let top = resting.last_mut().unwrap();
+            let top = resting.front_mut().unwrap();
             let trade_qty = top.quantity.min(want - filled);
             top.quantity -= trade_qty;
             filled       += trade_qty;
@@ -256,7 +256,7 @@ impl OrderBook {
                 }],
             });
 
-            if resting_done { resting.pop(); }
+            if resting_done { resting.pop_front(); }
         }
 
         // Remove empty price level

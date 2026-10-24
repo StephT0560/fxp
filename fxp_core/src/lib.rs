@@ -456,3 +456,139 @@ fn test_drain_no_triggers_when_price_unchanged() {
     assert_eq!(triggered.len(), 0);
     assert_eq!(stop_book.len(), 2, "Both stops should remain");
 }
+// ── Critical-fix regression tests (ANALYSIS.md §2.7) ──────────────────────────
+
+#[cfg(test)]
+mod critical_tests {
+    use crate::order_book::order::{OrderSide, OrderType, TimeInForce};
+    use super::test_helpers::*;
+
+    // #1 — P01: FIFO within a price level on the aggressive path.
+    #[test]
+    fn p01_time_priority_fifo_within_level() {
+        let mut book = make_book();
+        book.add_order(make_order("S-FIRST",  OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("S-SECOND", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let r = book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(r.fills[0].sell_order_id, "S-FIRST");
+    }
+
+    // #1 — P02: FIFO within a price level on the passive match_orders path.
+    #[test]
+    fn p02_time_priority_passive_match() {
+        let mut book = make_book();
+        book.add_order(make_order("B-FIRST",  OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("B-SECOND", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("S",        OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let (fills, _) = book.match_orders();
+        assert_eq!(fills[0].buy_order_id, "B-FIRST");
+    }
+
+    // #1 — a partially filled order keeps its place at the front of the queue.
+    #[test]
+    fn partial_fill_keeps_front_of_queue() {
+        let mut book = make_book();
+        book.add_order(make_order("S-FIRST",  OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("S-SECOND", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let r1 = book.process_aggressive(make_order("B1", OrderSide::Buy, 100_00, 4, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(r1.fills[0].sell_order_id, "S-FIRST");
+        let r2 = book.process_aggressive(make_order("B2", OrderSide::Buy, 100_00, 8, OrderType::Limit, TimeInForce::IOC));
+        assert_eq!(r2.fills.len(), 2);
+        assert_eq!((r2.fills[0].sell_order_id.as_str(), r2.fills[0].trade_quantity), ("S-FIRST", 6));
+        assert_eq!((r2.fills[1].sell_order_id.as_str(), r2.fills[1].trade_quantity), ("S-SECOND", 2));
+    }
+
+    // ── Reference model: price-time priority with a flat Vec ──────────────────
+
+    #[derive(Clone)]
+    struct RefOrder { id: String, side: OrderSide, price: i64, qty: u32, seq: u64 }
+
+    #[derive(Default)]
+    struct RefBook { orders: Vec<RefOrder>, seq: u64 }
+
+    type RefFill = (String, String, i64, u32); // (buy_id, sell_id, price, qty)
+
+    impl RefBook {
+        /// Match an incoming order against the opposite side: best price first,
+        /// then earliest arrival. `passive_rest` = true models Day/GTC limits
+        /// (remainder rests; trade price = ask price, mirroring match_orders).
+        fn submit(&mut self, id: &str, side: OrderSide, price: i64, mut qty: u32, passive_rest: bool) -> Vec<RefFill> {
+            let mut fills = Vec::new();
+            while qty > 0 {
+                let best = self.orders.iter().enumerate()
+                    .filter(|(_, o)| o.side != side && match side {
+                        OrderSide::Buy  => o.price <= price,
+                        OrderSide::Sell => o.price >= price,
+                    })
+                    .min_by_key(|(_, o)| (match side { OrderSide::Buy => o.price, OrderSide::Sell => -o.price }, o.seq))
+                    .map(|(i, _)| i);
+                let Some(i) = best else { break };
+                let q = qty.min(self.orders[i].qty);
+                let resting = self.orders[i].clone();
+                let px = if passive_rest {
+                    match side { OrderSide::Buy => resting.price, OrderSide::Sell => price }
+                } else { resting.price };
+                fills.push(match side {
+                    OrderSide::Buy  => (id.to_string(), resting.id.clone(), px, q),
+                    OrderSide::Sell => (resting.id.clone(), id.to_string(), px, q),
+                });
+                qty -= q;
+                self.orders[i].qty -= q;
+                if self.orders[i].qty == 0 { self.orders.remove(i); }
+            }
+            if passive_rest && qty > 0 {
+                self.seq += 1;
+                self.orders.push(RefOrder { id: id.to_string(), side, price, qty, seq: self.seq });
+            }
+            fills
+        }
+
+        fn cancel(&mut self, id: &str) {
+            self.orders.retain(|o| o.id != id);
+        }
+    }
+
+    fn xorshift(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        *state = x;
+        x
+    }
+
+    #[test]
+    fn property_matches_reference_model() {
+        for seed in 1..=300u64 {
+            let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            let mut book = make_book();
+            let mut model = RefBook::default();
+            let mut ids: Vec<String> = Vec::new();
+
+            for step in 0..200 {
+                let roll = xorshift(&mut rng) % 10;
+                if roll < 2 && !ids.is_empty() {
+                    let id = ids[(xorshift(&mut rng) as usize) % ids.len()].clone();
+                    let _ = book.cancel_order(&id);
+                    model.cancel(&id);
+                    continue;
+                }
+                let id    = format!("O{}-{}", seed, step);
+                let side  = if xorshift(&mut rng) % 2 == 0 { OrderSide::Buy } else { OrderSide::Sell };
+                let price = 98_00 + (xorshift(&mut rng) % 5) as i64 * 1_00;
+                let qty   = 1 + (xorshift(&mut rng) % 20) as u32;
+                let ioc   = roll >= 8;
+
+                let engine_fills: Vec<RefFill> = if ioc {
+                    let r = book.process_aggressive(make_order(&id, side, price, qty, OrderType::Limit, TimeInForce::IOC));
+                    r.fills.into_iter().map(|f| (f.buy_order_id, f.sell_order_id, f.trade_price, f.trade_quantity)).collect()
+                } else {
+                    book.add_order(make_order(&id, side, price, qty, OrderType::Limit, TimeInForce::GTC));
+                    ids.push(id.clone());
+                    let (fills, _) = book.match_orders();
+                    fills.into_iter().map(|f| (f.buy_order_id, f.sell_order_id, f.trade_price, f.trade_quantity)).collect()
+                };
+                let model_fills = model.submit(&id, side, price, qty, !ioc);
+                assert_eq!(engine_fills, model_fills, "seed {} step {} order {}", seed, step, id);
+            }
+        }
+    }
+}
