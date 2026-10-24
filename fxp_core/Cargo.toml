@@ -25,6 +25,5 @@ path = "src/lib.rs"
 
 [[bench]]
 name = "encoding_benchmark"
-path = "src/benches/encoding_benchmark.rs"
 harness = false
 

@@ -287,13 +287,13 @@ fxp/
 │   ├── src/
 │   │   ├── server.rs            TCP server, per-symbol dispatch, stop trigger logic
 │   │   ├── lib.rs               Unit tests (52 tests)
-│   │   ├── benches/
-│   │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   │   └── order_book/
 │   │       ├── order.rs         Order struct, OrderType, TimeInForce enums
 │   │       ├── order_book.rs    BTreeMap price-time priority book
 │   │       ├── matcher.rs       Aggressive matching: Market/IOC/FOK/Stop
 │   │       └── execution_report.rs
+│   ├── benches/
+│   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   └── proto/
 │       └── fxp.proto            Protocol schema v2.0
 │

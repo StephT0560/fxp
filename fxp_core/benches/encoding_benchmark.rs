@@ -113,6 +113,8 @@ fn make_fxp_execution_report() -> fxp::FxpMessage {
             client_order_id:   String::new(),
             orig_order_id:     String::new(),
             reject_reason:     String::new(),
+            side:              fxp::OrderSide::Buy as i32,
+            order_quantity:    QUANTITY,
         })),
     }
 }
