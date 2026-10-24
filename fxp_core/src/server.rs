@@ -2904,10 +2904,10 @@ mod shutdown_tests {
 
         let queued_sender = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                if let Some(sender) = router.get_existing("SHUTDOWN-DRAIN").await {
-                    if sender.capacity() == sender.max_capacity() - ORDER_COUNT {
-                        break sender;
-                    }
+                if let Some(sender) = router.get_existing("SHUTDOWN-DRAIN").await
+                    && sender.capacity() == sender.max_capacity() - ORDER_COUNT
+                {
+                    break sender;
                 }
                 tokio::task::yield_now().await;
             }
