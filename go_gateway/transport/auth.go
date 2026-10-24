@@ -7,7 +7,10 @@ package transport
 // Design:
 //   - Every connection must send a Logon message as its FIRST message.
 //   - The Logon.token field must be a valid HS256-signed JWT.
-//   - Required JWT claims: sub (trader ID), exp (expiry), iat (issued at).
+//   - The header alg must be HS256; an optional kid selects the current or
+//     previous key (key rotation).
+//   - Required JWT claims: sub (trader ID), exp, iat, iss and aud; nbf is
+//     checked when present; jti is required when the replay cache is on.
 //   - On success: server sends LogonAck{accepted: true} and marks the session active.
 //   - On failure: server sends LogonAck{accepted: false, reject_reason: ...} and closes.
 //   - Any non-Logon message received before authentication is rejected with
@@ -19,6 +22,7 @@ package transport
 //     Manager, etc.) — never hardcoded or committed to the repo.
 
 import (
+	"container/heap"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -68,10 +72,111 @@ func invalidateSession(sessionID string) {
 
 // ── JWT validation ────────────────────────────────────────────────────────────
 
+// Dev defaults for the issuer and audience the gateway accepts. Production
+// deployments set FXP_JWT_ISSUER / FXP_JWT_AUDIENCE to their identity
+// provider's values; the bridge and test clients mint with the same env vars.
+const (
+	DefaultJWTIssuer   = "fxp-dev"
+	DefaultJWTAudience = "fxp-gateway"
+)
+
+type jwtHeader struct {
+	Alg string `json:"alg"`
+	Kid string `json:"kid"`
+}
+
 type jwtClaims struct {
-	Sub string `json:"sub"` // trader ID
-	Exp int64  `json:"exp"` // unix expiry
-	Iat int64  `json:"iat"` // unix issued-at
+	Sub string      `json:"sub"` // trader ID
+	Exp int64       `json:"exp"` // unix expiry
+	Iat int64       `json:"iat"` // unix issued-at
+	Nbf int64       `json:"nbf"` // unix not-before (optional)
+	Iss string      `json:"iss"`
+	Aud jwtAudience `json:"aud"`
+	Jti string      `json:"jti"` // token ID (required when the replay cache is on)
+}
+
+// jwtAudience accepts both forms RFC 7519 allows: a string or an array.
+type jwtAudience []string
+
+func (a *jwtAudience) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*a = jwtAudience{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return fmt.Errorf("aud must be a string or an array of strings")
+	}
+	*a = many
+	return nil
+}
+
+func (a jwtAudience) contains(want string) bool {
+	for _, v := range a {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// jwtConfig is read from the environment on every validation so rotations
+// and tests take effect without a restart.
+type jwtConfig struct {
+	currentKid string
+	keys       map[string][]byte // kid → HS256 secret; "" is the current key
+	issuer     string
+	audience   string
+	leeway     int64 // seconds of clock skew tolerated on nbf
+	replay     bool
+}
+
+// loadJWTConfig reads:
+//
+//	FXP_JWT_SECRET            current HS256 key (required)
+//	FXP_JWT_KID               kid of the current key (optional)
+//	FXP_JWT_PREVIOUS_KID      kid of the previous key, still accepted during rotation
+//	FXP_JWT_PREVIOUS_SECRET   previous key (set together with FXP_JWT_PREVIOUS_KID)
+//	FXP_JWT_ISSUER            required iss (default fxp-dev)
+//	FXP_JWT_AUDIENCE          required aud (default fxp-gateway)
+//	FXP_JWT_LEEWAY_SEC        nbf clock-skew leeway (default 30)
+//	FXP_JWT_REPLAY_CACHE      "on" rejects a reused jti until it expires (default off)
+func loadJWTConfig() jwtConfig {
+	cfg := jwtConfig{
+		currentKid: os.Getenv("FXP_JWT_KID"),
+		keys:       map[string][]byte{"": jwtSecret()},
+		issuer:     envOr("FXP_JWT_ISSUER", DefaultJWTIssuer),
+		audience:   envOr("FXP_JWT_AUDIENCE", DefaultJWTAudience),
+		leeway:     int64(envInt("FXP_JWT_LEEWAY_SEC", 30)),
+		replay:     envBool("FXP_JWT_REPLAY_CACHE"),
+	}
+	if cfg.currentKid != "" {
+		cfg.keys[cfg.currentKid] = cfg.keys[""]
+	}
+	pk, ps := os.Getenv("FXP_JWT_PREVIOUS_KID"), os.Getenv("FXP_JWT_PREVIOUS_SECRET")
+	switch {
+	case pk != "" && ps != "" && pk != cfg.currentKid:
+		cfg.keys[pk] = []byte(ps)
+	case pk != "" || ps != "":
+		log.Printf("⚠️ ignoring FXP_JWT_PREVIOUS_KID/FXP_JWT_PREVIOUS_SECRET: both must be set and the kid must differ from FXP_JWT_KID")
+	}
+	return cfg
+}
+
+func envOr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
+func envBool(name string) bool {
+	switch strings.ToLower(os.Getenv(name)) {
+	case "1", "on", "true", "yes":
+		return true
+	}
+	return false
 }
 
 // jwtSecret returns the HS256 signing secret from the environment.
@@ -86,17 +191,36 @@ func jwtSecret() []byte {
 }
 
 // validateJWT verifies an HS256 JWT and returns the claims if valid.
-// Returns an error for any of: malformed token, bad signature, expired token,
-// missing required claims.
+// The header must declare alg HS256 (none and every other algorithm are
+// rejected before the MAC is checked) and, if it carries a kid, name a
+// configured key. The claims must carry sub, exp, iat and the configured
+// iss and aud; nbf is honoured with a small leeway.
 func validateJWT(token string) (*jwtClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("malformed JWT: expected 3 parts, got %d", len(parts))
 	}
+	cfg := loadJWTConfig()
+
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("JWT header decode failed: %w", err)
+	}
+	var hdr jwtHeader
+	if err := json.Unmarshal(headerBytes, &hdr); err != nil {
+		return nil, fmt.Errorf("JWT header unmarshal failed: %w", err)
+	}
+	if hdr.Alg != "HS256" {
+		return nil, fmt.Errorf("JWT alg %q not allowed: only HS256 is accepted", hdr.Alg)
+	}
+	key, ok := cfg.keys[hdr.Kid]
+	if !ok {
+		return nil, fmt.Errorf("JWT kid %q is not a configured key", hdr.Kid)
+	}
 
 	// Verify signature: HMAC-SHA256(base64url(header) + "." + base64url(payload))
 	signingInput := parts[0] + "." + parts[1]
-	mac := hmac.New(sha256.New, jwtSecret())
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(signingInput))
 	expectedSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
@@ -125,11 +249,88 @@ func validateJWT(token string) (*jwtClaims, error) {
 	if claims.Iat == 0 {
 		return nil, fmt.Errorf("JWT missing required claim: iat")
 	}
-	if time.Now().Unix() > claims.Exp {
+	if claims.Iss != cfg.issuer {
+		return nil, fmt.Errorf("JWT iss %q does not match the configured issuer", claims.Iss)
+	}
+	if !claims.Aud.contains(cfg.audience) {
+		return nil, fmt.Errorf("JWT aud %q does not include the configured audience", []string(claims.Aud))
+	}
+	now := time.Now().Unix()
+	if now > claims.Exp {
 		return nil, fmt.Errorf("JWT expired at %d", claims.Exp)
+	}
+	if claims.Nbf != 0 && now+cfg.leeway < claims.Nbf {
+		return nil, fmt.Errorf("JWT not valid before %d (nbf)", claims.Nbf)
+	}
+	if cfg.replay {
+		if claims.Jti == "" {
+			return nil, fmt.Errorf("JWT missing required claim: jti (replay cache is on)")
+		}
+		if !replayCache.firstUse(jtiKey{claims.Iss, hdr.Kid, claims.Jti}, claims.Exp, now) {
+			return nil, fmt.Errorf("JWT replay: jti %q was already used", claims.Jti)
+		}
 	}
 
 	return &claims, nil
+}
+
+// jtiCache remembers token IDs until their tokens expire. seen gives O(1)
+// duplicate checks; byExp is a min-heap on exp so pruning only touches
+// entries that have actually expired.
+type jtiCache struct {
+	mu    sync.Mutex
+	seen  map[jtiKey]int64 // → exp
+	byExp jtiHeap
+}
+
+// jtiKey scopes a jti to its issuer and signing key: RFC 7519 only requires
+// jti to be unique per issuer, and tokens under different keys are different
+// tokens. A struct (not a joined string) so no jti can collide across fields.
+type jtiKey struct{ iss, kid, jti string }
+
+type jtiEntry struct {
+	key jtiKey
+	exp int64
+}
+
+type jtiHeap []jtiEntry
+
+func (h jtiHeap) Len() int           { return len(h) }
+func (h jtiHeap) Less(i, j int) bool { return h[i].exp < h[j].exp }
+func (h jtiHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *jtiHeap) Push(x any)        { *h = append(*h, x.(jtiEntry)) }
+func (h *jtiHeap) Pop() any {
+	old := *h
+	e := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return e
+}
+
+var replayCache = &jtiCache{seen: map[jtiKey]int64{}}
+
+func resetReplayCache() {
+	replayCache.mu.Lock()
+	replayCache.seen = map[jtiKey]int64{}
+	replayCache.byExp = nil
+	replayCache.mu.Unlock()
+}
+
+// firstUse records key and reports whether it had not been seen before.
+func (c *jtiCache) firstUse(key jtiKey, exp, now int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.byExp.Len() > 0 && c.byExp[0].exp < now {
+		e := heap.Pop(&c.byExp).(jtiEntry)
+		if c.seen[e.key] == e.exp {
+			delete(c.seen, e.key)
+		}
+	}
+	if _, dup := c.seen[key]; dup {
+		return false
+	}
+	c.seen[key] = exp
+	heap.Push(&c.byExp, jtiEntry{key, exp})
+	return true
 }
 
 // ── Logon handling ────────────────────────────────────────────────────────────

@@ -241,6 +241,25 @@ and a `seqnums` file replaced atomically on every change.
 A second Logon for a session that is already logged on is rejected. Session
 schedules / daily reset are not implemented; use `ResetSeqNumFlag=Y` (141=Y).
 
+### Gateway authentication
+
+Clients log on with an HS256 JWT. The header `alg` must be `HS256`
+(`none` and every other algorithm are rejected before the MAC is checked);
+the claims must carry `sub`, `exp`, `iat`, the configured `iss` and `aud`;
+`nbf` is honoured with a small leeway. The bridge, `devjwt`, the benchmark and
+the simulation read the same variables when minting.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FXP_JWT_SECRET` | (required) | Current HS256 key |
+| `FXP_JWT_KID` | unset | `kid` of the current key; tokens without `kid` always use the current key |
+| `FXP_JWT_PREVIOUS_KID` / `FXP_JWT_PREVIOUS_SECRET` | unset | Previous key, still accepted for tokens carrying this `kid` during a rotation |
+| `FXP_JWT_ISSUER` | `fxp-dev` | Required `iss` |
+| `FXP_JWT_AUDIENCE` | `fxp-gateway` | Required `aud` (string or array) |
+| `FXP_JWT_LEEWAY_SEC` | `30` | Clock-skew leeway on `nbf` |
+| `FXP_JWT_REPLAY_CACHE` | off | `on`: require `jti` and reject a reused `jti` until its token expires (per gateway process) |
+| `FXP_GW_WS_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to open the WebSocket. Same-origin requests and clients sending no `Origin` header are always allowed; any other origin gets 403 |
+
 ## Tests
 
 Counts observed at this revision:

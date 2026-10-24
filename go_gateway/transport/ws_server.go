@@ -5,6 +5,9 @@ package transport
 import (
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"go_gateway/protobuf"
@@ -12,15 +15,33 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// CheckOrigin should be tightened in production to an allowlist of known origins.
-// For local dev the wildcard is acceptable; remove it before any external deployment.
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// TODO: replace with origin allowlist, e.g.:
-		// allowed := map[string]bool{"https://yourdomain.com": true}
-		// return allowed[r.Header.Get("Origin")]
+var upgrader = websocket.Upgrader{CheckOrigin: checkOrigin}
+
+// checkOrigin admits a WebSocket handshake when it has no Origin header
+// (non-browser clients), is same-origin (Origin scheme and host equal the
+// request's), or its Origin is listed in FXP_GW_WS_ALLOWED_ORIGINS
+// (comma-separated, e.g. "https://trader.example,http://ops.example:8443").
+// Every other browser origin is rejected with 403.
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
 		return true
-	},
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		log.Printf("⛔ WebSocket handshake with malformed Origin %q rejected", origin)
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) && strings.EqualFold(u.Scheme, requestScheme(r)) {
+		return true
+	}
+	for _, allowed := range strings.Split(os.Getenv("FXP_GW_WS_ALLOWED_ORIGINS"), ",") {
+		if a := strings.TrimSpace(allowed); a != "" && strings.EqualFold(strings.TrimSuffix(a, "/"), origin) {
+			return true
+		}
+	}
+	log.Printf("⛔ WebSocket handshake from origin %q rejected (not same-origin, not in FXP_GW_WS_ALLOWED_ORIGINS)", origin)
+	return false
 }
 
 func StartWebSocketServer() {
@@ -90,4 +111,17 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			_ = conn.SetReadDeadline(time.Time{})
 		}
 	}
+}
+
+// requestScheme is the scheme the browser used to reach the gateway: https if
+// TLS terminated here, otherwise the first X-Forwarded-Proto hop set by a
+// TLS-terminating proxy, otherwise http.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
+		return strings.TrimSpace(strings.Split(xfp, ",")[0])
+	}
+	return "http"
 }

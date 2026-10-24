@@ -31,11 +31,7 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -50,6 +46,7 @@ import (
 	"time"
 
 	"go_gateway/protobuf"
+	"go_gateway/test_clients/devjwt"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -230,27 +227,7 @@ func (s *SimStats) percentile(p float64) time.Duration {
 
 // ── JWT / connection helpers (self-contained) ─────────────────────────────────
 
-func mustJSON(v interface{}) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
-
-func generateJWT(secret, traderID string) string {
-	header := base64.RawURLEncoding.EncodeToString(mustJSON(map[string]string{"alg": "HS256", "typ": "JWT"}))
-	payload := base64.RawURLEncoding.EncodeToString(mustJSON(map[string]interface{}{
-		"sub": traderID,
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-	}))
-	unsigned := header + "." + payload
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(unsigned))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return unsigned + "." + sig
-}
+func generateJWT(secret, traderID string) string { return devjwt.Generate(secret, traderID) }
 
 func connectAndLogon(traderID, sessionID string) (net.Conn, error) {
 	conn, err := net.DialTimeout("tcp", gatewayAddr, 5*time.Second)

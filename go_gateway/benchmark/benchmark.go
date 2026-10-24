@@ -38,14 +38,10 @@ import (
 	"time"
 
 	"go_gateway/protobuf"
+	"go_gateway/test_clients/devjwt"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
-
 	// JWT for auth
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 )
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -88,23 +84,7 @@ func symbolForSender(senderID int) string {
 
 // ── JWT (copied from jwt_helpers.go — standalone binary) ─────────────────────
 
-func generateJWT(secret, traderID string) string {
-	header := base64.RawURLEncoding.EncodeToString(mustJSON(map[string]string{"alg": "HS256", "typ": "JWT"}))
-	payload := base64.RawURLEncoding.EncodeToString(mustJSON(map[string]interface{}{
-		"sub": traderID,
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-	}))
-	sig_input := header + "." + payload
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(sig_input))
-	return sig_input + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-func mustJSON(v interface{}) []byte {
-	b, _ := json.Marshal(v)
-	return b
-}
+func generateJWT(secret, traderID string) string { return devjwt.Generate(secret, traderID) }
 
 // ── Wire helpers ──────────────────────────────────────────────────────────────
 

@@ -144,7 +144,7 @@ func TestInvalidNewOrderIsRejectedWithoutForwarding(t *testing.T) {
 	core, corePeer := net.Pipe()
 	oldPool := corePool
 	corePool = make(chan *pooledConn, 1)
-	corePool <- &pooledConn{conn: core}
+	corePool <- newPooledConnWith(0, core)
 	t.Cleanup(func() {
 		corePool = oldPool
 		core.Close()

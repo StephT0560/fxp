@@ -20,15 +20,18 @@ package gateway
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,10 +91,25 @@ func NewClient(traderID, jwtSecret string, onReceive OnReceive) *Client {
 	}
 }
 
+// dialGateway opens the gateway connection with Nagle disabled. Go already
+// defaults TCP_NODELAY to on; it is set explicitly so the latency contract is
+// visible and covered by TestDialGatewaySetsNoDelay.
+func dialGateway(addr string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.(*net.TCPConn).SetNoDelay(true); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
 // Connect dials the gateway, sends the Logon frame, and starts the read/write loops.
 // Blocks until the connection is closed.
 func (c *Client) Connect() error {
-	conn, err := net.DialTimeout("tcp", gatewayAddr, 5*time.Second)
+	conn, err := dialGateway(gatewayAddr)
 	if err != nil {
 		return fmt.Errorf("dial gateway %s: %w", gatewayAddr, err)
 	}
@@ -321,15 +339,33 @@ func mustJSON(v interface{}) []byte {
 	return b
 }
 
+// Defaults match the gateway's dev defaults (transport.DefaultJWTIssuer /
+// DefaultJWTAudience); set FXP_JWT_ISSUER / FXP_JWT_AUDIENCE / FXP_JWT_KID to
+// the same values on the bridge and the gateway.
+const (
+	defaultJWTIssuer   = "fxp-dev"
+	defaultJWTAudience = "fxp-gateway"
+)
+
+// generateJWT mints the HS256 token the bridge logs on to the gateway with:
+// sub is the FIX SenderCompID; iss, aud and the optional kid header come from
+// the environment; every token carries a fresh jti and nbf = iat.
 func generateJWT(secret, traderID string) string {
-	header := base64.RawURLEncoding.EncodeToString(
-		mustJSON(map[string]string{"alg": "HS256", "typ": "JWT"}),
-	)
+	head := map[string]string{"alg": "HS256", "typ": "JWT"}
+	if kid := os.Getenv("FXP_JWT_KID"); kid != "" {
+		head["kid"] = kid
+	}
+	now := time.Now()
+	header := base64.RawURLEncoding.EncodeToString(mustJSON(head))
 	payload := base64.RawURLEncoding.EncodeToString(
 		mustJSON(map[string]interface{}{
 			"sub": traderID,
-			"iat": time.Now().Unix(),
-			"exp": time.Now().Add(24 * time.Hour).Unix(),
+			"iss": envOr("FXP_JWT_ISSUER", defaultJWTIssuer),
+			"aud": envOr("FXP_JWT_AUDIENCE", defaultJWTAudience),
+			"jti": newJTI(),
+			"iat": now.Unix(),
+			"nbf": now.Unix(),
+			"exp": now.Add(24 * time.Hour).Unix(),
 		}),
 	)
 	unsigned := header + "." + payload
@@ -337,4 +373,19 @@ func generateJWT(secret, traderID string) string {
 	mac.Write([]byte(unsigned))
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return unsigned + "." + sig
+}
+
+func envOr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
+func newJTI() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("jwt jti: %v", err))
+	}
+	return hex.EncodeToString(b)
 }
