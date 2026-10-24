@@ -188,7 +188,10 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
         match msg {
             SymbolMsg::Subscribe(sub) => {
                 let _ = sub.tx.send(snapshot_frame(&book)).await;
-                subscribers.push(sub.tx);
+                // A repeated subscription gets a fresh snapshot but no second stream.
+                if !subscribers.iter().any(|tx| tx.same_channel(&sub.tx)) {
+                    subscribers.push(sub.tx);
+                }
                 println!("✅ Client subscribed to {}", symbol);
             }
 
@@ -941,6 +944,9 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
     // When the client leaves, drop its receiver so reports for its resting
     // orders fail fast instead of filling a channel nobody drains.
     let _writer = AbortOnDrop(writer);
+    // One market-data channel per symbol for this connection, so subscribing
+    // to a symbol again does not stream each update twice.
+    let mut md_channels: HashMap<String, mpsc::Sender<Vec<u8>>> = HashMap::new();
 
     // Read loop: dispatches frames to symbol tasks, never blocks on processing.
     loop {
@@ -1015,23 +1021,28 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     println!("📡 MarketDataRequest for {:?}", request.symbols);
                     for symbol in &request.symbols {
-                        // Per-subscriber market data channel
-                        let (md_tx, mut md_rx) = mpsc::channel::<Vec<u8>>(256);
+                        let md_tx = match md_channels.get(symbol) {
+                            Some(tx) if !tx.is_closed() => tx.clone(),
+                            _ => {
+                                let (md_tx, mut md_rx) = mpsc::channel::<Vec<u8>>(256);
+                                // Forward market data frames into the connection's output channel.
+                                // No lock needed — output_tx is just an mpsc sender clone.
+                                let out = output_tx.clone();
+                                tokio::spawn(async move {
+                                    while let Some(frame) = md_rx.recv().await {
+                                        if out.send(frame).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                });
+                                md_channels.insert(symbol.clone(), md_tx.clone());
+                                md_tx
+                            }
+                        };
                         let sym_tx = router.get_or_create(symbol).await;
                         let _ = sym_tx
                             .send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx }))
                             .await;
-
-                        // Forward market data frames into the connection's output channel.
-                        // No lock needed — output_tx is just an mpsc sender clone.
-                        let out = output_tx.clone();
-                        tokio::spawn(async move {
-                            while let Some(frame) = md_rx.recv().await {
-                                if out.send(frame).await.is_err() {
-                                    break;
-                                }
-                            }
-                        });
                     }
                     println!("🧼 Subscription setup complete — continuing to accept orders.");
                 }
@@ -1095,6 +1106,37 @@ mod report_tests {
 
     fn conn() -> (OutputTx, Rx) {
         mpsc::channel(64)
+    }
+
+    #[tokio::test]
+    async fn resubscribing_one_channel_streams_market_data_once() {
+        let book = spawn_book();
+        let (md_tx, mut md_rx) = conn();
+        for _ in 0..2 {
+            book.send(SymbolMsg::Subscribe(SubscribeMsg { tx: md_tx.clone() }))
+                .await
+                .unwrap();
+        }
+        let (a, mut a_rx) = conn();
+        send_order(&book, nos("B1", "A", BUY, 100_00, 5, LIMIT, GTC), &a).await;
+        next(&mut a_rx).await;
+        let mut kinds = Vec::new();
+        while let Ok(Some(frame)) =
+            tokio::time::timeout(Duration::from_millis(200), md_rx.recv()).await
+        {
+            kinds.push(
+                match fxp::FxpMessage::decode(&frame[4..]).unwrap().payload {
+                    Some(fxp::fxp_message::Payload::MarketDataSnapshot(_)) => "W",
+                    Some(fxp::fxp_message::Payload::MarketDataIncremental(_)) => "X",
+                    _ => "?",
+                },
+            );
+        }
+        assert_eq!(
+            kinds,
+            ["W", "W", "X"],
+            "one snapshot per request, one stream"
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
