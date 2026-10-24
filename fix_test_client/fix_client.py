@@ -53,7 +53,8 @@ def build_message(msg_type, sender, target, seq_num, fields):
     ] + fields
 
     body = ''.join(f'{tag}={val}{SOH}' for tag, val in body_fields)
-    body_len = len(body) + 7  # tag 10 is always "10=XXX\x01" = 7 bytes
+    # BodyLength = bytes after the SOH ending tag 9, up to and including the SOH before tag 10
+    body_len = len(body.encode())
     prefix = f'8=FIX.4.4{SOH}9={body_len}{SOH}'
     full = prefix + body
     checksum = sum(ord(c) for c in full) % 256
@@ -104,6 +105,19 @@ def read_message(sock):
             return None
         buf += chunk
         remaining -= len(chunk)
+
+    # BodyLength stops before tag 10 — read the trailing "10=XXX\x01" field
+    if not buf.endswith(b'\x01'):
+        return None
+    trailer = b''
+    while not trailer.endswith(b'\x01'):
+        chunk = sock.recv(1)
+        if not chunk:
+            return None
+        trailer += chunk
+    if not trailer.startswith(b'10='):
+        return None
+    buf += trailer
 
     return parse_message(buf)
 

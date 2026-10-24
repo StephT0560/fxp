@@ -102,9 +102,6 @@ func (b *Builder) Build() []byte {
 	}
 	bodyStr := body.String()
 
-	// BodyLength = len("9=<N>\x01") + len(body) + len("10=XXX\x01")
-	// where N is the BodyLength value itself. Since N can be 1-6 digits,
-	// we compute iteratively (usually converges in 1 pass).
 	bodyLen := computeBodyLength(bodyStr)
 
 	// Serialise tag 8 and tag 9
@@ -122,14 +119,11 @@ func (b *Builder) Build() []byte {
 	return []byte(frame)
 }
 
-// computeBodyLength calculates the BodyLength value.
-// BodyLength = bytes from after tag 9's SOH up to and including tag 10's SOH.
-// = len(body) + len("10=XXX\x01") where XXX is a 3-digit checksum.
-// The tag 9 field itself ("9=N\x01") is NOT included in BodyLength.
+// computeBodyLength calculates the BodyLength value: the byte count from
+// after the SOH that ends tag 9 up to and including the SOH before tag 10,
+// i.e. exactly the serialised body fields (tags 35..last).
 func computeBodyLength(bodyStr string) int {
-	// "10=XXX\x01" is always 7 bytes (tag 10, equals, 3-digit checksum, SOH)
-	const tag10Len = 7 // "10=000\x01"
-	return len(bodyStr) + tag10Len
+	return len(bodyStr)
 }
 
 // formatUTCTime formats a time as FIX SendingTime: YYYYMMDD-HH:MM:SS.sss
