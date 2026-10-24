@@ -101,6 +101,9 @@ func (b *Builder) Build() []byte {
 	// Serialise body fields to compute BodyLength
 	var body strings.Builder
 	for _, f := range b.fields {
+		if f.Value == "" {
+			continue // FIX forbids empty values; an unset field is omitted
+		}
 		body.WriteString(strconv.Itoa(f.Tag))
 		body.WriteByte('=')
 		body.WriteString(f.Value)

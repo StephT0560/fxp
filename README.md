@@ -231,7 +231,7 @@ Counts observed at this revision:
 |---|---:|
 | `fxp_core` (`cargo test`) | 52 unit tests |
 | `go_gateway/transport` (`go test -v`) | 17 top-level tests |
-| `fix_bridge` (`go test -v ./...`) | 47 top-level tests |
+| `fix_bridge` (`go test -v ./...`) | 53 top-level tests |
 | Python FIX E2E client | 11 scenarios, 27 reported checks |
 
 The Gateway count is from its `transport` test package; package-wide `go test` also reports the existing `benchmark.go:479` vet warning.

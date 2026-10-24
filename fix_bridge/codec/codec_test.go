@@ -101,33 +101,133 @@ func TestParserRejectsWrongBodyLength(t *testing.T) {
 	}
 }
 
-func TestParserPreservesReceivedBeginStringAndBodyLength(t *testing.T) {
+func TestParserPreservesReceivedBodyLength(t *testing.T) {
 	body := bodyFromWire(goldenVectors[0].wire)
 	bodyLength := fmt.Sprintf("%03d", len(body))
-	wire := rawWire("FIX.4.2", bodyLength, body)
+	wire := rawWire("FIX.4.4", bodyLength, body)
 
 	msg, err := NewParser(strings.NewReader(wire)).ReadMessage()
 	if err != nil {
-		t.Fatalf("FIX.4.2 message rejected: %v", err)
-	}
-	if got := msg.Get(TagBeginString); got != "FIX.4.2" {
-		t.Fatalf("BeginString = %q, want FIX.4.2", got)
+		t.Fatalf("zero-padded BodyLength rejected: %v", err)
 	}
 	if got := msg.Get(TagBodyLength); got != bodyLength {
 		t.Fatalf("BodyLength = %q, want received value %q", got, bodyLength)
 	}
 }
 
-func TestParserChecksChecksumOverRawFieldBytes(t *testing.T) {
-	body := strings.Replace(bodyFromWire(goldenVectors[1].wire), "35=D", "035=D", 1)
-	wire := rawWire("FIX.4.4", strconv.Itoa(len(body)), body)
-
-	msg, err := NewParser(strings.NewReader(wire)).ReadMessage()
-	if err != nil {
-		t.Fatalf("valid raw checksum rejected: %v", err)
+// Only the exact configured BeginString is accepted. The message is still
+// returned so the session can answer with a Logout.
+func TestParserRejectsOtherBeginString(t *testing.T) {
+	body := bodyFromWire(goldenVectors[0].wire)
+	for _, bs := range []string{"FIX.4.2", "FIX.4.4.1", "FIX.4", "FIXT.1.1"} {
+		t.Run(bs, func(t *testing.T) {
+			p := NewParser(strings.NewReader(rawWire(bs, strconv.Itoa(len(body)), body) + goldenVectors[1].wire))
+			msg, err := p.ReadMessage()
+			if !errors.Is(err, ErrBeginString) {
+				t.Fatalf("ReadMessage error = %v, want ErrBeginString", err)
+			}
+			if msg == nil || msg.Get(TagBeginString) != bs {
+				t.Fatalf("mismatched message not returned with BeginString %q: %+v", bs, msg)
+			}
+			if next, err := p.ReadMessage(); err != nil || next.MsgType() != MsgTypeNewOrderSingle {
+				t.Fatalf("next message after BeginString mismatch: %v", err)
+			}
+		})
 	}
-	if got := msg.MsgType(); got != "D" {
-		t.Fatalf("MsgType = %q, want D", got)
+}
+
+func TestParserSetBeginString(t *testing.T) {
+	body := bodyFromWire(goldenVectors[0].wire)
+	p := NewParser(strings.NewReader(rawWire("FIX.4.2", strconv.Itoa(len(body)), body) + goldenVectors[0].wire))
+	p.SetBeginString("FIX.4.2")
+	if _, err := p.ReadMessage(); err != nil {
+		t.Fatalf("configured FIX.4.2 rejected: %v", err)
+	}
+	if _, err := p.ReadMessage(); !errors.Is(err, ErrBeginString) {
+		t.Fatalf("FIX.4.4 on a FIX.4.2 parser: err = %v, want ErrBeginString", err)
+	}
+}
+
+func TestParserRejectsNonFIXBeginStringAsGarbled(t *testing.T) {
+	body := bodyFromWire(goldenVectors[0].wire)
+	wire := rawWire("XYZ.1.0", strconv.Itoa(len(body)), body)
+	if _, err := NewParser(strings.NewReader(wire)).ReadMessage(); !errors.Is(err, ErrGarbled) {
+		t.Fatalf("ReadMessage error = %v, want ErrGarbled", err)
+	}
+}
+
+func TestParserRejectsEmptyField(t *testing.T) {
+	body := strings.Replace(bodyFromWire(goldenVectors[1].wire), "\x0155=MSFT\x01", "\x0155=MSFT\x01\x01", 1)
+	wire := rawWire("FIX.4.4", strconv.Itoa(len(body)), body)
+	p := NewParser(strings.NewReader(wire + goldenVectors[0].wire))
+	if _, err := p.ReadMessage(); !errors.Is(err, ErrGarbled) {
+		t.Fatalf("empty field (SOH SOH): err = %v, want ErrGarbled", err)
+	}
+	if msg, err := p.ReadMessage(); err != nil || msg.MsgType() != MsgTypeLogon {
+		t.Fatalf("parser did not resync after empty field: %v", err)
+	}
+}
+
+func TestParserRejectsMalformedFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+	}{
+		{"missing equals", "55MSFT"},
+		{"empty tag", "=MSFT"},
+		{"empty value", "55="},
+		{"non-numeric tag", "abc=1"},
+		{"leading zero tag", "055=MSFT"},
+		{"signed tag", "+55=MSFT"},
+		{"negative tag", "-55=MSFT"},
+		{"zero tag", "0=MSFT"},
+		{"space in tag", " 55=MSFT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Replace(bodyFromWire(goldenVectors[1].wire), "55=MSFT", tt.field, 1)
+			wire := rawWire("FIX.4.4", strconv.Itoa(len(body)), body)
+			if _, err := NewParser(strings.NewReader(wire)).ReadMessage(); !errors.Is(err, ErrGarbled) {
+				t.Fatalf("field %q: err = %v, want ErrGarbled", tt.field, err)
+			}
+		})
+	}
+}
+
+func TestParserRejectsMalformedHeaderFields(t *testing.T) {
+	body := bodyFromWire(goldenVectors[0].wire)
+	for name, wire := range map[string]string{
+		"leading zero tag 8": "0" + rawWire("FIX.4.4", strconv.Itoa(len(body)), body),
+		"empty BodyLength":   "8=FIX.4.4\x019=\x01" + body + "10=000\x01",
+		"signed BodyLength":  rawWire("FIX.4.4", "+"+strconv.Itoa(len(body)), body),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewParser(strings.NewReader(wire)).ReadMessage(); !errors.Is(err, ErrGarbled) {
+				t.Fatalf("err = %v, want ErrGarbled", err)
+			}
+		})
+	}
+}
+
+// FIX forbids empty values, so the builder omits unset fields rather than
+// emitting "tag=" that a strict peer (or our own resend path) would reject.
+func TestBuilderOmitsEmptyValues(t *testing.T) {
+	b := NewBuilder(MsgTypeExecutionReport, "FXPBRIDGE", "CLIENT", 1)
+	b.Set(TagClOrdID, "")
+	b.Set(TagSymbol, "MSFT")
+	b.Append(TagText, "")
+	msg, err := NewParser(bytes.NewReader(b.Build())).ReadMessage()
+	if err != nil {
+		t.Fatalf("message with empty Set values does not parse: %v", err)
+	}
+	if _, ok := msg.Fields[TagClOrdID]; ok {
+		t.Fatal("empty ClOrdID emitted")
+	}
+	if _, ok := msg.Fields[TagText]; ok {
+		t.Fatal("empty Text emitted")
+	}
+	if msg.Get(TagSymbol) != "MSFT" {
+		t.Fatal("Symbol lost")
 	}
 }
 
