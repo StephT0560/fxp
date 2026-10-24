@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // FXP End-to-End Benchmark
 //
 // Measures round-trip latency and throughput through the live FXP stack:

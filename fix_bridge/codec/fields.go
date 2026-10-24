@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // fields.go — FIX 4.4 tag constants
 //
 // Only tags used by the bridge are defined here. Tags are grouped by

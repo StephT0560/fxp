@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use crate::order_book::market_data::{MarketDataSnapshot, MarketDataIncrementalUpdate};

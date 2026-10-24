@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // session.go — FIX 4.4 session state machine
 //
 // Manages the lifecycle of a single FIX session:

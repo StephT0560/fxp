@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package transport
 
 // auth.go — JWT token validation and session lifecycle for the FXP gateway.

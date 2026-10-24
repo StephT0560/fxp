@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 pub mod order;
 pub mod order_book;
 pub mod matcher;

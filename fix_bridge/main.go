@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // main.go — FXP FIX Bridge
 //
 // Accepts inbound FIX 4.4 TCP connections and translates them to FXP Protocol,

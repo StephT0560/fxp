@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /// FXP Encoding Benchmark — v2
 ///
 /// ## Methodology

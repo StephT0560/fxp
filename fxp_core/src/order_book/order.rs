@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Order {
     pub order_id:      String,

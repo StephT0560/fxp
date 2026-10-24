@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Builds and starts core -> gateway -> fix_bridge, runs the Python FIX suite,
 # then stops the stack. Exits non-zero if any scenario fails.
 set -euo pipefail

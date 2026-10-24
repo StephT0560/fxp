@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #[derive(Debug, Clone)]
 pub struct ExecutionReport {
     pub buy_order_id: String,

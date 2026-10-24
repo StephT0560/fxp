@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #[derive(Debug)]
 pub struct MarketDataSnapshot {
     pub symbol: String,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package transport
 
 // limits.go — connection hardening knobs (env-configurable) and helpers.

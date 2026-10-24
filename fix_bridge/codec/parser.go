@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // parser.go — FIX 4.4 message parser
 //
 // FIX wire format:

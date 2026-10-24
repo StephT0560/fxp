@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package devjwt mints HS256 JWTs for the local test clients.
 package devjwt
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // fix_to_fxp.go — FIX 4.4 → FXP Protobuf translator
 //
 // Translates inbound FIX application messages into FXP proto messages

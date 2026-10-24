@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // builder.go — FIX 4.4 message builder
 //
 // Constructs outbound FIX messages with correct BodyLength and CheckSum.

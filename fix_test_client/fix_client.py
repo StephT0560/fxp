@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """
 fix_client.py — FIX 4.4 test client for the FXP FIX Bridge
 

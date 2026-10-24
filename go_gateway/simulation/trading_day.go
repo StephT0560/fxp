@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // trading_day.go — FXP Protocol Trading Day Simulation
 //
 // Simulates a realistic institutional trading day with multiple session phases,

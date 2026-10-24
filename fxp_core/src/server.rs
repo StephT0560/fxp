@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // server.rs — FXP Core TCP server with per-symbol dispatch + lock-free writes.
 //
 // Architecture:

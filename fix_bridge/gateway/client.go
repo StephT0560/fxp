@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // client.go — FXP gateway client
 //
 // Manages a single TCP connection from the fix_bridge to the FXP Go gateway.
