@@ -5,7 +5,6 @@ package transport
 import (
 	"encoding/binary"
 	"io"
-	"net"
 	"testing"
 	"time"
 
@@ -48,9 +47,7 @@ func TestBindOwnerStampsSenderAndNamespacesIDs(t *testing.T) {
 // A report is delivered only to the route registered under the owner's
 // namespaced ID, with the namespace stripped.
 func TestRouteFromCoreUsesOwnerNamespace(t *testing.T) {
-	victimSrv, victimCli := net.Pipe()
-	defer victimSrv.Close()
-	defer victimCli.Close()
+	victimSrv, victimCli := routedPipes(t)
 
 	orderClientMap.Store("VICTIM::ORD-1", orderRoute{conn: victimSrv, owner: "VICTIM"})
 	defer orderClientMap.Delete("VICTIM::ORD-1")

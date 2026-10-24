@@ -54,6 +54,8 @@ func serveTCP(listener net.Listener) {
 
 func handleTCPClient(clientConn net.Conn) {
 	defer clientConn.Close()
+	registerClientWriter(clientConn)
+	defer unregisterClientWriter(clientConn)
 	lim := currentLimits()
 	sessionID := ""
 	defer func() {

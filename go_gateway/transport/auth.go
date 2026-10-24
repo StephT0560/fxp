@@ -26,18 +26,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"strings"
 	"time"
 
 	"go_gateway/protobuf"
 
-	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -407,21 +404,8 @@ func sendLogonAck(conn any, accepted bool, reason string) {
 		},
 	}
 
-	raw, err := proto.Marshal(ack)
-	if err != nil {
-		log.Printf("❌ Failed to encode LogonAck: %v", err)
-		return
-	}
-
-	frame := make([]byte, 4+len(raw))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
-	copy(frame[4:], raw)
-
-	switch c := conn.(type) {
-	case net.Conn:
-		_, _ = c.Write(frame)
-	case *websocket.Conn:
-		_ = c.WriteMessage(websocket.BinaryMessage, raw) // WS has its own framing
+	if err := writeFXPMessage(conn, ack); err != nil {
+		log.Printf("❌ Failed to send LogonAck: %v", err)
 	}
 }
 

@@ -30,7 +30,6 @@ import (
 
 	"go_gateway/protobuf"
 
-	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -442,20 +441,7 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 
 // deliverReport writes an encoded ExecutionReport to a TCP or WebSocket client.
 func deliverReport(clientAny any, encoded []byte, orderID string) {
-	var sendErr error
-	switch client := clientAny.(type) {
-	case net.Conn:
-		frame := make([]byte, 4+len(encoded))
-		binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
-		copy(frame[4:], encoded)
-		_, sendErr = client.Write(frame)
-	case *websocket.Conn:
-		sendErr = client.WriteMessage(websocket.BinaryMessage, encoded)
-	default:
-		log.Printf("⚠️ Unknown client type for OrderID %s: %T", orderID, clientAny)
-		return
-	}
-	if sendErr != nil {
+	if sendErr := enqueueClientData(clientAny, encoded, false); sendErr != nil {
 		log.Printf("❌ ExecutionReport delivery failed for OrderID %s: %v", orderID, sendErr)
 	} else {
 		slog.Debug("ExecutionReport delivered", "order_id", orderID)

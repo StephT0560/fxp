@@ -174,7 +174,7 @@ func TestTCPMaxConnections(t *testing.T) {
 func TestSessionIDsAreServerGenerated(t *testing.T) {
 	ids := map[string]string{}
 	for _, trader := range []string{"ALICE", "MALLORY"} {
-		srv, cli := pipes(t)
+		srv, cli := routedPipes(t)
 		go func() { _, _ = io.Copy(io.Discard, cli) }()
 		sid := ""
 		HandleFXPMessageAuthenticated(srv, logonMsg(testJWT(t, trader), "shared-id"), &sid)

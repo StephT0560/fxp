@@ -15,10 +15,29 @@ import (
 
 type auctionConn struct {
 	net.Conn
+	mu   sync.Mutex
 	data bytes.Buffer
 }
 
-func (c *auctionConn) Write(p []byte) (int, error) { return c.data.Write(p) }
+func (c *auctionConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.data.Write(p)
+}
+
+func (c *auctionConn) Close() error { return nil }
+
+func (c *auctionConn) bytes() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]byte(nil), c.data.Bytes()...)
+}
+
+func (c *auctionConn) size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.data.Len()
+}
 
 func TestAuctionFramesFollowSymbolSubscriptions(t *testing.T) {
 	messages := []*protobuf.FXPMessage{
@@ -39,6 +58,14 @@ func TestAuctionFramesFollowSymbolSubscriptions(t *testing.T) {
 			for _, message := range messages {
 				t.Run(string(message.ProtoReflect().WhichOneof(message.ProtoReflect().Descriptor().Oneofs().Get(0)).Name()), func(t *testing.T) {
 					subscribed, other := &auctionConn{}, &auctionConn{}
+					subscriberWriter := registerClientWriter(subscribed)
+					otherWriter := registerClientWriter(other)
+					t.Cleanup(func() {
+						unregisterClientWriter(subscribed)
+						unregisterClientWriter(other)
+						<-subscriberWriter.finished
+						<-otherWriter.finished
+					})
 					subscribers, others := &sync.Map{}, &sync.Map{}
 					subscribers.Store(subscribed, true)
 					others.Store(other, true)
@@ -46,7 +73,8 @@ func TestAuctionFramesFollowSymbolSubscriptions(t *testing.T) {
 					clientSubs.Store("OTHER", others)
 					t.Cleanup(func() { clientSubs.Delete("AUCT"); clientSubs.Delete("OTHER") })
 					router(message)
-					raw := subscribed.data.Bytes()
+					waitUntil(t, func() bool { return subscribed.size() >= 4 })
+					raw := subscribed.bytes()
 					if len(raw) < 4 {
 						t.Fatal("symbol subscriber received no framed payload")
 					}
@@ -60,12 +88,12 @@ func TestAuctionFramesFollowSymbolSubscriptions(t *testing.T) {
 					if !proto.Equal(message, got) {
 						t.Fatalf("payload changed: got %v, want %v", got, message)
 					}
-					if other.data.Len() != 0 {
+					if other.size() != 0 {
 						t.Fatal("payload leaked to another symbol")
 					}
 					clientSubs.Delete("AUCT")
 					router(message)
-					if subscribed.data.Len() != len(raw) || other.data.Len() != 0 {
+					if subscribed.size() != len(raw) || other.size() != 0 {
 						t.Fatal("unsubscribed payload was delivered")
 					}
 				})

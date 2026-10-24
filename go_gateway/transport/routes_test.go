@@ -61,11 +61,21 @@ func pipes(t *testing.T) (net.Conn, net.Conn) {
 	return s, c
 }
 
+func routedPipes(t *testing.T) (net.Conn, net.Conn) {
+	s, c := pipes(t)
+	writer := registerClientWriter(s)
+	t.Cleanup(func() {
+		unregisterClientWriter(s)
+		<-writer.finished
+	})
+	return s, c
+}
+
 // A rejected cancel (e.g. from a second session of the same trader) must not
 // steal or delete the live order's route.
 func TestRejectedCancelKeepsLiveRoute(t *testing.T) {
-	s1, c1 := pipes(t)
-	s2, _ := pipes(t)
+	s1, c1 := routedPipes(t)
+	s2, _ := routedPipes(t)
 	orderClientMap.Store("T::A", orderRoute{conn: s1, owner: "T"})
 	defer orderClientMap.Delete("T::A")
 
@@ -85,8 +95,8 @@ func TestRejectedCancelKeepsLiveRoute(t *testing.T) {
 // A rejected replace keeps the original's route, drops the provisional
 // replacement route and never re-points another live order's route.
 func TestRejectedReplaceKeepsRoutes(t *testing.T) {
-	s1, c1 := pipes(t)
-	s2, _ := pipes(t)
+	s1, c1 := routedPipes(t)
+	s2, _ := routedPipes(t)
 	orderClientMap.Store("T::A", orderRoute{conn: s1, owner: "T"})
 	orderClientMap.Store("T::B", orderRoute{conn: s2, owner: "T"})
 	defer orderClientMap.Delete("T::A")
@@ -119,7 +129,7 @@ func TestRejectedReplaceKeepsRoutes(t *testing.T) {
 // Reject of a request for an order with no route only cleans up its own
 // provisional route; a live report promotes a provisional route.
 func TestProvisionalRouteLifecycle(t *testing.T) {
-	s1, c1 := pipes(t)
+	s1, c1 := routedPipes(t)
 	registerRoute("T::X", orderRoute{conn: s1, owner: "T", provisional: true})
 	done := route(requestReject("T::X"))
 	readReport(t, c1)
@@ -140,7 +150,7 @@ func TestProvisionalRouteLifecycle(t *testing.T) {
 }
 
 func TestInvalidNewOrderIsRejectedWithoutForwarding(t *testing.T) {
-	client, peer := pipes(t)
+	client, peer := routedPipes(t)
 	core, corePeer := net.Pipe()
 	oldPool := corePool
 	corePool = make(chan *pooledConn, 1)
@@ -190,8 +200,8 @@ func TestInvalidNewOrderIsRejectedWithoutForwarding(t *testing.T) {
 // the requester; a successful cancel reaches both the requester and the
 // session that placed the order. Fills keep the original route.
 func TestRequestRepliesReachRequester(t *testing.T) {
-	s1, c1 := pipes(t)
-	s2, c2 := pipes(t)
+	s1, c1 := routedPipes(t)
+	s2, c2 := routedPipes(t)
 	orderClientMap.Store("T::R", orderRoute{conn: s1, owner: "T"})
 	defer orderClientMap.Delete("T::R")
 
