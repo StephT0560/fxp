@@ -198,19 +198,23 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	if m := next(); m.MsgType() != codec.MsgTypeExecutionReport || m.Get(codec.TagExecType) != codec.ExecTypeRejected || m.Get(codec.TagClOrdID) != "O1" {
 		t.Fatalf("order before gateway: 35=%s 150=%s 11=%s", m.MsgType(), m.Get(codec.TagExecType), m.Get(codec.TagClOrdID))
 	}
+	// Side(54) is required in FIX 4.4, so its absence is a session-level Reject.
 	go send(codec.MsgTypeNewOrderSingle,
 		codec.TagClOrdID, "O2", codec.TagSymbol, "MSFT", codec.TagOrderQty, "10",
-		codec.TagOrdType, "2", codec.TagPrice, "10.00")
-	if m := next(); m.MsgType() != codec.MsgTypeExecutionReport || m.Get(codec.TagExecType) != codec.ExecTypeRejected || m.Get(codec.TagText) == "" {
-		t.Fatalf("missing Side reject: 35=%s 150=%s 58=%s", m.MsgType(), m.Get(codec.TagExecType), m.Get(codec.TagText))
+		codec.TagOrdType, "2", codec.TagPrice, "10.00", codec.TagTransactTime, "20260101-00:00:00")
+	if m := next(); m.MsgType() != codec.MsgTypeReject || m.Get(codec.TagSessionRejectReason) != codec.RejectRequiredTagMissing ||
+		m.Get(codec.TagRefTagID) != "54" || m.Get(codec.TagText) == "" {
+		t.Fatalf("missing Side reject: 35=%s 373=%s 371=%s 58=%s", m.MsgType(), m.Get(codec.TagSessionRejectReason),
+			m.Get(codec.TagRefTagID), m.Get(codec.TagText))
 	}
 	go send(codec.MsgTypeNewOrderSingle,
 		codec.TagClOrdID, "O3", codec.TagSymbol, "MSFT", codec.TagSide, "Z",
-		codec.TagOrderQty, "10", codec.TagOrdType, "2", codec.TagPrice, "10.00")
+		codec.TagOrderQty, "10", codec.TagOrdType, "2", codec.TagPrice, "10.00", codec.TagTransactTime, "20260101-00:00:00")
 	if m := next(); m.MsgType() != codec.MsgTypeExecutionReport || m.Get(codec.TagExecType) != codec.ExecTypeRejected || m.Get(codec.TagText) == "" {
 		t.Fatalf("unknown Side reject: 35=%s 150=%s 58=%s", m.MsgType(), m.Get(codec.TagExecType), m.Get(codec.TagText))
 	}
-	go send(codec.MsgTypeOrderCancelRequest, codec.TagClOrdID, "C1", codec.TagOrigClOrdID, "O1", codec.TagSymbol, "MSFT", codec.TagSide, "1")
+	go send(codec.MsgTypeOrderCancelRequest, codec.TagClOrdID, "C1", codec.TagOrigClOrdID, "O1", codec.TagSymbol, "MSFT", codec.TagSide, "1",
+		codec.TagTransactTime, "20260101-00:00:00")
 	if m := next(); m.MsgType() != codec.MsgTypeOrderCancelReject {
 		t.Fatalf("cancel before gateway: 35=%s", m.MsgType())
 	}

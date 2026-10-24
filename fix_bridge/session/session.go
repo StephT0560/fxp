@@ -8,7 +8,8 @@
 //     gap detection (ResendRequest) and SequenceReset (GapFill and Reset)
 //   - Outbound sequencing with a MessageStore that serves ResendRequests
 //   - Heartbeats, TestRequest/Heartbeat(TestReqID) and peer timeout
-//   - Garbled messages are ignored; well-formed invalid ones get Reject(3)
+//   - Garbled messages are ignored; well-formed invalid ones get Reject(3),
+//     including application messages missing a codec.RequiredFields tag
 //
 // Goroutines: readLoop (inbound, owns inSeqNum/resendTo), writeLoop (socket
 // writes) and heartbeatLoop. Shared state is guarded by stateMu, sendMu,
@@ -387,6 +388,11 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		s.sendReject(seq, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
 		return nil
 	}
+	if f, missing := codec.MissingRequired(msg); missing {
+		s.sendRejectRef(seq, f.Tag, msgType, codec.RejectRequiredTagMissing,
+			fmt.Sprintf("Required tag missing: %s (%d)", f.Name, f.Tag))
+		return nil
+	}
 	switch msgType {
 	case codec.MsgTypeLogon:
 		return nil // repeated Logon without reset: nothing to do
@@ -666,9 +672,13 @@ func (s *Session) sendLogout(reason string) {
 }
 
 func (s *Session) sendReject(refSeq int, reason, text string) {
+	s.sendRejectRef(refSeq, 0, "", reason, text)
+}
+
+func (s *Session) sendRejectRef(refSeq, refTagID int, refMsgType, reason, text string) {
 	log.Printf("[%s] rejecting seq %d: 373=%s %s", s.target(), refSeq, reason, text)
 	s.SendWithSeq(func(n int) []byte {
-		return codec.NewReject(s.SenderCompID, s.target(), n, refSeq, reason, text)
+		return codec.NewRejectRef(s.SenderCompID, s.target(), n, refSeq, refTagID, refMsgType, reason, text)
 	})
 }
 
