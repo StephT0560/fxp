@@ -73,8 +73,12 @@ type Session struct {
 
 	// Auth validates Logon credentials; a nil Auth rejects every Logon.
 	Auth Authenticator
-	// Store keeps sent messages for ResendRequest.
-	Store         MessageStore
+	// Store keeps sent messages for ResendRequest and the sequence numbers.
+	// With a Registry it is replaced at Logon by the session's durable store.
+	Store MessageStore
+	// Registry, if set, supplies the store keyed by (BeginString,
+	// SenderCompID, TargetCompID) so sequence state survives reconnects.
+	Registry      *Registry
 	LogonTimeout  time.Duration
 	LogoutTimeout time.Duration
 	MaxLatency    time.Duration
@@ -86,6 +90,9 @@ type Session struct {
 	outSeqNum int64 // next outbound MsgSeqNum (guarded by sendMu)
 	inSeqNum  int   // next expected inbound MsgSeqNum (readLoop only)
 	resendTo  int   // highest seq covered by our pending ResendRequest, 0 = none (readLoop only)
+
+	regKey   *SessionKey // registry entry held since Logon (guarded by sendMu)
+	released bool        // registry entry released; Store must not be written (guarded by sendMu)
 
 	heartBtInt   int          // guarded by stateMu
 	lastSent     time.Time    // guarded by sendMu
@@ -145,6 +152,7 @@ func (s *Session) Run() {
 	defer func() {
 		s.flush(flushTimeout)
 		s.close()
+		s.releaseStore()
 	}()
 	go s.writeLoop()
 	go s.heartbeatLoop()
@@ -174,6 +182,9 @@ func (s *Session) logonTimeoutLoop() {
 func (s *Session) SendWithSeq(build func(seq int) []byte) {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
+	if s.released {
+		return
+	}
 	seq := int(s.outSeqNum)
 	frame := build(seq)
 	if frame == nil {
@@ -342,7 +353,7 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		s.requestResend(seq)
 		return nil
 	}
-	s.inSeqNum++
+	s.setInSeq(s.inSeqNum + 1)
 	if s.resendTo != 0 && s.inSeqNum > s.resendTo {
 		s.resendTo = 0
 	}
@@ -479,16 +490,21 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	if reset && seq != 1 {
 		return s.rejectLogon(msg, "ResetSeqNumFlag=Y requires MsgSeqNum=1")
 	}
+	if s.Registry != nil {
+		if err := s.acquireStore(SessionKey{msg.Get(codec.TagBeginString), s.SenderCompID, sender}); err != nil {
+			return s.rejectLogon(msg, err.Error())
+		}
+	}
 	if reset {
-		s.inSeqNum = 1
 		s.resetOutbound()
+		s.setInSeq(1)
 	}
 	if seq < s.inSeqNum {
 		return s.rejectLogon(msg, fmt.Sprintf("MsgSeqNum too low, expecting %d but received %d", s.inSeqNum, seq))
 	}
 	gap := seq > s.inSeqNum
 	if !gap {
-		s.inSeqNum = seq + 1
+		s.setInSeq(seq + 1)
 	}
 
 	s.stateMu.Lock()
@@ -528,13 +544,47 @@ func (s *Session) handleInSessionReset(seq int) {
 		return
 	}
 	log.Printf("[%s] Logon with ResetSeqNumFlag=Y — resetting sequence numbers", s.target())
-	s.inSeqNum = 2
-	s.resendTo = 0
 	s.resetOutbound()
+	s.setInSeq(2)
+	s.resendTo = 0
 	hbi := int(s.heartbeatInterval() / heartbeatUnit)
 	s.SendWithSeq(func(n int) []byte {
 		return codec.NewLogonAck(s.SenderCompID, s.target(), n, hbi, true)
 	})
+}
+
+// acquireStore takes the session's registry entry and resumes its sequence numbers.
+func (s *Session) acquireStore(key SessionKey) error {
+	store, err := s.Registry.Acquire(key)
+	if err != nil {
+		return err
+	}
+	in, out := store.SeqNums()
+	s.sendMu.Lock()
+	s.Store, s.regKey = store, &key
+	s.outSeqNum = int64(out)
+	s.sendMu.Unlock()
+	s.inSeqNum = in
+	log.Printf("[%s] resuming session state: next in=%d out=%d", key.TargetCompID, in, out)
+	return nil
+}
+
+// releaseStore hands the registry entry back once no more frames can be
+// stored (close may run with sendMu held, so this runs after it, from Run).
+func (s *Session) releaseStore() {
+	s.sendMu.Lock()
+	s.released = true
+	key := s.regKey
+	s.sendMu.Unlock()
+	if key != nil {
+		s.Registry.Release(*key)
+	}
+}
+
+// setInSeq advances the next expected inbound MsgSeqNum and persists it.
+func (s *Session) setInSeq(n int) {
+	s.inSeqNum = n
+	s.Store.SetNextInSeq(n)
 }
 
 func (s *Session) resetOutbound() {
@@ -661,7 +711,7 @@ func (s *Session) applyNewSeqNo(msg *codec.Message, seq int) {
 			fmt.Sprintf("NewSeqNo %d lower than expected %d", newSeq, s.inSeqNum))
 		return
 	}
-	s.inSeqNum = newSeq
+	s.setInSeq(newSeq)
 	if s.resendTo != 0 && s.inSeqNum > s.resendTo {
 		s.resendTo = 0
 	}

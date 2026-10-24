@@ -24,6 +24,7 @@ Usage:
 """
 
 import sys
+import json
 import os
 import socket
 import time
@@ -772,6 +773,77 @@ TESTS = {
     'market_data':         test_market_data,
 }
 
+# ── Durable session (bridge killed and restarted between the two phases) ─────
+
+DURABLE_STATE = os.environ.get('FXP_E2E_DURABLE_STATE', 'durable.state')
+LOGON_NO_RESET = [(98, '0'), (108, '30')]
+
+
+def durable_before_kill(args, r):
+    """Logon without reset, get an ExecutionReport, record sequence state, then
+    hold the session open until the bridge is killed under it."""
+    print('\n─── durable_before_kill ─────────────────────────────────────')
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.connect()
+    sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset)')
+    time.sleep(0.6)
+    oid = order_id('DUR')
+    sess.new_order(oid, 'DURX', '1', 10, '2', price=5.00, description='BUY 10 DURX @5.00')
+    er = sess.wait_for(order_id=oid, exec_type='0', timeout=3.0)
+    if not r.assert_exec('order acknowledged before kill', er, '0', '0'):
+        return
+    state = {'next_seq': sess.seq, 'last_out': max(n for _, n in sess.out_seqs),
+             'er_seq': int(er.get(34)), 'order_id': oid}
+    with open(DURABLE_STATE + '.tmp', 'w') as f:
+        json.dump(state, f)
+    os.replace(DURABLE_STATE + '.tmp', DURABLE_STATE)
+    sess._thread.join(timeout=30)
+    if sess._thread.is_alive():
+        print(f'  {FAIL} bridge was not killed')
+        r.failed += 1
+    else:
+        print(f'  {PASS} session dropped by bridge kill (state {state})')
+        r.passed += 1
+
+
+def durable_after_restart(args, r):
+    """After restart, Logon resumes the stored sequence numbers and a
+    ResendRequest replays the pre-kill ExecutionReport."""
+    print('\n─── durable_after_restart ───────────────────────────────────')
+    with open(DURABLE_STATE) as f:
+        state = json.load(f)
+    sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
+    sess.seq = state['next_seq']
+    sess.connect()
+    try:
+        sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset) after restart')
+        time.sleep(0.6)
+        ack = sess.out_seqs[:1]
+        want = [('A', state['last_out'] + 1)]
+        if ack == want:
+            print(f'  {PASS} Logon ack continues outbound sequence: 34={want[0][1]}')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} Logon ack after restart {ack}, want {want}')
+            r.failed += 1
+        er_seq = str(state['er_seq'])
+        sess.send('2', [(7, er_seq), (16, er_seq)], f'ResendRequest {er_seq}..{er_seq}')
+        re = sess.wait_for(order_id=state['order_id'], exec_type='0', timeout=3.0)
+        if re and re.get(43) == 'Y' and re.get(34) == er_seq:
+            print(f'  {PASS} pre-kill ExecutionReport resent with 34={er_seq} 43=Y')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} pre-kill ExecutionReport not resent: {re}')
+            r.failed += 1
+    finally:
+        sess.logout()
+
+
+DURABLE_PHASES = {
+    'durable_before_kill':   durable_before_kill,
+    'durable_after_restart': durable_after_restart,
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -789,6 +861,15 @@ def main():
                     help='Logon Password(554) (default: $FXP_FIX_PASSWORD)')
     args = ap.parse_args()
     FIX_PASSWORD = args.password
+
+    if args.test in DURABLE_PHASES:
+        runner = TestRunner(None)
+        try:
+            DURABLE_PHASES[args.test](args, runner)
+        except Exception as e:
+            print(f'  {FAIL} test crashed: {e}')
+            runner.failed += 1
+        sys.exit(0 if runner.summary() else 1)
 
     if args.test != 'all' and args.test not in TESTS:
         print(f'Unknown test: {args.test}')

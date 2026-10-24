@@ -77,6 +77,11 @@ func main() {
 		log.Fatalf("FXP_FIX_CREDENTIALS: %v", err)
 	}
 	auth := session.NewCredentialAuth(creds)
+	registry, err := newSessionRegistry()
+	if err != nil {
+		log.Fatalf("FIX session store: %v", err)
+	}
+	defer registry.Close()
 
 	listener, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
@@ -92,8 +97,50 @@ func main() {
 
 	acceptFIXClients(listener, fixMaxConnections(), func(conn net.Conn) {
 		log.Printf("📞 FIX client connected from %s", conn.RemoteAddr())
-		handleFIXClient(conn, *bridgeCompID, jwtSecret, auth)
+		handleFIXClient(conn, *bridgeCompID, jwtSecret, auth, registry)
 	})
+}
+
+// newSessionRegistry keeps FIX session state (sequence numbers, sent messages)
+// per (BeginString, SenderCompID, TargetCompID) across reconnects and restarts.
+//
+//	FXP_FIX_STORE_DIR            directory (default "fix_store"; set empty for in-memory)
+//	FXP_FIX_STORE_FSYNC          strict (default) | group | async
+//	FXP_FIX_STORE_GROUP_INTERVAL group fsync interval (default 10ms)
+//	FXP_FIX_STORE_MAX_MESSAGES   outbound messages retained for resend (default 100000)
+func newSessionRegistry() (*session.Registry, error) {
+	dir, ok := os.LookupEnv("FXP_FIX_STORE_DIR")
+	if !ok {
+		dir = "fix_store"
+	}
+	if dir == "" {
+		log.Printf("⚠️ FXP_FIX_STORE_DIR is empty — FIX session state is lost on restart")
+		return session.NewRegistry(session.MemoryStoreFactory), nil
+	}
+	mode, err := session.ParseFsyncMode(os.Getenv("FXP_FIX_STORE_FSYNC"))
+	if err != nil {
+		return nil, err
+	}
+	opts := session.FileStoreOptions{
+		Fsync:         mode,
+		GroupInterval: sessionDurationEnv("FXP_FIX_STORE_GROUP_INTERVAL", 0),
+		MaxMessages:   positiveIntEnv("FXP_FIX_STORE_MAX_MESSAGES", 100_000),
+	}
+	log.Printf("   FIX store: %s (fsync=%s, retain %d messages)", dir, mode, opts.MaxMessages)
+	return session.NewRegistry(session.FileStoreFactory(dir, opts)), nil
+}
+
+func positiveIntEnv(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		log.Printf("⚠️ ignoring invalid %s=%q, using %d", name, value, fallback)
+		return fallback
+	}
+	return n
 }
 
 func fixMaxConnections() int {
@@ -142,7 +189,7 @@ func acceptFIXClients(listener net.Listener, maxConnections int, handle func(net
 // handleFIXClient runs the full lifecycle for one FIX client connection.
 // Creates a session, a gateway client, wires them together, and blocks
 // until the FIX session ends.
-func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session.Authenticator) {
+func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session.Authenticator, registry *session.Registry) {
 	// The bridge handler implements session.Handler.
 	// It holds references to both the session (to send FIX frames back)
 	// and the gateway client (to forward orders).
@@ -157,6 +204,7 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 	sess.LogoutTimeout = sessionDurationEnv("FXP_FIX_LOGOUT_TIMEOUT", sess.LogoutTimeout)
 	sess.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", sess.MaxLatency)
 	sess.Auth = auth
+	sess.Registry = registry
 	h.sess = sess
 
 	// Run the session (blocks until disconnect)

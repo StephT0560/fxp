@@ -35,3 +35,4 @@ out/
 *.log
 # Python
 __pycache__/
+fix_store/
