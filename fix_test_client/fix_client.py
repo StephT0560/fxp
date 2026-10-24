@@ -23,6 +23,7 @@ Usage:
   python3 fix_client.py --test all --verbose
 """
 
+import sys
 import os
 import socket
 import time
@@ -321,6 +322,7 @@ class TestRunner:
         if self.failed:
             print(f', {self.failed} failed', end='')
         print()
+        return self.failed == 0 and total > 0
 
 # ── Test cases ────────────────────────────────────────────────────────────────
 
@@ -745,10 +747,13 @@ def main():
 
     except KeyboardInterrupt:
         print('\nInterrupted')
+        runner.failed += 1
     except Exception as e:
         print(f'Session error: {e}')
+        runner.failed += 1
     finally:
-        runner.summary()
+        ok = runner.summary()
+    sys.exit(0 if ok else 1)
 
 if __name__ == '__main__':
     main()

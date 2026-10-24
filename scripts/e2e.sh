@@ -44,4 +44,4 @@ pids+=($!); wait_for_port 8082
 pids+=($!); wait_for_port 8083
 
 python3 "$repo_root/fix_test_client/fix_client.py" | tee "$log_dir/fix_client.log"
-grep -Eq 'Results: ([0-9]+)/\1 passed$' "$log_dir/fix_client.log"
+grep -Eq 'Results: ([1-9][0-9]*)/\1 passed$' "$log_dir/fix_client.log"
