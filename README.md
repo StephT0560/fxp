@@ -372,10 +372,10 @@ Counts observed at this revision:
 
 | Suite | Test count |
 |---|---:|
-| `fxp_core` (`cargo test`) | 64 unit tests |
-| `go_gateway` (`go test ./...`) | 29 top-level tests |
-| `fix_bridge` (`go test ./...`) | 82 top-level tests |
-| Python FIX E2E client (`scripts/e2e.sh`) | 14 scenarios, 34 reported checks, plus 4 durable-session checks across a bridge restart |
+| `fxp_core` (`cargo test`) | 161 unit tests |
+| `go_gateway` (`go test ./...`) | 49 top-level tests |
+| `fix_bridge` (`go test ./...`) | 119 top-level tests |
+| Python FIX E2E client (`scripts/e2e.sh`) | 69 main checks, plus cancel-on-disconnect and restart/persistence checks |
 
 ---
 
@@ -441,7 +441,7 @@ fxp/
 │   ├── benches/
 │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   └── proto/
-│       └── fxp.proto            Protocol schema v2.2
+│       └── fxp.proto            Protocol schema v2.3
 │
 ├── go_gateway/                  Go gateway
 │   ├── logging/                 slog setup (FXP_LOG_LEVEL), shared with fix_bridge

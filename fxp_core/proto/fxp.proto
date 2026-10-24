@@ -9,8 +9,9 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.3 (additive order-status requests/replies); v2.2 added: self-trade prevention, cancel-on-disconnect,
-// mass cancel. v2.1 added auction/session messages.
+// FXP Protocol — v2.3 adds order-status requests/replies.
+// v2.2 added self-trade prevention, cancel-on-disconnect and mass cancel.
+// v2.1 added auction/session messages.
 // Version 2.0 shifts all enum numbers and is wire-breaking with v1.x.
 //
 // Design principles:
@@ -141,8 +142,8 @@ enum ExecutionType {
   EXEC_EXPIRED               = 6; // order expired at session end or GTD date
   EXEC_PENDING_CANCEL        = 7; // cancel pending confirmation
   EXEC_PENDING_REPLACE       = 8; // replace pending confirmation
-  EXEC_ORDER_STATUS          = 10; // v2.3: snapshot, not a lifecycle event
   EXEC_RESTATED              = 9; // v2.2: quantity reduced by self-trade prevention
+  EXEC_ORDER_STATUS          = 10; // v2.3: snapshot, not a lifecycle event
 }
 
 // Self-trade prevention instruction (v2.2). The aggressing (newest) order's
