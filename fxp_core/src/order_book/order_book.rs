@@ -22,6 +22,8 @@ pub enum OrderReject {
     /// Unknown, already filled or already cancelled.
     UnknownOrder,
     DuplicateOrderId,
+    /// Order exists but belongs to another trader.
+    NotOwner,
     /// Requested total quantity does not exceed what has already been filled.
     QuantityNotAboveFilled,
 }
@@ -29,7 +31,9 @@ pub enum OrderReject {
 impl OrderReject {
     pub fn reason(&self) -> &'static str {
         match self {
-            OrderReject::UnknownOrder           => "Unknown order (filled, cancelled or never existed)",
+            // NotOwner shares UnknownOrder's text so rejects don't reveal other traders' orders.
+            OrderReject::UnknownOrder | OrderReject::NotOwner
+                                                => "Unknown order (filled, cancelled or never existed)",
             OrderReject::DuplicateOrderId       => "Duplicate order id",
             OrderReject::QuantityNotAboveFilled => "Replace quantity not above filled quantity",
         }
@@ -87,6 +91,21 @@ impl OrderBook {
         None
     }
     
+    /// Verify that `owner` (the authenticated trader) owns live order `order_id`.
+    pub fn check_owner(&self, order_id: &str, owner: &str) -> Result<(), OrderReject> {
+        match self.order_lookup.get(order_id) {
+            None                           => Err(OrderReject::UnknownOrder),
+            Some(o) if o.trader_id != owner => Err(OrderReject::NotOwner),
+            Some(_)                        => Ok(()),
+        }
+    }
+
+    /// Cancel a live order on behalf of `owner`; rejects without side effects otherwise.
+    pub fn cancel_order_for(&mut self, order_id: &str, owner: &str) -> Result<MarketDataIncrementalUpdate, OrderReject> {
+        self.check_owner(order_id, owner)?;
+        self.cancel_order(order_id).ok_or(OrderReject::UnknownOrder)
+    }
+
     /// Record a fill against a live order: drop it from the lookup when fully
     /// filled, otherwise keep it with its remaining quantity.
     pub(crate) fn sync_fill(
@@ -116,8 +135,10 @@ impl OrderBook {
         new_price:       i64,
         new_total_qty:   u32,
         client_order_id: &str,
+        owner:           &str,
         timestamp:       u64,
     ) -> Result<(Order, MarketDataIncrementalUpdate), OrderReject> {
+        self.check_owner(orig_id, owner)?;
         let orig = self.order_lookup.get(orig_id).cloned().ok_or(OrderReject::UnknownOrder)?;
         if new_id != orig_id && self.order_lookup.contains_key(new_id) {
             return Err(OrderReject::DuplicateOrderId);

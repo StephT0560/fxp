@@ -564,7 +564,7 @@ mod critical_tests {
         let mut book = make_book();
         book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
         book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::IOC));
-        assert_eq!(book.replace_order("S", "S2", 0, 0, "S2", 0).unwrap_err(), OrderReject::UnknownOrder);
+        assert_eq!(book.replace_order("S", "S2", 0, 0, "S2", "T", 0).unwrap_err(), OrderReject::UnknownOrder);
         assert!(book.order_lookup.is_empty() && book.sell_orders.is_empty());
     }
 
@@ -577,13 +577,13 @@ mod critical_tests {
         book.process_aggressive(make_order("B", OrderSide::Buy, 100_00, 4, OrderType::Limit, TimeInForce::IOC));
 
         // Price-only amend: remaining 6 carries over.
-        let (r, _) = book.replace_order("S", "S2", 101_00, 0, "S2", 0).unwrap();
+        let (r, _) = book.replace_order("S", "S2", 101_00, 0, "S2", "T", 0).unwrap();
         assert_eq!(r.quantity, 6);
         // Re-stating the original total (10) leaves 10 - 4 filled = 6 open.
-        let (r, _) = book.replace_order("S2", "S3", 0, 10, "S3", 0).unwrap();
+        let (r, _) = book.replace_order("S2", "S3", 0, 10, "S3", "T", 0).unwrap();
         assert_eq!(r.quantity, 6);
         // A total at or below the filled quantity is rejected.
-        assert_eq!(book.replace_order("S3", "S4", 0, 4, "S4", 0).unwrap_err(), OrderReject::QuantityNotAboveFilled);
+        assert_eq!(book.replace_order("S3", "S4", 0, 4, "S4", "T", 0).unwrap_err(), OrderReject::QuantityNotAboveFilled);
         assert_eq!(book.order_lookup.len(), 1);
         assert_eq!(book.sell_orders[&101_00].iter().map(|o| o.quantity).sum::<u32>(), 6);
     }
@@ -595,6 +595,42 @@ mod critical_tests {
         book.add_order(make_order("S", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC));
         assert!(book.cancel_order("S").is_some());
         assert!(book.cancel_order("S").is_none());
+    }
+
+    // #3 — only the owner may cancel; a foreign cancel leaves the order untouched.
+    #[test]
+    fn ownership_cancel_requires_owner() {
+        use crate::order_book::order_book::OrderReject;
+        let mut book = make_book();
+        let mut o = make_order("ORD-1", OrderSide::Sell, 100_00, 10, OrderType::Limit, TimeInForce::GTC);
+        o.trader_id = "VICTIM".to_string();
+        book.add_order(o);
+
+        assert_eq!(book.cancel_order_for("ORD-1", "ATTACKER").unwrap_err(), OrderReject::NotOwner);
+        assert_eq!(book.cancel_order_for("ORD-X", "ATTACKER").unwrap_err(), OrderReject::UnknownOrder);
+        // Same reject text either way, so a foreign order's existence is not revealed.
+        assert_eq!(OrderReject::NotOwner.reason(), OrderReject::UnknownOrder.reason());
+        assert_eq!(book.order_lookup["ORD-1"].quantity, 10);
+        assert_eq!(book.sell_orders[&100_00].len(), 1);
+
+        assert!(book.cancel_order_for("ORD-1", "VICTIM").is_ok());
+        assert!(book.order_lookup.is_empty() && book.sell_orders.is_empty());
+    }
+
+    // #3 — only the owner may cancel/replace.
+    #[test]
+    fn ownership_replace_requires_owner() {
+        use crate::order_book::order_book::OrderReject;
+        let mut book = make_book();
+        let mut o = make_order("ORD-1", OrderSide::Buy, 100_00, 10, OrderType::Limit, TimeInForce::GTC);
+        o.trader_id = "VICTIM".to_string();
+        book.add_order(o);
+
+        assert_eq!(book.replace_order("ORD-1", "ORD-2", 1_00, 0, "ORD-2", "ATTACKER", 0).unwrap_err(), OrderReject::NotOwner);
+        assert_eq!(book.buy_orders[&100_00][0].order_id, "ORD-1");
+
+        let (r, _) = book.replace_order("ORD-1", "ORD-2", 101_00, 0, "ORD-2", "VICTIM", 0).unwrap();
+        assert_eq!((r.trader_id.as_str(), r.price, r.quantity), ("VICTIM", 101_00, 10));
     }
 
     // ── Reference model: price-time priority with a flat Vec ──────────────────

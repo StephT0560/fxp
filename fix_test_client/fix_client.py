@@ -547,6 +547,50 @@ def test_cancel_filled_order(s, r):
     s.drain()
 
 
+def test_cross_session_cancel(s, r):
+    """§3.6: a FIX session must not cancel (or probe) another session's order."""
+    print('\n─── test_cross_session_cancel ───────────────────────────────')
+    sym    = 'WFC'
+    vic_id = order_id('XVO')
+
+    victim   = FIXSession(s.host, s.port, 'VICTIM01',   s.target, verbose=s.verbose)
+    attacker = FIXSession(s.host, s.port, 'ATTACKER01', s.target, verbose=s.verbose)
+    victim.connect();   victim.logon()
+    attacker.connect(); attacker.logon()
+    try:
+        victim.new_order(vic_id, sym, '1', 100, '2', price=30.00,
+                         description=f'VICTIM BUY 100 {sym} @30.00')
+        time.sleep(0.5)  # resting orders get no New ack today (pre-existing, out of scope)
+
+        # Attacker guesses the victim's ClOrdID and tries to cancel it
+        attacker.cancel_order(order_id('XAC'), vic_id, sym, '1')
+        msg = attacker.wait_for(order_id=vic_id, timeout=3.0)
+        if msg is not None and (msg.get(35) == '9' or (msg.get(35) == '8' and msg.get(150) == '8')):
+            print(f'  {PASS} attacker cancel rejected (Text={msg.get(58)!r})')
+            r.passed += 1
+        else:
+            got = None if msg is None else f'MsgType={msg.get(35)} ExecType={msg.get(150)}'
+            print(f'  {FAIL} attacker cancel not rejected: {got}')
+            r.failed += 1
+
+        # The victim must see nothing from the attacker's request ...
+        leaked = victim.wait_for(order_id=vic_id, timeout=1.0)
+        if leaked is None:
+            print(f'  {PASS} victim received no report from attacker request')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} victim received MsgType={leaked.get(35)} ExecType={leaked.get(150)}')
+            r.failed += 1
+
+        # ... and still owns a live order whose reports reach it
+        victim.cancel_order(order_id('XVC'), vic_id, sym, '1')
+        cxl = victim.wait_for(order_id=vic_id, exec_type='4', timeout=3.0)
+        r.assert_exec('victim cancel still routed to victim', cxl, '4')
+    finally:
+        victim.logout()
+        attacker.logout()
+
+
 # ── Test registry ─────────────────────────────────────────────────────────────
 
 TESTS = {
@@ -558,6 +602,7 @@ TESTS = {
     'ioc_partial':         test_ioc_partial,
     'fok_no_liquidity':    test_fok_no_liquidity,
     'cancel_filled_order': test_cancel_filled_order,
+    'cross_session_cancel': test_cross_session_cancel,
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
