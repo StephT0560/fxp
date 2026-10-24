@@ -118,7 +118,7 @@ func OpenFileStore(dir string, opts FileStoreOptions) (*FileStore, error) {
 		err = fs.loadSeqNums(maxSeq)
 	}
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("open FIX store %s: %w", dir, err)
 	}
 	if opts.Fsync == FsyncGroup {
@@ -269,7 +269,7 @@ func (fs *FileStore) writeSeqNumsLocked() {
 func (fs *FileStore) syncDir() {
 	if d, err := os.Open(fs.dir); err == nil {
 		_ = d.Sync()
-		d.Close()
+		_ = d.Close()
 	}
 }
 
@@ -289,21 +289,21 @@ func (fs *FileStore) compactLocked() error {
 		}
 		off, err := fs.appendLocked(tmp, seq, frame)
 		if err != nil {
-			tmp.Close()
+			_ = tmp.Close()
 			return err
 		}
 		index[seq] = recordLoc{off: off, n: len(frame)}
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := os.Rename(tmpPath, filepath.Join(fs.dir, outboundLogName)); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	fs.syncDir()
-	fs.log.Close()
+	_ = fs.log.Close()
 	fs.log, fs.index = tmp, index
 	return nil
 }
@@ -384,7 +384,7 @@ func (fs *FileStore) flushLocked() {
 	}
 	if f, err := os.Open(filepath.Join(fs.dir, seqNumsName)); err == nil {
 		_ = f.Sync()
-		f.Close()
+		_ = f.Close()
 	}
 	fs.syncDir()
 	fs.dirty = false

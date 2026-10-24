@@ -81,7 +81,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("FIX session store: %v", err)
 	}
-	defer registry.Close()
+	defer func() { _ = registry.Close() }()
 
 	listener, err := net.Listen("tcp", *listenAddr)
 	if err != nil {

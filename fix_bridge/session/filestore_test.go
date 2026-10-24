@@ -47,7 +47,7 @@ func TestFileStoreSurvivesReopenAndAbruptClose(t *testing.T) {
 			fs.SetNextInSeq(7)
 			// No Close: simulates the process being killed (data reached the OS).
 			re := openStore(t, dir, FileStoreOptions{Fsync: mode})
-			defer re.Close()
+			defer func() { _ = re.Close() }()
 			if in, out := re.SeqNums(); in != 7 || out != 6 {
 				t.Fatalf("SeqNums = %d,%d; want 7,6", in, out)
 			}
@@ -56,7 +56,7 @@ func TestFileStoreSurvivesReopenAndAbruptClose(t *testing.T) {
 					t.Fatalf("Get(%d) = %q,%v", i, f, ok)
 				}
 			}
-			fs.Close()
+			_ = fs.Close()
 		})
 	}
 }
@@ -67,32 +67,32 @@ func TestFileStoreRecoversTornTail(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		fs.Save(i, frameN(i))
 	}
-	fs.Close()
+	_ = fs.Close()
 	logPath := filepath.Join(dir, outboundLogName)
 	whole, _ := os.ReadFile(logPath)
 
 	// Half-written header after the last record.
 	f, _ := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0)
 	_, _ = f.Write([]byte{0, 0, 0, 9, 1, 2})
-	f.Close()
+	_ = f.Close()
 	re := openStore(t, dir, FileStoreOptions{})
 	if _, out := re.SeqNums(); out != 4 {
 		t.Fatalf("next out after torn header = %d, want 4", out)
 	}
 	re.Save(4, frameN(4))
-	re.Close()
+	_ = re.Close()
 	re = openStore(t, dir, FileStoreOptions{})
 	if f, ok := re.Get(4); !ok || string(f) != "frame-4" {
 		t.Fatalf("record appended after truncation lost: %q %v", f, ok)
 	}
-	re.Close()
+	_ = re.Close()
 
 	// Corrupt the payload of record 3: its CRC fails, so it and everything after is dropped.
 	whole[len(whole)-1] ^= 0xFF
 	_ = os.WriteFile(logPath, whole, 0o600)
 	_ = os.Remove(filepath.Join(dir, seqNumsName))
 	re = openStore(t, dir, FileStoreOptions{})
-	defer re.Close()
+	defer func() { _ = re.Close() }()
 	if _, ok := re.Get(3); ok {
 		t.Fatal("record with bad CRC served")
 	}
@@ -110,9 +110,9 @@ func TestFileStoreRetentionCapsLog(t *testing.T) {
 	for i := 1; i <= 95; i++ {
 		fs.Save(i, frameN(i))
 	}
-	fs.Close()
+	_ = fs.Close()
 	fs = openStore(t, dir, FileStoreOptions{MaxMessages: 10})
-	defer fs.Close()
+	defer func() { _ = fs.Close() }()
 	if _, ok := fs.Get(1); ok {
 		t.Fatal("record past retention still served")
 	}
@@ -136,9 +136,9 @@ func TestFileStoreReset(t *testing.T) {
 	fs.Save(1, frameN(1))
 	fs.SetNextInSeq(9)
 	fs.Reset()
-	fs.Close()
+	_ = fs.Close()
 	fs = openStore(t, dir, FileStoreOptions{})
-	defer fs.Close()
+	defer func() { _ = fs.Close() }()
 	if in, out := fs.SeqNums(); in != 1 || out != 1 {
 		t.Fatalf("SeqNums after Reset = %d,%d", in, out)
 	}
@@ -169,9 +169,9 @@ func TestFileStoreConcurrentSessions(t *testing.T) {
 		}(c)
 	}
 	wg.Wait()
-	reg.Close()
+	_ = reg.Close()
 	reg = NewRegistry(FileStoreFactory(root, FileStoreOptions{}))
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	for c := 0; c < 8; c++ {
 		st, err := reg.Acquire(SessionKey{"FIX.4.4", "FXPBRIDGE", fmt.Sprintf("C%d", c)})
 		if err != nil {
@@ -214,7 +214,7 @@ func appFrame(s *Session, id string) {
 
 func disconnect(t *testing.T, p *peer, reg *Registry) {
 	t.Helper()
-	p.conn.Close()
+	_ = p.conn.Close()
 	key := SessionKey{"FIX.4.4", "FXPBRIDGE", p.sender}
 	waitFor(t, "session release", func() bool { return !reg.isActive(key) })
 }
@@ -256,7 +256,7 @@ func TestReconnectPreservesSeqNumsMemory(t *testing.T) {
 func TestReconnectPreservesSeqNumsFile(t *testing.T) {
 	root := t.TempDir()
 	reg := NewRegistry(FileStoreFactory(root, FileStoreOptions{}))
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	testReconnect(t, reg)
 }
 
@@ -268,11 +268,11 @@ func TestRestartPreservesSeqNumsAndResend(t *testing.T) {
 	appFrame(p.sess, "ER1")
 	p.expect(codec.MsgTypeExecutionReport)
 	// Simulated kill: the registry and its files are abandoned without Close.
-	p.conn.Close()
+	_ = p.conn.Close()
 	p.expectClosed()
 
 	reg2 := NewRegistry(FileStoreFactory(root, FileStoreOptions{}))
-	defer reg2.Close()
+	defer func() { _ = reg2.Close() }()
 	q := registryPeer(t, reg2, "CLIENT")
 	if got := q.logonAt(2).GetInt(codec.TagMsgSeqNum); got != 3 {
 		t.Fatalf("Logon ack after restart 34=%d, want 3", got)
