@@ -23,6 +23,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use prost::Message;
 use std::sync::Arc;
+use crate::order_book::order_book::OrderReject;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -178,14 +179,12 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                         println!("🗑️ Cancelled order {} on {}", cancel_msg.order_id, symbol);
                     }
                     None => {
-                        // Order not found — already filled, cancelled, or unknown
-                        let report = make_exec_report(
+                        // Order not live — already filled, cancelled, or unknown
+                        let report = make_reject_report(
                             &cancel_msg.order_id,
                             &symbol,
                             &cancel_msg.client_cancel_id,
-                            fxp::ExecutionType::ExecRejected,
-                            fxp::OrderStatus::OrderRejected,
-                            0, 0, 0, 0, 0,
+                            OrderReject::UnknownOrder.reason(),
                             &ts,
                         );
                         let _ = cancel_msg.output_tx.send(report).await;
@@ -201,46 +200,26 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                     nanos:   now.subsec_nanos() as i32,
                 });
 
-                // Find original order to get current state
-                let original = book.order_lookup.get(&cr_msg.order_id).cloned();
+                let result = book.replace_order(
+                    &cr_msg.order_id,
+                    &cr_msg.new_order_id,
+                    cr_msg.new_price,
+                    cr_msg.new_quantity.max(0) as u32,
+                    &cr_msg.client_replace_id,
+                    now.as_millis() as u64,
+                );
 
-                match original {
-                    None => {
-                        // Order not found — reject
-                        let report = make_exec_report(
+                match result {
+                    Err(reject) => {
+                        let report = make_reject_report(
                             &cr_msg.order_id, &symbol, &cr_msg.client_replace_id,
-                            fxp::ExecutionType::ExecRejected,
-                            fxp::OrderStatus::OrderRejected,
-                            0, 0, 0, 0, 0, &ts,
+                            reject.reason(), &ts,
                         );
                         let _ = cr_msg.output_tx.send(report).await;
-                        println!("⚠️ CancelReplace rejected: order {} not found on {}", cr_msg.order_id, symbol);
+                        println!("⚠️ CancelReplace rejected: order {} on {}: {}", cr_msg.order_id, symbol, reject.reason());
                     }
-                    Some(orig) => {
-                        // Cancel the original
-                        let _ = book.cancel_order(&cr_msg.order_id);
-
-                        // Build replacement order with amended fields
-                        let new_price    = if cr_msg.new_price    > 0 { cr_msg.new_price    } else { orig.price };
-                        let new_quantity = if cr_msg.new_quantity  > 0 { cr_msg.new_quantity as u32 } else { orig.quantity };
-
-                        let replacement = crate::order_book::order::Order {
-                            order_id:       cr_msg.new_order_id.clone(),
-                            trader_id:      orig.trader_id.clone(),
-                            symbol:         symbol.clone(),
-                            price:          new_price,
-                            quantity:       new_quantity,
-                            side:           orig.side,
-                            order_type:     orig.order_type,
-                            time_in_force:  orig.time_in_force,
-                            timestamp:      now.as_millis() as u64,
-                            stop_price:     orig.stop_price,
-                            expire_date:    orig.expire_date.clone(),
-                            account:        orig.account.clone(),
-                            client_order_id: cr_msg.client_replace_id.clone(),
-                        };
-
-                        let inc = book.add_order(replacement);
+                    Ok((replacement, inc)) => {
+                        let new_quantity = replacement.quantity;
                         let (passive_fills, fill_updates) = book.match_orders();
 
                         // Send EXEC_REPLACED for the original order
@@ -623,6 +602,38 @@ fn make_exec_report(
                 client_order_id:   String::new(),
                 orig_order_id:     String::new(),
                 reject_reason:     String::new(),
+            },
+        )),
+    })
+}
+
+/// Execution report rejecting a cancel or cancel/replace request.
+fn make_reject_report(
+    order_id:      &str,
+    symbol:        &str,
+    exec_id_extra: &str,
+    reason:        &str,
+    ts:            &Option<Timestamp>,
+) -> Vec<u8> {
+    frame_message(&fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::ExecutionReport(
+            fxp::ExecutionReport {
+                header:            Some(fxp::FxpHeader { protocol_version: "1.1".to_string(), sequence_number: 0 }),
+                execution_id:      format!("{}-{}-{}", fxp::ExecutionType::ExecRejected.as_str_name(), order_id, exec_id_extra),
+                order_id:          order_id.to_string(),
+                symbol:            symbol.to_string(),
+                execution_type:    fxp::ExecutionType::ExecRejected.into(),
+                order_status:      fxp::OrderStatus::OrderRejected.into(),
+                execution_price:   0,
+                executed_quantity: 0,
+                timestamp:         ts.clone(),
+                leaves_quantity:   0,
+                avg_px:            0,
+                cum_quantity:      0,
+                account:           String::new(),
+                client_order_id:   String::new(),
+                orig_order_id:     String::new(),
+                reject_reason:     reason.to_string(),
             },
         )),
     })

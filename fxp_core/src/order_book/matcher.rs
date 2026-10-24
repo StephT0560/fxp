@@ -49,6 +49,8 @@ impl OrderBook {
 
                     let buy_done  = bid.quantity == 0;
                     let sell_done = ask.quantity == 0;
+                    Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &bid.order_id, bid.quantity, trade_qty);
+                    Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &ask.order_id, ask.quantity, trade_qty);
 
                     fills.push(ExecutionReport {
                         buy_order_id:     bid.order_id.clone(),
@@ -232,6 +234,7 @@ impl OrderBook {
             filled       += trade_qty;
 
             let resting_done   = top.quantity == 0;
+            Self::sync_fill(&mut self.order_lookup, &mut self.cum_filled, &top.order_id, top.quantity, trade_qty);
             let aggressor_done = filled >= want;
 
             let (buy_id, sell_id, buy_done, sell_done) = match aggressor.side {

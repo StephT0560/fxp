@@ -506,7 +506,7 @@ def test_fok_no_liquidity(s, r):
 
 
 def test_cancel_filled_order(s, r):
-    """Cancel of an already-filled order should return OrderCancelReject or Canceled."""
+    """Cancel of an already-filled order must be rejected (never Canceled)."""
     print('\n─── test_cancel_filled_order ────────────────────────────────')
     sym     = 'BAC'
     buy_id  = order_id('CFB')
@@ -529,17 +529,16 @@ def test_cancel_filled_order(s, r):
     # Now try to cancel the already-filled buy
     s.cancel_order(cxl_id, buy_id, sym, '1')
 
-    # Should receive either OrderCancelReject (35=9) or ExecType=Canceled
-    # Both are acceptable — Rust returns a cancel confirm even for filled orders
+    # Must be rejected: OrderCancelReject (35=9) or ExecutionReport ExecType=Rejected (150=8)
     msg = s.wait_for(order_id=buy_id, timeout=3.0)
     if msg is None:
-        print(f'  ⚠️  no response to cancel of filled order')
-        r.passed += 1
+        print(f'  {FAIL} no response to cancel of filled order')
+        r.failed += 1
     elif msg.get(35) == '9':
-        print(f'  {PASS} OrderCancelReject received (correct)')
+        print(f'  {PASS} OrderCancelReject received')
         r.passed += 1
-    elif msg.get(150) == '4':
-        print(f'  {PASS} ExecType=Canceled received (Rust processed cancel)')
+    elif msg.get(35) == '8' and msg.get(150) == '8':
+        print(f'  {PASS} cancel rejected (ExecType=Rejected, Text={msg.get(58)!r})')
         r.passed += 1
     else:
         print(f'  {FAIL} unexpected response: MsgType={msg.get(35)} ExecType={msg.get(150)}')
