@@ -308,6 +308,28 @@ async fn order_book_task(symbol: String, mut rx: mpsc::Receiver<SymbolMsg>) {
                 let output_tx = order_msg.output_tx;
                 let now       = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 
+                // Validate before the signed quantity is cast to u32.
+                let is_limit = order.order_type == fxp::OrderType::Limit as i32
+                    || order.order_type == fxp::OrderType::StopLimit as i32;
+                let invalid = if order.quantity <= 0 {
+                    Some("quantity must be positive")
+                } else if is_limit && order.price <= 0 {
+                    Some("limit price must be positive")
+                } else {
+                    None
+                };
+                if let Some(reason) = invalid {
+                    let ts = Some(Timestamp { seconds: now.as_secs() as i64, nanos: now.subsec_nanos() as i32 });
+                    let state = OrderState::new(&order, order.quantity.max(0) as u32, output_tx.clone());
+                    let ev = ReportEvent {
+                        reject_reason: reason,
+                        ..ReportEvent::new(fxp::ExecutionType::ExecRejected, fxp::OrderStatus::OrderRejected)
+                    };
+                    let _ = output_tx.send(build_report(&order.order_id, &symbol, Some(&state), ev, &ts)).await;
+                    println!("⚠️ Order {} rejected: {}", order.order_id, reason);
+                    continue;
+                }
+
                 let order_obj = Order {
                     order_id:      order.order_id.clone(),
                     trader_id:     order.sender.clone(),
@@ -1055,5 +1077,32 @@ mod report_tests {
         assert_eq!(st(&r), fxp::OrderStatus::OrderRejected);
         assert_eq!((r.order_id.as_str(), r.client_order_id.as_str(), r.account.as_str(), r.orig_order_id.as_str()), ("ST1", "CL-ST1", "ACC-A", ""));
         assert!(!r.reject_reason.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_quantity_and_price_are_rejected() {
+        let book = spawn_book();
+        let (a, mut a_rx) = conn();
+        let mut stop_limit = nos("SL1", "A", SELL, 0, 5, 3, GTC);
+        stop_limit.stop_price = 99_00;
+        for order in [
+            nos("Q0", "A", BUY, 100_00, 0, LIMIT, GTC),
+            nos("QN", "A", BUY, 100_00, -5, LIMIT, GTC),
+            nos("QM", "A", BUY, 0, -1, MARKET, DAY),
+            nos("P0", "A", BUY, 0, 10, LIMIT, GTC),
+            nos("PN", "A", SELL, -100, 10, LIMIT, GTC),
+            stop_limit,
+        ] {
+            let id = order.order_id.clone();
+            send_order(&book, order, &a).await;
+            let r = next(&mut a_rx).await;
+            assert_eq!((r.order_id.as_str(), st(&r)), (id.as_str(), fxp::OrderStatus::OrderRejected));
+            assert!(!r.reject_reason.is_empty());
+            assert_eq!((r.orig_order_id.as_str(), r.leaves_quantity, r.cum_quantity), ("", 0, 0));
+        }
+        // Nothing rested: a market sell finds no liquidity and is cancelled.
+        send_order(&book, nos("M1", "A", SELL, 0, 1, MARKET, DAY), &a).await;
+        assert_eq!(st(&next(&mut a_rx).await), fxp::OrderStatus::OrderCanceled);
+        assert_quiet(&mut a_rx).await;
     }
 }

@@ -643,6 +643,16 @@ mod critical_tests {
         assert_eq!((r.trader_id.as_str(), r.price, r.quantity), ("VICTIM", 101_00, 10));
     }
 
+    #[test]
+    fn p08_fok_liquidity_sum_does_not_overflow() {
+        let mut book = make_book();
+        book.add_order(make_order("A1", OrderSide::Sell, 100_00, u32::MAX, OrderType::Limit, TimeInForce::GTC));
+        book.add_order(make_order("A2", OrderSide::Sell, 101_00, 10, OrderType::Limit, TimeInForce::GTC));
+        let r = book.process_aggressive(make_order("F1", OrderSide::Buy, 101_00, 20, OrderType::Limit, TimeInForce::FOK));
+        assert_eq!(r.unfilled_qty, 0);
+        assert_eq!(r.fills.iter().map(|f| f.trade_quantity).sum::<u32>(), 20);
+    }
+
     // ── Reference model: price-time priority with a flat Vec ──────────────────
 
     #[derive(Clone)]

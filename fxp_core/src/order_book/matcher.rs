@@ -188,18 +188,18 @@ impl OrderBook {
     // Fill entire quantity at limit price or cancel everything.
 
     fn execute_fok(&mut self, order: Order) -> AggressiveResult {
-        let available: u32 = match order.side {
+        let available: u64 = match order.side {
             OrderSide::Buy => self.sell_orders.iter()
                 .filter(|&(&p, _)| p <= order.price)
-                .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
+                .flat_map(|(_, v)| v.iter().map(|o| u64::from(o.quantity)))
                 .sum(),
             OrderSide::Sell => self.buy_orders.iter()
                 .filter(|&(&p, _)| p >= order.price)
-                .flat_map(|(_, v)| v.iter().map(|o| o.quantity))
+                .flat_map(|(_, v)| v.iter().map(|o| u64::from(o.quantity)))
                 .sum(),
         };
 
-        if available < order.quantity {
+        if available < u64::from(order.quantity) {
             // Insufficient liquidity — kill the order
             return AggressiveResult {
                 fills: Vec::new(), fill_updates: Vec::new(),
