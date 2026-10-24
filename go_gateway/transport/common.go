@@ -18,7 +18,7 @@ import (
 // ===============================
 // ✅ Shared Client Subscriptions
 // ===============================
-var clientSubs sync.Map    // symbol -> *sync.Map[clientConn -> true]
+var clientSubs sync.Map // symbol -> *sync.Map[clientConn -> true]
 var orderClientMap sync.Map
 
 // ============================================
@@ -236,8 +236,8 @@ func sendOrderReject(conn any, msg *protobuf.FXPMessage, reason string) {
 			ExecutionReport: &protobuf.ExecutionReport{
 				OrderId: orderID, Symbol: symbol, Side: side,
 				ExecutionType: protobuf.ExecutionType_EXEC_REJECTED,
-				OrderStatus: protobuf.OrderStatus_ORDER_REJECTED,
-				RejectReason: reason,
+				OrderStatus:   protobuf.OrderStatus_ORDER_REJECTED,
+				RejectReason:  reason,
 			},
 		},
 	}

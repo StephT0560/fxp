@@ -48,9 +48,9 @@ func TestFixTimeInForceDefaults(t *testing.T) {
 
 func TestFixEnumUnknownValuesAreRejected(t *testing.T) {
 	cases := []struct {
-		name   string
-		tag    int
-		value  string
+		name    string
+		tag     int
+		value   string
 		msgType string
 	}{
 		{"side", codec.TagSide, "Z", codec.MsgTypeNewOrderSingle},

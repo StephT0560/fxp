@@ -63,11 +63,11 @@ const (
 )
 
 var (
-	numSymbols   = flag.Int("symbols", 5, "Number of symbols to trade")
+	numSymbols      = flag.Int("symbols", 5, "Number of symbols to trade")
 	numParticipants = flag.Int("participants", 20, "Number of trading participants")
-	durationSec  = flag.Int("duration", 120, "Simulation wall-clock duration in seconds")
-	seed         = flag.Int64("seed", 0, "Random seed (0 = use current time)")
-	verbose      = flag.Bool("verbose", false, "Print individual order events")
+	durationSec     = flag.Int("duration", 120, "Simulation wall-clock duration in seconds")
+	seed            = flag.Int64("seed", 0, "Random seed (0 = use current time)")
+	verbose         = flag.Bool("verbose", false, "Print individual order events")
 )
 
 // ── Session phases ────────────────────────────────────────────────────────────
@@ -84,12 +84,18 @@ const (
 
 func (p Phase) String() string {
 	switch p {
-	case PhasePreMarket:   return "PRE_MARKET"
-	case PhaseOpenAuction: return "OPEN_AUCTION"
-	case PhaseContinuous:  return "CONTINUOUS"
-	case PhaseCloseAuction: return "CLOSE_AUCTION"
-	case PhaseClosed:      return "CLOSED"
-	default:               return "UNKNOWN"
+	case PhasePreMarket:
+		return "PRE_MARKET"
+	case PhaseOpenAuction:
+		return "OPEN_AUCTION"
+	case PhaseContinuous:
+		return "CONTINUOUS"
+	case PhaseCloseAuction:
+		return "CLOSE_AUCTION"
+	case PhaseClosed:
+		return "CLOSED"
+	default:
+		return "UNKNOWN"
 	}
 }
 
@@ -98,9 +104,9 @@ func (p Phase) String() string {
 type SymbolState struct {
 	mu           sync.Mutex
 	symbol       string
-	midPrice     int64  // fixed-point cents, e.g. 15000 = $150.00
-	volatility   int64  // typical price move per step, in cents
-	tickSize     int64  // minimum price increment, in cents
+	midPrice     int64 // fixed-point cents, e.g. 15000 = $150.00
+	volatility   int64 // typical price move per step, in cents
+	tickSize     int64 // minimum price increment, in cents
 	openPrice    int64
 	lastPrice    int64
 	highPrice    int64
@@ -144,8 +150,12 @@ func (s *SymbolState) recordFill(price int64, qty int64) {
 	defer s.mu.Unlock()
 	s.lastPrice = price
 	s.volume += qty
-	if price > s.highPrice { s.highPrice = price }
-	if price < s.lowPrice  { s.lowPrice  = price }
+	if price > s.highPrice {
+		s.highPrice = price
+	}
+	if price < s.lowPrice {
+		s.lowPrice = price
+	}
 }
 
 // ── Participant types ─────────────────────────────────────────────────────────
@@ -153,7 +163,7 @@ func (s *SymbolState) recordFill(price int64, qty int64) {
 type ParticipantType int
 
 const (
-	TypeMarketMaker  ParticipantType = iota
+	TypeMarketMaker ParticipantType = iota
 	TypeInstitutional
 	TypeRetail
 	TypeHedgeFund
@@ -161,11 +171,16 @@ const (
 
 func (t ParticipantType) String() string {
 	switch t {
-	case TypeMarketMaker:   return "MarketMaker"
-	case TypeInstitutional: return "Institutional"
-	case TypeRetail:        return "Retail"
-	case TypeHedgeFund:     return "HedgeFund"
-	default:                return "Unknown"
+	case TypeMarketMaker:
+		return "MarketMaker"
+	case TypeInstitutional:
+		return "Institutional"
+	case TypeRetail:
+		return "Retail"
+	case TypeHedgeFund:
+		return "HedgeFund"
+	default:
+		return "Unknown"
 	}
 }
 
@@ -197,13 +212,19 @@ func (s *SimStats) recordLatency(d time.Duration) {
 func (s *SimStats) percentile(p float64) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.latencies) == 0 { return 0 }
+	if len(s.latencies) == 0 {
+		return 0
+	}
 	sorted := make([]time.Duration, len(s.latencies))
 	copy(sorted, s.latencies)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
 	idx := int(math.Ceil(p/100.0*float64(len(sorted)))) - 1
-	if idx < 0 { idx = 0 }
-	if idx >= len(sorted) { idx = len(sorted) - 1 }
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
 	return sorted[idx]
 }
 
@@ -211,12 +232,14 @@ func (s *SimStats) percentile(p float64) time.Duration {
 
 func mustJSON(v interface{}) []byte {
 	b, err := json.Marshal(v)
-	if err != nil { panic(err) }
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
 func generateJWT(secret, traderID string) string {
-	header  := base64.RawURLEncoding.EncodeToString(mustJSON(map[string]string{"alg": "HS256", "typ": "JWT"}))
+	header := base64.RawURLEncoding.EncodeToString(mustJSON(map[string]string{"alg": "HS256", "typ": "JWT"}))
 	payload := base64.RawURLEncoding.EncodeToString(mustJSON(map[string]interface{}{
 		"sub": traderID,
 		"iat": time.Now().Unix(),
@@ -231,7 +254,9 @@ func generateJWT(secret, traderID string) string {
 
 func connectAndLogon(traderID, sessionID string) (net.Conn, error) {
 	conn, err := net.DialTimeout("tcp", gatewayAddr, 5*time.Second)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	logon := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_Logon{
@@ -251,7 +276,10 @@ func connectAndLogon(traderID, sessionID string) (net.Conn, error) {
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	ack, err := readFramed(conn)
 	conn.SetReadDeadline(time.Time{})
-	if err != nil { conn.Close(); return nil, fmt.Errorf("logon ack failed: %w", err) }
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("logon ack failed: %w", err)
+	}
 	if la, ok := ack.Payload.(*protobuf.FXPMessage_LogonAck); ok && !la.LogonAck.Accepted {
 		conn.Close()
 		return nil, fmt.Errorf("logon rejected: %s", la.LogonAck.RejectReason)
@@ -261,7 +289,9 @@ func connectAndLogon(traderID, sessionID string) (net.Conn, error) {
 
 func sendFramed(conn net.Conn, msg *protobuf.FXPMessage) error {
 	raw, err := proto.Marshal(msg)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	frame := make([]byte, 4+len(raw))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
 	copy(frame[4:], raw)
@@ -271,15 +301,21 @@ func sendFramed(conn net.Conn, msg *protobuf.FXPMessage) error {
 
 func readFramed(conn net.Conn) (*protobuf.FXPMessage, error) {
 	lenBuf := make([]byte, 4)
-	if _, err := io.ReadFull(conn, lenBuf); err != nil { return nil, err }
+	if _, err := io.ReadFull(conn, lenBuf); err != nil {
+		return nil, err
+	}
 	msgLen := binary.BigEndian.Uint32(lenBuf)
 	if msgLen == 0 || msgLen > 1_048_576 {
 		return nil, fmt.Errorf("invalid frame length: %d", msgLen)
 	}
 	body := make([]byte, msgLen)
-	if _, err := io.ReadFull(conn, body); err != nil { return nil, err }
+	if _, err := io.ReadFull(conn, body); err != nil {
+		return nil, err
+	}
 	msg := &protobuf.FXPMessage{}
-	if err := proto.Unmarshal(body, msg); err != nil { return nil, err }
+	if err := proto.Unmarshal(body, msg); err != nil {
+		return nil, err
+	}
 	return msg, nil
 }
 
@@ -292,7 +328,7 @@ type Participant struct {
 	conn          net.Conn
 	symbols       []*SymbolState
 	symbolByOrder map[string]*SymbolState // orderID → symbol (for recordFill)
-	stopOrderIDs  map[string]bool          // orderID → true for stop/stoplimit orders
+	stopOrderIDs  map[string]bool         // orderID → true for stop/stoplimit orders
 	rng           *rand.Rand
 	stats         *SimStats
 	phase         *Phase
@@ -322,10 +358,14 @@ func (p *Participant) orderRate() float64 {
 	p.phaseMu.RUnlock()
 
 	switch ph {
-	case PhaseOpenAuction:  return base * 3.0  // burst at open
-	case PhaseContinuous:   return base
-	case PhaseCloseAuction: return base * 2.0  // burst at close
-	default:                return base * 0.1  // minimal in pre/post
+	case PhaseOpenAuction:
+		return base * 3.0 // burst at open
+	case PhaseContinuous:
+		return base
+	case PhaseCloseAuction:
+		return base * 2.0 // burst at close
+	default:
+		return base * 0.1 // minimal in pre/post
 	}
 }
 
@@ -394,14 +434,16 @@ func (p *Participant) sendMarketMakerOrder(sym *SymbolState, ph Phase) {
 			aggrSide = protobuf.OrderSide_SELL
 			aggrPrice = mid - sym.volatility*3 // cross the bid with headroom
 		}
-		if aggrPrice < 1 { aggrPrice = 1 }
+		if aggrPrice < 1 {
+			aggrPrice = 1
+		}
 		aggrID := p.nextOrderID()
 		aggrMsg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     aggrID, Sender: p.traderID, Receiver: "FXPExchange",
-					Symbol:      sym.symbol, Price: aggrPrice, Side: aggrSide,
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: aggrID, Sender: p.traderID, Receiver: "FXPExchange",
+					Symbol: sym.symbol, Price: aggrPrice, Side: aggrSide,
 					Quantity:    int32(5 + p.rng.Intn(20)),
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_IOC,
@@ -421,7 +463,9 @@ func (p *Participant) sendMarketMakerOrder(sym *SymbolState, ph Phase) {
 		} else {
 			price = mid + spread/2
 		}
-		if price < sym.tickSize { price = sym.tickSize }
+		if price < sym.tickSize {
+			price = sym.tickSize
+		}
 
 		qty := int32(10 + p.rng.Intn(90)) // 10–100 shares
 		orderID := p.nextOrderID()
@@ -453,7 +497,9 @@ func (p *Participant) sendMarketMakerOrder(sym *SymbolState, ph Phase) {
 			atomic.AddInt64(&p.stats.ordersPlaced, 1)
 			atomic.AddInt64(&p.stats.limitOrders, 1)
 			p.activeOrders = append(p.activeOrders, orderID)
-			if *verbose { log.Printf("[%s] MM quote %s %s %s @%d qty=%d", p.traderID, sym.symbol, side, orderID, price, qty) }
+			if *verbose {
+				log.Printf("[%s] MM quote %s %s %s @%d qty=%d", p.traderID, sym.symbol, side, orderID, price, qty)
+			}
 		}
 	}
 }
@@ -469,13 +515,15 @@ func (p *Participant) sendInstitutionalOrder(sym *SymbolState, ph Phase) {
 		price := mid + int64(p.rng.Intn(int(sym.volatility*2))) - sym.volatility
 		orderID := p.nextOrderID()
 		side := protobuf.OrderSide_BUY
-		if p.rng.Float64() < 0.5 { side = protobuf.OrderSide_SELL }
+		if p.rng.Float64() < 0.5 {
+			side = protobuf.OrderSide_SELL
+		}
 
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: price, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_AT_OPEN,
@@ -486,19 +534,23 @@ func (p *Participant) sendInstitutionalOrder(sym *SymbolState, ph Phase) {
 		p.recordAndSendWithSymbol(orderID, msg, sym)
 		atomic.AddInt64(&p.stats.limitOrders, 1)
 		atomic.AddInt64(&p.stats.atOpenOrders, 1)
-		if *verbose { log.Printf("[%s] Institutional AT_OPEN %s qty=%d", p.traderID, sym.symbol, qty) }
+		if *verbose {
+			log.Printf("[%s] Institutional AT_OPEN %s qty=%d", p.traderID, sym.symbol, qty)
+		}
 
 	case ph == PhaseCloseAuction && p.rng.Float64() < 0.75:
 		// AT_CLOSE (MOC) order
 		orderID := p.nextOrderID()
 		side := protobuf.OrderSide_BUY
-		if p.rng.Float64() < 0.5 { side = protobuf.OrderSide_SELL }
+		if p.rng.Float64() < 0.5 {
+			side = protobuf.OrderSide_SELL
+		}
 
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: mid, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_AT_CLOSE,
@@ -509,7 +561,9 @@ func (p *Participant) sendInstitutionalOrder(sym *SymbolState, ph Phase) {
 		p.recordAndSendWithSymbol(orderID, msg, sym)
 		atomic.AddInt64(&p.stats.limitOrders, 1)
 		atomic.AddInt64(&p.stats.atCloseOrders, 1)
-		if *verbose { log.Printf("[%s] Institutional AT_CLOSE %s qty=%d", p.traderID, sym.symbol, qty) }
+		if *verbose {
+			log.Printf("[%s] Institutional AT_CLOSE %s qty=%d", p.traderID, sym.symbol, qty)
+		}
 
 	default:
 		// Standard limit order — post slightly inside best bid/ask
@@ -520,14 +574,16 @@ func (p *Participant) sendInstitutionalOrder(sym *SymbolState, ph Phase) {
 			side = protobuf.OrderSide_SELL
 			price = mid + offset
 		}
-		if price < 1 { price = 1 }
+		if price < 1 {
+			price = 1
+		}
 
 		orderID := p.nextOrderID()
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: price, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_DAY,
@@ -554,7 +610,9 @@ func (p *Participant) sendRetailOrder(sym *SymbolState, ph Phase) {
 
 	r := p.rng.Float64()
 	side := protobuf.OrderSide_BUY
-	if p.rng.Float64() < 0.5 { side = protobuf.OrderSide_SELL }
+	if p.rng.Float64() < 0.5 {
+		side = protobuf.OrderSide_SELL
+	}
 
 	orderID := p.nextOrderID()
 
@@ -564,8 +622,8 @@ func (p *Participant) sendRetailOrder(sym *SymbolState, ph Phase) {
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: 0, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_MARKET,
 					TimeInForce: protobuf.TimeInForce_DAY,
@@ -575,20 +633,26 @@ func (p *Participant) sendRetailOrder(sym *SymbolState, ph Phase) {
 		}
 		p.recordAndSendWithSymbol(orderID, msg, sym)
 		atomic.AddInt64(&p.stats.marketOrders, 1)
-		if *verbose { log.Printf("[%s] Retail MARKET %s %s qty=%d", p.traderID, sym.symbol, side, qty) }
+		if *verbose {
+			log.Printf("[%s] Retail MARKET %s %s qty=%d", p.traderID, sym.symbol, side, qty)
+		}
 
 	case r < 0.8:
 		// Limit order near mid
 		offset := int64(p.rng.Intn(int(sym.volatility * 3)))
 		price := mid - offset
-		if side == protobuf.OrderSide_SELL { price = mid + offset }
-		if price < 1 { price = 1 }
+		if side == protobuf.OrderSide_SELL {
+			price = mid + offset
+		}
+		if price < 1 {
+			price = 1
+		}
 
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: price, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_DAY,
@@ -604,8 +668,8 @@ func (p *Participant) sendRetailOrder(sym *SymbolState, ph Phase) {
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: mid, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_IOC,
@@ -624,7 +688,9 @@ func (p *Participant) sendHedgeFundOrder(sym *SymbolState, ph Phase) {
 
 	r := p.rng.Float64()
 	side := protobuf.OrderSide_BUY
-	if p.rng.Float64() < 0.5 { side = protobuf.OrderSide_SELL }
+	if p.rng.Float64() < 0.5 {
+		side = protobuf.OrderSide_SELL
+	}
 
 	orderID := p.nextOrderID()
 
@@ -635,7 +701,9 @@ func (p *Participant) sendHedgeFundOrder(sym *SymbolState, ph Phase) {
 		// Tight offset (1-2 vol units) so real fill price movement can reach the stop.
 		sym.mu.Lock()
 		basePrice := sym.lastPrice
-		if basePrice == 0 { basePrice = mid }
+		if basePrice == 0 {
+			basePrice = mid
+		}
 		sym.mu.Unlock()
 		stopOffset := sym.volatility * int64(1+p.rng.Intn(2)) // 1–2 vol units
 		var stopPrice int64
@@ -644,13 +712,15 @@ func (p *Participant) sendHedgeFundOrder(sym *SymbolState, ph Phase) {
 		} else {
 			stopPrice = basePrice + stopOffset // buy stop: trigger if price rises
 		}
-		if stopPrice < 1 { stopPrice = 1 }
+		if stopPrice < 1 {
+			stopPrice = 1
+		}
 
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: 0, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_STOP,
 					TimeInForce: protobuf.TimeInForce_DAY,
@@ -664,7 +734,9 @@ func (p *Participant) sendHedgeFundOrder(sym *SymbolState, ph Phase) {
 		p.pendingMu.Unlock()
 		p.recordAndSendWithSymbol(orderID, msg, sym)
 		atomic.AddInt64(&p.stats.stopOrders, 1)
-		if *verbose { log.Printf("[%s] HF STOP %s %s stop@%d qty=%d", p.traderID, sym.symbol, side, stopPrice, qty) }
+		if *verbose {
+			log.Printf("[%s] HF STOP %s %s stop@%d qty=%d", p.traderID, sym.symbol, side, stopPrice, qty)
+		}
 
 	case r < 0.6:
 		// Aggressive limit order crossing the spread
@@ -672,8 +744,8 @@ func (p *Participant) sendHedgeFundOrder(sym *SymbolState, ph Phase) {
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: price, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_IOC,
@@ -689,8 +761,8 @@ func (p *Participant) sendHedgeFundOrder(sym *SymbolState, ph Phase) {
 		msg := &protobuf.FXPMessage{
 			Payload: &protobuf.FXPMessage_NewOrder{
 				NewOrder: &protobuf.NewOrderSingle{
-					Header:      &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
-					OrderId:     orderID, Sender: p.traderID, Receiver: "FXPExchange",
+					Header:  &protobuf.FXPHeader{ProtocolVersion: "1.1", SequenceNumber: uint64(p.orderSeq)},
+					OrderId: orderID, Sender: p.traderID, Receiver: "FXPExchange",
 					Symbol: sym.symbol, Price: mid, Side: side, Quantity: qty,
 					OrderType:   protobuf.OrderType_LIMIT,
 					TimeInForce: protobuf.TimeInForce_FOK,
@@ -760,35 +832,41 @@ func (p *Participant) maybeCancelOldOrder() {
 	}
 	if err := sendFramed(p.conn, msg); err == nil {
 		atomic.AddInt64(&p.stats.ordersCancelled, 1)
-		if *verbose { log.Printf("[%s] CANCEL %s", p.traderID, orderID) }
+		if *verbose {
+			log.Printf("[%s] CANCEL %s", p.traderID, orderID)
+		}
 	}
 }
 
 func (p *Participant) sendCancelReplace(orderID string, sym *SymbolState, oldPrice int64, oldQty int32) {
-	newPrice := oldPrice + int64(p.rng.Intn(int(sym.volatility*2)))-sym.volatility
-	if newPrice < 1 { newPrice = 1 }
+	newPrice := oldPrice + int64(p.rng.Intn(int(sym.volatility*2))) - sym.volatility
+	if newPrice < 1 {
+		newPrice = 1
+	}
 	newOrderID := p.nextOrderID()
-	replaceID  := p.nextOrderID()
+	replaceID := p.nextOrderID()
 
 	msg := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_OrderCancelReplace{
 			OrderCancelReplace: &protobuf.OrderCancelReplaceRequest{
-				Header:           &protobuf.FXPHeader{ProtocolVersion: "1.1"},
-				OrderId:          orderID,
-				NewOrderId:       newOrderID,
-				ClientReplaceId:  replaceID,
-				Sender:           p.traderID,
-				Receiver:         "FXPExchange",
-				Symbol:           sym.symbol,
-				NewPrice:         newPrice,
-				NewQuantity:      oldQty,
-				Timestamp:        timestamppb.Now(),
+				Header:          &protobuf.FXPHeader{ProtocolVersion: "1.1"},
+				OrderId:         orderID,
+				NewOrderId:      newOrderID,
+				ClientReplaceId: replaceID,
+				Sender:          p.traderID,
+				Receiver:        "FXPExchange",
+				Symbol:          sym.symbol,
+				NewPrice:        newPrice,
+				NewQuantity:     oldQty,
+				Timestamp:       timestamppb.Now(),
 			},
 		},
 	}
 	if err := sendFramed(p.conn, msg); err == nil {
 		atomic.AddInt64(&p.stats.cancelReplaces, 1)
-		if *verbose { log.Printf("[%s] CANCEL/REPLACE %s → %s @%d", p.traderID, orderID, newOrderID, newPrice) }
+		if *verbose {
+			log.Printf("[%s] CANCEL/REPLACE %s → %s @%d", p.traderID, orderID, newOrderID, newPrice)
+		}
 	}
 }
 
@@ -860,12 +938,16 @@ func (p *Participant) readLoop() {
 					if isStopOrder {
 						atomic.AddInt64(&p.stats.stopsFired, 1)
 						delete(p.stopOrderIDs, orderID) // stop is done
-						if *verbose { log.Printf("[%s] STOP FILLED %s @%d", p.traderID, orderID, rep.ExecutionPrice) }
+						if *verbose {
+							log.Printf("[%s] STOP FILLED %s @%d", p.traderID, orderID, rep.ExecutionPrice)
+						}
 					}
 					if sym != nil {
 						sym.recordFill(rep.ExecutionPrice, int64(rep.ExecutedQuantity))
 					}
-					if *verbose && hasPending { log.Printf("[%s] FILLED %s @%d qty=%d", p.traderID, orderID, rep.ExecutionPrice, rep.ExecutedQuantity) }
+					if *verbose && hasPending {
+						log.Printf("[%s] FILLED %s @%d qty=%d", p.traderID, orderID, rep.ExecutionPrice, rep.ExecutedQuantity)
+					}
 				}
 			case protobuf.ExecutionType_EXEC_CANCELED:
 				delete(p.stopOrderIDs, orderID)
@@ -894,11 +976,11 @@ func runPhaseScheduler(phase *Phase, phaseMu *sync.RWMutex, totalDuration time.D
 		fraction float64
 		name     string
 	}{
-		{PhasePreMarket,    0.05, "PRE_MARKET"},
-		{PhaseOpenAuction,  0.05, "OPEN_AUCTION"},
-		{PhaseContinuous,   0.80, "CONTINUOUS"},
+		{PhasePreMarket, 0.05, "PRE_MARKET"},
+		{PhaseOpenAuction, 0.05, "OPEN_AUCTION"},
+		{PhaseContinuous, 0.80, "CONTINUOUS"},
 		{PhaseCloseAuction, 0.08, "CLOSE_AUCTION"},
-		{PhaseClosed,       0.02, "CLOSED"},
+		{PhaseClosed, 0.02, "CLOSED"},
 	}
 
 	for _, p := range phases {
@@ -949,20 +1031,26 @@ func main() {
 	fmt.Println("Gateway reachable ✓")
 
 	// Build symbol universe
-	baseSymbols := []struct{ name string; price int64; vol int64 }{
-		{"AAPL",    18500, 15},
-		{"MSFT",    37500, 20},
-		{"GOOGL",   17200, 18},
-		{"AMZN",    19800, 22},
-		{"NVDA",    87500, 50},
-		{"TSLA",    25000, 35},
-		{"META",    50000, 25},
-		{"JPM",     20000, 12},
+	baseSymbols := []struct {
+		name  string
+		price int64
+		vol   int64
+	}{
+		{"AAPL", 18500, 15},
+		{"MSFT", 37500, 20},
+		{"GOOGL", 17200, 18},
+		{"AMZN", 19800, 22},
+		{"NVDA", 87500, 50},
+		{"TSLA", 25000, 35},
+		{"META", 50000, 25},
+		{"JPM", 20000, 12},
 		{"ETH/USD", 320000, 200},
 		{"BTC/USD", 6800000, 500},
 	}
 	n := *numSymbols
-	if n > len(baseSymbols) { n = len(baseSymbols) }
+	if n > len(baseSymbols) {
+		n = len(baseSymbols)
+	}
 
 	symbols := make([]*SymbolState, n)
 	for i := 0; i < n; i++ {
@@ -972,17 +1060,17 @@ func main() {
 	}
 
 	// Shared state
-	stats  := &SimStats{}
-	phase  := PhasePreMarket
+	stats := &SimStats{}
+	phase := PhasePreMarket
 	phaseMu := &sync.RWMutex{}
-	done   := make(chan struct{})
+	done := make(chan struct{})
 
 	// Assign participant types
 	typeDistribution := []ParticipantType{
-		TypeMarketMaker,   TypeMarketMaker,   // 2 market makers
+		TypeMarketMaker, TypeMarketMaker, // 2 market makers
 		TypeInstitutional, TypeInstitutional, TypeInstitutional, // 3 institutional
-		TypeHedgeFund,     TypeHedgeFund,     // 2 hedge funds
-		TypeRetail,        TypeRetail,        TypeRetail, TypeRetail, // 4+ retail
+		TypeHedgeFund, TypeHedgeFund, // 2 hedge funds
+		TypeRetail, TypeRetail, TypeRetail, TypeRetail, // 4+ retail
 	}
 
 	// Build and connect participants
@@ -1007,15 +1095,15 @@ func main() {
 		}
 
 		participants[i] = &Participant{
-			id:      i,
-			ptype:   ptype,
-			traderID: traderID,
-			conn:    conn,
-			symbols: symList,
-			rng:     rand.New(rand.NewSource(*seed + int64(i)*31337)),
-			stats:   stats,
-			phase:   &phase,
-			phaseMu: phaseMu,
+			id:            i,
+			ptype:         ptype,
+			traderID:      traderID,
+			conn:          conn,
+			symbols:       symList,
+			rng:           rand.New(rand.NewSource(*seed + int64(i)*31337)),
+			stats:         stats,
+			phase:         &phase,
+			phaseMu:       phaseMu,
 			pending:       make(map[string]time.Time),
 			symbolByOrder: make(map[string]*SymbolState),
 			stopOrderIDs:  make(map[string]bool),
@@ -1113,6 +1201,8 @@ finished:
 }
 
 func min(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
 }

@@ -19,18 +19,18 @@
 package gateway
 
 import (
-	"sync/atomic"
-	"errors"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go_gateway/protobuf"
@@ -56,13 +56,13 @@ type OnReceive func(msg *protobuf.FXPMessage)
 
 // Client is a single FXP gateway connection representing one FIX session.
 type Client struct {
-	conn       net.Conn
-	traderID   string // FIX SenderCompID — used as JWT subject
-	sessionID  string
-	jwtSecret  string
+	conn      net.Conn
+	traderID  string // FIX SenderCompID — used as JWT subject
+	sessionID string
+	jwtSecret string
 
-	sendCh     chan []byte
-	onReceive  OnReceive
+	sendCh    chan []byte
+	onReceive OnReceive
 
 	done       chan struct{}
 	once       sync.Once

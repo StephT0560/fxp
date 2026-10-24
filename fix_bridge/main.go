@@ -58,7 +58,7 @@ import (
 // ── Config ────────────────────────────────────────────────────────────────────
 
 var (
-	listenAddr  = flag.String("addr", ":8083", "FIX TCP listen address")
+	listenAddr   = flag.String("addr", ":8083", "FIX TCP listen address")
 	bridgeCompID = flag.String("compid", "FXPBRIDGE", "Bridge SenderCompID in outbound FIX messages")
 )
 
@@ -284,14 +284,14 @@ func buildBusinessReject(msg *codec.Message, bridgeCompID, targetCompID string, 
 	switch msg.MsgType() {
 	case codec.MsgTypeNewOrderSingle:
 		b := codec.NewBuilder(codec.MsgTypeExecutionReport, bridgeCompID, targetCompID, seq)
-		b.Set(codec.TagOrderID,   "NONE")
-		b.Set(codec.TagExecID,    fmt.Sprintf("REJ-%s", msg.Get(codec.TagClOrdID)))
-		b.Set(codec.TagExecType,  codec.ExecTypeRejected)
+		b.Set(codec.TagOrderID, "NONE")
+		b.Set(codec.TagExecID, fmt.Sprintf("REJ-%s", msg.Get(codec.TagClOrdID)))
+		b.Set(codec.TagExecType, codec.ExecTypeRejected)
 		b.Set(codec.TagOrdStatus, codec.OrdStatusRejected)
-		b.Set(codec.TagClOrdID,   msg.Get(codec.TagClOrdID))
-		b.Set(codec.TagSymbol,    msg.Get(codec.TagSymbol))
+		b.Set(codec.TagClOrdID, msg.Get(codec.TagClOrdID))
+		b.Set(codec.TagSymbol, msg.Get(codec.TagSymbol))
 		b.SetInt(codec.TagLeavesQty, 0)
-		b.SetInt(codec.TagCumQty,    0)
+		b.SetInt(codec.TagCumQty, 0)
 		b.Set(codec.TagOrdRejReason, codec.OrdRejReasonOther)
 		b.Set(codec.TagText, reason)
 		return b.Build()

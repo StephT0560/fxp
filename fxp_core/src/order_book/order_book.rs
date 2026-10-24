@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: MIT
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::Arc; 
-use crate::order_book::order::Order; 
+use crate::order_book::broadcaster::MarketDataBroadcaster;
+use crate::order_book::market_data::{
+    MarketDataIncrementalUpdate, MarketDataSnapshot, MarketOrderUpdate, MarketUpdateType,
+};
+use crate::order_book::order::Order;
 use crate::order_book::order::OrderSide;
 use crate::order_book::order::TimeInForce;
-use crate::order_book::market_data::{MarketDataSnapshot, MarketDataIncrementalUpdate, MarketOrderUpdate, MarketUpdateType}; 
-use crate::order_book::broadcaster::MarketDataBroadcaster; 
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct OrderBook {
     pub symbol: String,
-    pub broadcaster: Arc<MarketDataBroadcaster>, 
+    pub broadcaster: Arc<MarketDataBroadcaster>,
     pub buy_orders: BTreeMap<i64, VecDeque<Order>>,
     pub sell_orders: BTreeMap<i64, VecDeque<Order>>,
     /// Live (resting) orders only, keyed by order_id, with their remaining quantity.
@@ -38,9 +40,10 @@ impl OrderReject {
     pub fn reason(&self) -> &'static str {
         match self {
             // NotOwner shares UnknownOrder's text so rejects don't reveal other traders' orders.
-            OrderReject::UnknownOrder | OrderReject::NotOwner
-                                                => "Unknown order (filled, cancelled or never existed)",
-            OrderReject::DuplicateOrderId       => "Duplicate order id",
+            OrderReject::UnknownOrder | OrderReject::NotOwner => {
+                "Unknown order (filled, cancelled or never existed)"
+            }
+            OrderReject::DuplicateOrderId => "Duplicate order id",
             OrderReject::QuantityNotAboveFilled => "Replace quantity not above filled quantity",
         }
     }
@@ -63,18 +66,25 @@ impl OrderBook {
     /// ✅ Notify clients when adding an order
     pub fn add_order(&mut self, order: Order) -> MarketDataIncrementalUpdate {
         let price_level = match order.side {
-            OrderSide::Buy => self.buy_orders.entry(order.price).or_insert_with(VecDeque::new),
-            OrderSide::Sell => self.sell_orders.entry(order.price).or_insert_with(VecDeque::new),
+            OrderSide::Buy => self
+                .buy_orders
+                .entry(order.price)
+                .or_insert_with(VecDeque::new),
+            OrderSide::Sell => self
+                .sell_orders
+                .entry(order.price)
+                .or_insert_with(VecDeque::new),
         };
         price_level.push_back(order.clone());
-        self.order_lookup.insert(order.order_id.clone(), order.clone());
+        self.order_lookup
+            .insert(order.order_id.clone(), order.clone());
         self.next_arrival += 1;
-        self.arrival.insert(order.order_id.clone(), self.next_arrival);
-    
+        self.arrival
+            .insert(order.order_id.clone(), self.next_arrival);
+
         // ✅ Return market update when order is added
         self.generate_incremental_update(MarketUpdateType::NewOrder, order.price, order.quantity)
     }
-    
 
     /// ✅ Notify clients when canceling an order
     pub fn cancel_order(&mut self, order_id: &str) -> Option<MarketDataIncrementalUpdate> {
@@ -85,7 +95,7 @@ impl OrderBook {
                 OrderSide::Buy => self.buy_orders.get_mut(&order.price),
                 OrderSide::Sell => self.sell_orders.get_mut(&order.price),
             };
-    
+
             if let Some(orders) = price_level {
                 orders.retain(|o| o.order_id != order_id);
                 if orders.is_empty() {
@@ -95,24 +105,32 @@ impl OrderBook {
                     };
                 }
             }
-    
+
             // ✅ Return incremental update when order is canceled
-            return Some(self.generate_incremental_update(MarketUpdateType::CancelOrder, order.price, order.quantity));
+            return Some(self.generate_incremental_update(
+                MarketUpdateType::CancelOrder,
+                order.price,
+                order.quantity,
+            ));
         }
         None
     }
-    
+
     /// Verify that `owner` (the authenticated trader) owns live order `order_id`.
     pub fn check_owner(&self, order_id: &str, owner: &str) -> Result<(), OrderReject> {
         match self.order_lookup.get(order_id) {
-            None                           => Err(OrderReject::UnknownOrder),
+            None => Err(OrderReject::UnknownOrder),
             Some(o) if o.trader_id != owner => Err(OrderReject::NotOwner),
-            Some(_)                        => Ok(()),
+            Some(_) => Ok(()),
         }
     }
 
     /// Cancel a live order on behalf of `owner`; rejects without side effects otherwise.
-    pub fn cancel_order_for(&mut self, order_id: &str, owner: &str) -> Result<MarketDataIncrementalUpdate, OrderReject> {
+    pub fn cancel_order_for(
+        &mut self,
+        order_id: &str,
+        owner: &str,
+    ) -> Result<MarketDataIncrementalUpdate, OrderReject> {
         self.check_owner(order_id, owner)?;
         self.cancel_order(order_id).ok_or(OrderReject::UnknownOrder)
     }
@@ -120,10 +138,10 @@ impl OrderBook {
     /// Record a fill against a live order: drop it from the lookup when fully
     /// filled, otherwise keep it with its remaining quantity.
     pub(crate) fn sync_fill(
-        lookup:    &mut HashMap<String, Order>,
-        cum:       &mut HashMap<String, u32>,
-        arrival:   &mut HashMap<String, u64>,
-        order_id:  &str,
+        lookup: &mut HashMap<String, Order>,
+        cum: &mut HashMap<String, u32>,
+        arrival: &mut HashMap<String, u64>,
+        order_id: &str,
         remaining: u32,
         trade_qty: u32,
     ) {
@@ -143,17 +161,21 @@ impl OrderBook {
     /// The replacement is added to the book; the caller runs match_orders().
     pub fn replace_order(
         &mut self,
-        orig_id:         &str,
-        new_id:          &str,
-        new_price:       i64,
-        new_total_qty:   u32,
+        orig_id: &str,
+        new_id: &str,
+        new_price: i64,
+        new_total_qty: u32,
         new_time_in_force: Option<TimeInForce>,
         client_order_id: &str,
-        owner:           &str,
-        timestamp:       u64,
+        owner: &str,
+        timestamp: u64,
     ) -> Result<(Order, MarketDataIncrementalUpdate), OrderReject> {
         self.check_owner(orig_id, owner)?;
-        let orig = self.order_lookup.get(orig_id).cloned().ok_or(OrderReject::UnknownOrder)?;
+        let orig = self
+            .order_lookup
+            .get(orig_id)
+            .cloned()
+            .ok_or(OrderReject::UnknownOrder)?;
         if new_id != orig_id && self.order_lookup.contains_key(new_id) {
             return Err(OrderReject::DuplicateOrderId);
         }
@@ -168,10 +190,10 @@ impl OrderBook {
 
         self.cancel_order(orig_id);
         let replacement = Order {
-            order_id:        new_id.to_string(),
-            price:           if new_price > 0 { new_price } else { orig.price },
-            quantity:        leaves,
-            time_in_force:   new_time_in_force.unwrap_or(orig.time_in_force),
+            order_id: new_id.to_string(),
+            price: if new_price > 0 { new_price } else { orig.price },
+            quantity: leaves,
+            time_in_force: new_time_in_force.unwrap_or(orig.time_in_force),
             timestamp,
             client_order_id: client_order_id.to_string(),
             ..orig
@@ -189,7 +211,12 @@ impl OrderBook {
         self.broadcaster.broadcast_snapshot(&snapshot);
     }
 
-    pub fn generate_incremental_update(&self, update_type: MarketUpdateType, price: i64, quantity: u32) -> MarketDataIncrementalUpdate {
+    pub fn generate_incremental_update(
+        &self,
+        update_type: MarketUpdateType,
+        price: i64,
+        quantity: u32,
+    ) -> MarketDataIncrementalUpdate {
         MarketDataIncrementalUpdate {
             symbol: self.symbol.clone(),
             changes: vec![MarketOrderUpdate {
@@ -200,11 +227,15 @@ impl OrderBook {
         }
     }
     pub fn get_market_snapshot(&self) -> MarketDataSnapshot {
-        let bids = self.buy_orders.iter()
+        let bids = self
+            .buy_orders
+            .iter()
             .map(|(price, orders)| (*price, orders.iter().map(|o| o.quantity).sum()))
             .collect();
 
-        let asks = self.sell_orders.iter()
+        let asks = self
+            .sell_orders
+            .iter()
             .map(|(price, orders)| (*price, orders.iter().map(|o| o.quantity).sum()))
             .collect();
 
@@ -215,4 +246,3 @@ impl OrderBook {
         }
     }
 }
-
