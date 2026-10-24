@@ -610,6 +610,7 @@ async fn mass_cancel(
         let report = fxp::OrderMassCancelReport {
             header: None,
             client_request_id: request.client_request_id,
+            sender: request.sender,
             symbol: request.symbol,
             side: request.side,
             total_affected,

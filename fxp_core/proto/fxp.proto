@@ -301,6 +301,7 @@ message OrderMassCancelReport {
   MassCancelReason          reason            = 6;
   string                    reject_reason     = 7; // non-empty when rejected
   google.protobuf.Timestamp timestamp         = 8;
+  string                    sender            = 9; // owner the request was scoped to
 }
 
 // ============================================================
