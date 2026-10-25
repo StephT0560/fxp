@@ -7,6 +7,15 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Simulator credentials and transport (C2)
+- Trading-day Logons now sign with the environment's `FXP_JWT_SECRET`, using
+  the shared JWT helper for issuer/audience/key id. Missing or short secrets
+  fail before dialing (gateway minimum: 24 bytes); no secret CLI option.
+- Add `-gateway` / `FXP_SIM_GATEWAY_ADDR` and shared verified TLS/mTLS flags
+  and `FXP_CLIENT_TLS*` environment defaults. Seeded order-generation coverage
+  and a CI loopback smoke with random credentials and custom claims added.
+- See [simulator instructions](docs/simulator.md).
+
 ### Public trade feed (C1)
 - Protocol v2.5 (additive): `TradeCaptureReport` gains `aggressor_side` (9),
   `seq` (10) and `is_auction` (11). The core now emits one anonymous
