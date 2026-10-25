@@ -1,0 +1,24 @@
+{
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "python3",
+    "/workspace/fxp/scripts/bench_fix.py",
+    "--concurrency",
+    "1",
+    "--output",
+    "/workspace/fxp/benchmarks/round4/fix-group-corelog-True.json"
+  ],
+  "returncode": 0,
+  "stdout": "",
+  "stderr": "",
+  "elapsed_seconds": 17.19134011800088,
+  "process_cpu_seconds": {
+    "core": 1.01,
+    "gateway": 1.43,
+    "bridge": 7.76
+  },
+  "cgroup_before": "usage_usec 2133215633\nuser_usec 1515010525\nsystem_usec 618205107\nnice_usec 0\nnr_periods 36622\nnr_throttled 6740\nthrottled_usec 497374092\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 2146211751\nuser_usec 1521034032\nsystem_usec 625177718\nnice_usec 0\nnr_periods 36794\nnr_throttled 6741\nthrottled_usec 497382232\nnr_bursts 0\nburst_usec 0\n"
+}

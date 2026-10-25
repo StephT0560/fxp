@@ -1,0 +1,33 @@
+File: bridge
+Build ID: 87838ca0cbab53a6dfc49ee559883df28c7b14dd
+Type: alloc_space
+Time: 2026-10-25 18:59:03 UTC
+Showing nodes accounting for 18317.93MB, 97.28% of 18829.96MB total
+Dropped 128 nodes (cum <= 94.15MB)
+Showing top 25 nodes out of 67
+      flat  flat%   sum%        cum   cum%
+ 5084.81MB 27.00% 27.00%  6642.14MB 35.27%  fix_bridge/codec.(*Dictionary).scope
+ 4982.31MB 26.46% 53.46%  6985.80MB 37.10%  fix_bridge/codec.(*Dictionary).Validate.func1
+ 3704.34MB 19.67% 73.14%  3704.34MB 19.67%  fix_bridge/codec.flatten
+  842.98MB  4.48% 77.61%   842.98MB  4.48%  fix_bridge/codec.(*Builder).Set (inline)
+  640.45MB  3.40% 81.01%   783.98MB  4.16%  fix_bridge/codec.(*Dictionary).Validate.func2
+  406.24MB  2.16% 83.17%   632.29MB  3.36%  fix_bridge/codec.(*Parser).readMessage
+  371.59MB  1.97% 85.14%   371.59MB  1.97%  strings.(*Builder).WriteString (inline)
+  339.72MB  1.80% 86.95% 14751.64MB 78.34%  fix_bridge/codec.(*Dictionary).Validate
+  308.53MB  1.64% 88.59%   308.53MB  1.64%  syscall.ByteSliceFromString
+  262.06MB  1.39% 89.98%   775.68MB  4.12%  fix_bridge/codec.(*Builder).Build
+  222.55MB  1.18% 91.16%   222.55MB  1.18%  fix_bridge/codec.parseFields
+  196.03MB  1.04% 92.20%   196.03MB  1.04%  reflect.unsafe_New
+  165.03MB  0.88% 93.08%   244.04MB  1.30%  os.lstatNolog
+  155.51MB  0.83% 93.90%   155.51MB  0.83%  internal/bytealg.MakeNoZero
+  147.54MB  0.78% 94.69%   147.54MB  0.78%  fix_bridge/session.(*FileStore).appendLocked
+  146.53MB  0.78% 95.47%   146.53MB  0.78%  fmt.Sprintf
+  101.01MB  0.54% 96.00%   328.04MB  1.74%  fix_bridge/gateway.readFramed
+   94.51MB   0.5% 96.50%   134.02MB  0.71%  fix_bridge/translator.translateNewOrder
+   71.51MB  0.38% 96.88%   129.51MB  0.69%  time.NewTimer
+   51.67MB  0.27% 97.16%   692.77MB  3.68%  fix_bridge/session.(*FileStore).Save
+   11.50MB 0.061% 97.22%   227.03MB  1.21%  fix_bridge/codec.NewBuilder
+      11MB 0.058% 97.28%   728.58MB  3.87%  fix_bridge/session.(*FileStore).writeSeqNumsLocked
+    0.50MB 0.0027% 97.28%   175.02MB  0.93%  os.openFileNolog
+         0     0% 97.28%   632.29MB  3.36%  fix_bridge/codec.(*Parser).ReadMessage
+         0     0% 97.28%  2827.48MB 15.02%  fix_bridge/gateway.(*Client).Connect

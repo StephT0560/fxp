@@ -1,0 +1,28 @@
+File: bridge
+Build ID: 310b44b69fade54dd3ed45b8d90201399cc4fe7e
+Type: delay
+Time: 2026-10-25 19:22:49 UTC
+Showing nodes accounting for 1833.33ms, 100% of 1833.34ms total
+Dropped 34 nodes (cum <= 9.17ms)
+      flat  flat%   sum%        cum   cum%
+ 1833.33ms   100%   100%  1833.33ms   100%  sync.(*Mutex).Unlock
+         0     0%   100%  1231.02ms 67.15%  fix_bridge/gateway.(*Client).Connect
+         0     0%   100%  1231.02ms 67.15%  fix_bridge/gateway.(*Client).readLoop
+         0     0%   100%  1231.01ms 67.15%  fix_bridge/session.(*FileStore).Save
+         0     0%   100%   520.59ms 28.40%  fix_bridge/session.(*FileStore).SetNextInSeq
+         0     0%   100%    79.78ms  4.35%  fix_bridge/session.(*Registry).Acquire
+         0     0%   100%   602.32ms 32.85%  fix_bridge/session.(*Session).Run
+         0     0%   100%  1231.01ms 67.15%  fix_bridge/session.(*Session).SendWithSeq
+         0     0%   100%    79.78ms  4.35%  fix_bridge/session.(*Session).acquireStore
+         0     0%   100%   602.32ms 32.85%  fix_bridge/session.(*Session).dispatch
+         0     0%   100%   602.32ms 32.85%  fix_bridge/session.(*Session).dispatchOne
+         0     0%   100%    79.78ms  4.35%  fix_bridge/session.(*Session).handleLogon
+         0     0%   100%   602.32ms 32.85%  fix_bridge/session.(*Session).readLoop
+         0     0%   100%   520.59ms 28.40%  fix_bridge/session.(*Session).setInSeq
+         0     0%   100%  1231.01ms 67.15%  main.(*bridgeHandler).OnLogon.func1
+         0     0%   100%  1231.02ms 67.15%  main.(*bridgeHandler).OnLogon.func2
+         0     0%   100%  1231.01ms 67.15%  main.(*bridgeHandler).onFXPMessage
+         0     0%   100%   602.32ms 32.85%  main.acceptFIXClientsContext.func2
+         0     0%   100%   602.32ms 32.85%  main.acceptFIXClientsContext.gowrap2
+         0     0%   100%   602.32ms 32.85%  main.handleFIXClient
+         0     0%   100%   602.32ms 32.85%  main.main.func1.1

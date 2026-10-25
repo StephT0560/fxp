@@ -1,0 +1,2 @@
+[ perf record: Woken up 18 times to write data ]
+[ perf record: Captured and wrote 4.408 MB /workspace/fxp/work/r4-profile/perf-closed-c50/core.perf (247 samples) ]

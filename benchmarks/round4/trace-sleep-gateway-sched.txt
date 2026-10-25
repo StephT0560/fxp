@@ -1,0 +1,26 @@
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 89.07ms, 94.32% of 94.44ms total
+Dropped 68 nodes (cum <= 0.47ms)
+Showing top 20 nodes out of 34
+      flat  flat%   sum%        cum   cum%
+   85.90ms 90.95% 90.95%    85.90ms 90.95%  runtime.selectgo
+    2.45ms  2.60% 93.55%     2.45ms  2.60%  runtime.systemstack_switch
+    0.73ms  0.77% 94.32%     0.73ms  0.77%  runtime.chanrecv1
+         0     0% 94.32%    85.74ms 90.79%  go_gateway/transport.(*clientWriter).enqueue
+         0     0% 94.32%     0.79ms  0.84%  go_gateway/transport.HandleFXPMessageAuthenticated
+         0     0% 94.32%    85.59ms 90.63%  go_gateway/transport.deliverReport
+         0     0% 94.32%    85.74ms 90.79%  go_gateway/transport.enqueueClientData
+         0     0% 94.32%     1.42ms  1.50%  go_gateway/transport.handleTCPClientWithWriter
+         0     0% 94.32%    86.19ms 91.26%  go_gateway/transport.poolReader
+         0     0% 94.32%    86.19ms 91.26%  go_gateway/transport.readCoreFrames
+         0     0% 94.32%    85.59ms 90.63%  go_gateway/transport.routeFromCore
+         0     0% 94.32%     0.57ms   0.6%  go_gateway/transport.sendLogonAck
+         0     0% 94.32%     1.42ms  1.50%  go_gateway/transport.serveTCPContext.func2
+         0     0% 94.32%     0.87ms  0.92%  google.golang.org/protobuf/internal/impl.(*MessageInfo).initOneofFieldCoders.func1
+         0     0% 94.32%     0.87ms  0.92%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshal
+         0     0% 94.32%     0.87ms  0.92%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointer
+         0     0% 94.32%     0.87ms  0.92%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointerEager
+         0     0% 94.32%     0.87ms  0.92%  google.golang.org/protobuf/internal/impl.consumeMessageInfo
+         0     0% 94.32%     0.87ms  0.92%  google.golang.org/protobuf/proto.Unmarshal
+         0     0% 94.32%     0.87ms  0.92%  google.golang.org/protobuf/proto.UnmarshalOptions.unmarshal

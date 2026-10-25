@@ -1,0 +1,26 @@
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 72.91s, 61.88% of 117.83s total
+Dropped 125 nodes (cum <= 0.59s)
+Showing top 20 nodes out of 34
+      flat  flat%   sum%        cum   cum%
+    66.98s 56.85% 56.85%     66.98s 56.85%  runtime.selectgo
+     4.37s  3.71% 60.55%      4.37s  3.71%  runtime.systemstack_switch
+     1.53s  1.30% 61.85%      1.53s  1.30%  runtime.goschedIfBusy
+     0.02s 0.017% 61.87%      1.46s  1.24%  runtime.mallocgcSmallScanNoHeader
+     0.01s 0.0092% 61.88%      3.09s  2.62%  runtime.mallocgc
+         0     0% 61.88%     67.22s 57.05%  go_gateway/transport.(*clientWriter).enqueue
+         0     0% 61.88%      0.43s  0.37%  go_gateway/transport.HandleFXPMessage
+         0     0% 61.88%      0.47s   0.4%  go_gateway/transport.HandleFXPMessageAuthenticated
+         0     0% 61.88%     67.29s 57.11%  go_gateway/transport.deliverReport
+         0     0% 61.88%     67.22s 57.05%  go_gateway/transport.enqueueClientData
+         0     0% 61.88%      0.81s  0.69%  go_gateway/transport.handleTCPClientWithWriter
+         0     0% 61.88%     69.28s 58.80%  go_gateway/transport.poolReader
+         0     0% 61.88%     69.28s 58.80%  go_gateway/transport.readCoreFrames
+         0     0% 61.88%     67.44s 57.24%  go_gateway/transport.routeFromCore
+         0     0% 61.88%      0.81s  0.69%  go_gateway/transport.serveTCPContext.func2
+         0     0% 61.88%      1.52s  1.29%  google.golang.org/protobuf/internal/impl.(*MessageInfo).initOneofFieldCoders.func1
+         0     0% 61.88%      1.52s  1.29%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshal
+         0     0% 61.88%      1.52s  1.29%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointer
+         0     0% 61.88%      1.52s  1.29%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointerEager
+         0     0% 61.88%      1.51s  1.28%  google.golang.org/protobuf/internal/impl.consumeMessageInfo

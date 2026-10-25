@@ -1,0 +1,26 @@
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 105.39ms, 88.03% of 119.73ms total
+Dropped 92 nodes (cum <= 0.60ms)
+Showing top 20 nodes out of 21
+      flat  flat%   sum%        cum   cum%
+   99.89ms 83.43% 83.43%    99.89ms 83.43%  runtime.selectgo
+    3.17ms  2.64% 86.08%     3.17ms  2.64%  runtime.systemstack_switch
+    2.34ms  1.95% 88.03%     2.34ms  1.95%  runtime.Gosched
+         0     0% 88.03%    99.76ms 83.32%  go_gateway/transport.(*clientWriter).enqueue
+         0     0% 88.03%    99.74ms 83.31%  go_gateway/transport.deliverReport
+         0     0% 88.03%    99.76ms 83.32%  go_gateway/transport.enqueueClientData
+         0     0% 88.03%     0.94ms  0.79%  go_gateway/transport.handleTCPClientWithWriter
+         0     0% 88.03%   100.32ms 83.79%  go_gateway/transport.poolReader
+         0     0% 88.03%   100.32ms 83.79%  go_gateway/transport.readCoreFrames
+         0     0% 88.03%   100.02ms 83.54%  go_gateway/transport.routeFromCore
+         0     0% 88.03%     0.94ms  0.79%  go_gateway/transport.serveTCPContext.func2
+         0     0% 88.03%     2.78ms  2.32%  main.main
+         0     0% 88.03%     2.35ms  1.96%  os/signal.(*signalCtx).stop
+         0     0% 88.03%     2.35ms  1.96%  os/signal.Stop
+         0     0% 88.03%     2.34ms  1.95%  os/signal.signalWaitUntilIdle
+         0     0% 88.03%     2.13ms  1.78%  runtime.gcBgMarkWorker
+         0     0% 88.03%     0.77ms  0.64%  runtime.gcMarkDone
+         0     0% 88.03%     0.77ms  0.64%  runtime.gcMarkTermination
+         0     0% 88.03%     1.04ms  0.87%  runtime.gcStart
+         0     0% 88.03%     1.04ms  0.87%  runtime.mallocgc

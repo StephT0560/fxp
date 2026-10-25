@@ -1,0 +1,47 @@
+{
+  "source_commit": "16c051471f09ac5c685be9c96ae2cb617a1b1495",
+  "binaries": {
+    "core": {
+      "path": "/workspace/fxp/fxp_core/target/release/fxp_core",
+      "sha256": "5fde210dc69ae65c61987d67ecaa5e3e55ead8e0ea4c82c17155e5873e9d4aed"
+    },
+    "gateway": {
+      "path": "/workspace/fxp/work/r4-profile/gateway",
+      "sha256": "a7d5cebf36a002c10bb13954e73be03564b74bdcc46cf7666f1acd5234b9947f"
+    },
+    "bridge": {
+      "path": "/workspace/fxp/work/r4-profile/bridge",
+      "sha256": "a9055ce749e9ceee5b9ffec198db002d823a33b9098373d2b0c2e25400de9258"
+    }
+  },
+  "working_tree_dirty": true,
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "python3",
+    "/workspace/fxp/scripts/bench_fix.py",
+    "--concurrency",
+    "10",
+    "--output",
+    "/workspace/fxp/benchmarks/round4/fix-open-r5000.json",
+    "--mode",
+    "open",
+    "--rate",
+    "500",
+    "--orders",
+    "2500"
+  ],
+  "returncode": 0,
+  "stdout": "",
+  "stderr": "",
+  "elapsed_seconds": 102.80026292099865,
+  "generator_cpu_seconds": 25.809991000000004,
+  "process_cpu_seconds": {
+    "core": 2.52,
+    "gateway": 5.51,
+    "bridge": 89.42999999999999
+  },
+  "cgroup_before": "usage_usec 3824466588\nuser_usec 2604923027\nsystem_usec 1219543560\nnice_usec 0\nnr_periods 49058\nnr_throttled 9432\nthrottled_usec 621951561\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 3949529873\nuser_usec 2659370298\nsystem_usec 1290159574\nnice_usec 0\nnr_periods 50086\nnr_throttled 9432\nthrottled_usec 621951561\nnr_bursts 0\nburst_usec 0\n"
+}

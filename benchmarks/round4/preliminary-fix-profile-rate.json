@@ -1,0 +1,5 @@
+{
+  "selected_offered_rate": 1000,
+  "rule": "highest tested rate with median completion >=95% offered and median ACK p99 <10 ms",
+  "qualifying_rates": []
+}

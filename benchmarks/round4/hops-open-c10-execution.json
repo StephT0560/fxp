@@ -1,0 +1,59 @@
+{
+  "source_commit": "9a8d72546c7b3feb2e8a1367a829e6a1077b1bf2",
+  "binaries": {
+    "core": {
+      "path": "/workspace/fxp/fxp_core/target/release/fxp_core",
+      "sha256": "3566e979bee2f7a4da2b1ac948956e5e21e3f2cb88ee99fb6740b6d9083f6b89"
+    },
+    "gateway": {
+      "path": "/workspace/fxp/work/r4-profile/gateway",
+      "sha256": "9aeb3d28b44044192b9f65a50e8e8058102e3d9163a74115f9e5f276fdafa444"
+    },
+    "generator": {
+      "path": "/workspace/fxp/work/r4-profile/bench",
+      "sha256": "632a3a08dfe5bd4320204ae91b1a451fd0e2c5bca77c25da6f4fcf9b1d180e94"
+    }
+  },
+  "working_tree_dirty": true,
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "/workspace/fxp/work/r4-profile/bench",
+    "--mode",
+    "open",
+    "--pacer",
+    "sleep",
+    "--concurrency",
+    "10",
+    "--rate",
+    "1000",
+    "--symbols",
+    "spread",
+    "--orders",
+    "1000",
+    "--warmup",
+    "100",
+    "--repetitions",
+    "5",
+    "--pinning",
+    "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+    "--json",
+    "/workspace/fxp/benchmarks/round4/hops-open-c10.json",
+    "--markdown",
+    "/workspace/fxp/benchmarks/round4/hops-open-c10.md",
+    "--subscribers",
+    "0"
+  ],
+  "returncode": 0,
+  "stdout": "# Live FXP benchmark\n\nMode: **open**; 10 connections; 1000 measured + 100 warmup orders/connection; 5 repetitions; open-loop rate 1000 orders/s/connection (ignored in closed mode).\n\nTransport: TLS=false; client certificate=false.\n\n- arch: amd64\n- client_cpu_affinity: 2\n- cpu: INTEL(R) XEON(R) PLATINUM 8573C\n- go: go1.26.10\n- gomaxprocs: 1\n- launch_env_FXP_GW_RATE: 1000000\n- launch_env_FXP_GW_RATE_BURST: 1000000\n- launch_env_FXP_SYMBOL_CONFIG: \n- launch_env_RUST_LOG: error\n- launch_env_TOKIO_WORKER_THREADS: 1\n- logical_cpus: 1\n- os: linux\n- pinning_notes: core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs\n- revision: 9a8d72546c7b3feb2e8a1367a829e6a1077b1bf2\n- rustc_local: rustc 1.99.1 (58cf8f9c3 2026-10-13)\n\n| Metric | Median of runs | Min | Max |\n|---|---:|---:|---:|\n| orders_per_second | 9936.0 | 9932.2 | 9960.5 |\n| max_send_lag_ns | 3070760.0 | 2774849.0 | 4748180.0 |\n| ack_p50_ns | 1126399.0 | 1033215.0 | 1131519.0 |\n| ack_p90_ns | 2373631.0 | 1987583.0 | 2541567.0 |\n| ack_p99_ns | 5349375.0 | 4153343.0 | 15384575.0 |\n| ack_p99_9_ns | 7340031.0 | 5402623.0 | 21102591.0 |\n| ack_max_ns | 8335359.0 | 6651903.0 | 22708223.0 |\n| fill_p50_ns | 1773567.0 | 1714175.0 | 1815551.0 |\n| fill_p90_ns | 3018751.0 | 2760703.0 | 3176447.0 |\n| fill_p99_ns | 5984255.0 | 4882431.0 | 15818751.0 |\n| fill_p99_9_ns | 8138751.0 | 6037503.0 | 21200895.0 |\n| fill_max_ns | 9863167.0 | 7659519.0 | 23117823.0 |\n\nLatency units: ns, HDR 3 significant digits. Both endpoints include sender backlog in open mode. ACK = EXEC_NEW; fill = terminal ORDER_FILLED, not every report. Throughput counts orders once and includes final fill drain. Warmup is a separate completed phase. Runs with rejects, missing responses or dropped samples fail.\n",
+  "stderr": "",
+  "elapsed_seconds": 5.867493566000121,
+  "generator_cpu_seconds": 2.224769,
+  "process_cpu_seconds": {
+    "core": 1.09,
+    "gateway": 3.01
+  },
+  "cgroup_before": "usage_usec 4647737527\nuser_usec 3046834648\nsystem_usec 1600902879\nnice_usec 0\nnr_periods 58561\nnr_throttled 10168\nthrottled_usec 656064821\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 4654131763\nuser_usec 3050570855\nsystem_usec 1603560908\nnice_usec 0\nnr_periods 58620\nnr_throttled 10168\nthrottled_usec 656064821\nnr_bursts 0\nburst_usec 0\n"
+}

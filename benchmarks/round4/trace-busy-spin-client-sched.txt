@@ -1,0 +1,26 @@
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 1059.31ms, 27.70% of 3824.45ms total
+Dropped 34 nodes (cum <= 19.12ms)
+Showing top 20 nodes out of 25
+      flat  flat%   sum%        cum   cum%
+  873.43ms 22.84% 22.84%   873.43ms 22.84%  runtime.goschedIfBusy
+  139.78ms  3.65% 26.49%   139.78ms  3.65%  runtime.systemstack_switch
+   45.96ms  1.20% 27.69%    49.79ms  1.30%  time.Until
+    0.14ms 0.0036% 27.70%    78.79ms  2.06%  runtime.newobject
+         0     0% 27.70%    55.48ms  1.45%  encoding/json.MarshalIndent
+         0     0% 27.70%    35.12ms  0.92%  encoding/json.appendIndent
+         0     0% 27.70%    34.02ms  0.89%  encoding/json.appendNewline
+         0     0% 27.70%    59.17ms  1.55%  main.main
+         0     0% 27.70%    50.61ms  1.32%  main.paceUntil
+         0     0% 27.70%    20.42ms  0.53%  main.readFramed
+         0     0% 27.70%    59.17ms  1.55%  main.run
+         0     0% 27.70%   114.80ms  3.00%  main.runClientPhase
+         0     0% 27.70%    20.46ms  0.53%  main.runClientPhase.func1
+         0     0% 27.70%   114.81ms  3.00%  main.runRepetition.func3.1
+         0     0% 27.70%   873.43ms 22.84%  runtime.bgsweep
+         0     0% 27.70%    11.66ms   0.3%  runtime.deductAssistCredit
+         0     0% 27.70%    11.66ms   0.3%  runtime.gcAssistAlloc
+         0     0% 27.70%    11.74ms  0.31%  runtime.gcMarkDone
+         0     0% 27.70%    11.74ms  0.31%  runtime.gcMarkTermination
+         0     0% 27.70%   128.04ms  3.35%  runtime.gcStart

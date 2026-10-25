@@ -1,0 +1,11 @@
+goos: linux
+goarch: amd64
+pkg: go_gateway/transport
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkOrderFrame 	 2638048	       458.4 ns/op	      96 B/op	       2 allocs/op
+BenchmarkOrderFrame 	 2567008	       469.5 ns/op	      96 B/op	       2 allocs/op
+BenchmarkOrderFrame 	 1887194	       574.1 ns/op	      96 B/op	       2 allocs/op
+BenchmarkOrderFrame 	 2445031	       482.1 ns/op	      96 B/op	       2 allocs/op
+BenchmarkOrderFrame 	 2420996	       474.1 ns/op	      96 B/op	       2 allocs/op
+PASS
+ok  	go_gateway/transport	5.833s

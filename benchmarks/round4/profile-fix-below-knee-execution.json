@@ -1,0 +1,47 @@
+{
+  "source_commit": "16c051471f09ac5c685be9c96ae2cb617a1b1495",
+  "binaries": {
+    "core": {
+      "path": "/workspace/fxp/fxp_core/target/release/fxp_core",
+      "sha256": "5fde210dc69ae65c61987d67ecaa5e3e55ead8e0ea4c82c17155e5873e9d4aed"
+    },
+    "gateway": {
+      "path": "/workspace/fxp/work/r4-profile/gateway",
+      "sha256": "a7d5cebf36a002c10bb13954e73be03564b74bdcc46cf7666f1acd5234b9947f"
+    },
+    "bridge": {
+      "path": "/workspace/fxp/work/r4-profile/bridge",
+      "sha256": "a9055ce749e9ceee5b9ffec198db002d823a33b9098373d2b0c2e25400de9258"
+    }
+  },
+  "working_tree_dirty": true,
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "python3",
+    "/workspace/fxp/scripts/bench_fix.py",
+    "--concurrency",
+    "10",
+    "--output",
+    "/workspace/fxp/benchmarks/round4/profile-fix-below-knee.json",
+    "--mode",
+    "open",
+    "--rate",
+    "100",
+    "--orders",
+    "500"
+  ],
+  "returncode": 0,
+  "stdout": "",
+  "stderr": "",
+  "elapsed_seconds": 30.519614958999227,
+  "generator_cpu_seconds": 6.970974,
+  "process_cpu_seconds": {
+    "core": 1.12,
+    "gateway": 3.44,
+    "bridge": 23.66
+  },
+  "cgroup_before": "usage_usec 4309595460\nuser_usec 2817471061\nsystem_usec 1492124398\nnice_usec 0\nnr_periods 53093\nnr_throttled 9441\nthrottled_usec 622093727\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 4345753364\nuser_usec 2833220070\nsystem_usec 1512533294\nnice_usec 0\nnr_periods 53399\nnr_throttled 9444\nthrottled_usec 622118508\nnr_bursts 0\nburst_usec 0\n"
+}

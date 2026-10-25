@@ -1,0 +1,2 @@
+[ perf record: Woken up 32 times to write data ]
+[ perf record: Captured and wrote 7.888 MB /workspace/fxp/work/r4-profile/perf-below-knee/core.perf (438 samples) ]

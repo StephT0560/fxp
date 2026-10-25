@@ -1,0 +1,8 @@
+{
+  "selected_offered_rate": 1000,
+  "rule": "highest tested rate completing >=95% offered throughput; selected after the ramp, not an SLO",
+  "observed_matching_rates": [
+    1000
+  ],
+  "initial_tail_target_met": false
+}

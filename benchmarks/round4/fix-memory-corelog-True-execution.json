@@ -1,0 +1,24 @@
+{
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "python3",
+    "/workspace/fxp/scripts/bench_fix.py",
+    "--concurrency",
+    "1",
+    "--output",
+    "/workspace/fxp/benchmarks/round4/fix-memory-corelog-True.json"
+  ],
+  "returncode": 0,
+  "stdout": "",
+  "stderr": "",
+  "elapsed_seconds": 6.393041882000034,
+  "process_cpu_seconds": {
+    "core": 0.54,
+    "gateway": 0.92,
+    "bridge": 1.76
+  },
+  "cgroup_before": "usage_usec 2109089318\nuser_usec 1503485609\nsystem_usec 605603708\nnice_usec 0\nnr_periods 36161\nnr_throttled 6740\nthrottled_usec 497374092\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 2113916536\nuser_usec 1506601259\nsystem_usec 607315277\nnice_usec 0\nnr_periods 36225\nnr_throttled 6740\nthrottled_usec 497374092\nnr_bursts 0\nburst_usec 0\n"
+}

@@ -1,0 +1,10 @@
+    Finished `bench` profile [optimized] target(s) in 0.05s
+     Running benches/engine_benchmark.rs (target/release/deps/engine_benchmark-2261c5c617753ebd)
+Gnuplot not found, using plotters backend
+Benchmarking engine_10k_50pct_cancel_100levels
+Benchmarking engine_10k_50pct_cancel_100levels: Warming up for 1.0000 s
+Benchmarking engine_10k_50pct_cancel_100levels: Collecting 10 samples in estimated 1.2467 s (20 iterations)
+Benchmarking engine_10k_50pct_cancel_100levels: Analyzing
+engine_10k_50pct_cancel_100levels
+                        time:   [25.957 ms 26.363 ms 26.805 ms]
+

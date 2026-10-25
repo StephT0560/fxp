@@ -1,0 +1,27 @@
+File: gateway
+Build ID: 554e9780a58f6e9cb267eab8149571d934ccbf69
+Type: cpu
+Time: 2026-10-25 18:49:10 UTC
+Duration: 12.45s, Total samples = 10.71s (86.01%)
+Showing nodes accounting for 7.08s, 66.11% of 10.71s total
+Dropped 250 nodes (cum <= 0.05s)
+Showing top 18 nodes out of 160
+      flat  flat%   sum%        cum   cum%
+     4.73s 44.16% 44.16%      4.73s 44.16%  internal/runtime/syscall/linux.Syscall6
+     0.25s  2.33% 46.50%      1.06s  9.90%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointerEager
+     0.23s  2.15% 48.65%      0.65s  6.07%  google.golang.org/protobuf/internal/impl.(*MessageInfo).marshalAppendPointer
+     0.19s  1.77% 50.42%      0.22s  2.05%  runtime.typePointers.next
+     0.17s  1.59% 52.01%      0.78s  7.28%  runtime.selectgo
+     0.15s  1.40% 53.41%      0.15s  1.40%  runtime.memclrNoHeapPointers
+     0.15s  1.40% 54.81%      0.15s  1.40%  runtime.nextFreeFast (inline)
+     0.14s  1.31% 56.12%      0.14s  1.31%  internal/runtime/atomic.(*Uint32).CompareAndSwap
+     0.14s  1.31% 57.42%      0.37s  3.45%  runtime.scanObject
+     0.13s  1.21% 58.64%      0.13s  1.21%  internal/poll.(*fdMutex).rwlock
+     0.12s  1.12% 59.76%      0.12s  1.12%  google.golang.org/protobuf/encoding/protowire.AppendVarint
+     0.11s  1.03% 60.78%      0.26s  2.43%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Load
+     0.11s  1.03% 61.81%      0.11s  1.03%  runtime.memmove
+     0.10s  0.93% 62.75%      0.33s  3.08%  google.golang.org/protobuf/internal/impl.(*MessageInfo).sizePointerSlow
+     0.10s  0.93% 63.68%      0.10s  0.93%  runtime.cputicks
+     0.09s  0.84% 64.52%      0.10s  0.93%  runtime.lock2
+     0.09s  0.84% 65.36%      0.11s  1.03%  runtime.unlock2
+     0.08s  0.75% 66.11%      0.10s  0.93%  runtime.(*mspan).writeHeapBitsSmall

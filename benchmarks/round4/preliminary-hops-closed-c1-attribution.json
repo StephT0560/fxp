@@ -1,0 +1,115 @@
+{
+  "complete_orders": 5000,
+  "incomplete_orders": 0,
+  "repetitions": 5,
+  "summary": {
+    "client_send -> gateway_receive": {
+      "p50_ns": {
+        "median": 22156,
+        "min": 22017,
+        "max": 22270
+      },
+      "p99_ns": {
+        "median": 176004,
+        "min": 144769,
+        "max": 197117
+      }
+    },
+    "gateway_receive -> gateway_core_write": {
+      "p50_ns": {
+        "median": 6651,
+        "min": 6526,
+        "max": 6815
+      },
+      "p99_ns": {
+        "median": 48924,
+        "min": 38028,
+        "max": 79233
+      }
+    },
+    "gateway_core_write -> core_receive": {
+      "p50_ns": {
+        "median": 16910,
+        "min": 16742,
+        "max": 16995
+      },
+      "p99_ns": {
+        "median": 168784,
+        "min": 164549,
+        "max": 203282
+      }
+    },
+    "core_receive -> engine_start": {
+      "p50_ns": {
+        "median": 1697,
+        "min": 1685,
+        "max": 1716
+      },
+      "p99_ns": {
+        "median": 4212,
+        "min": 2997,
+        "max": 6101
+      }
+    },
+    "engine_start -> engine_end": {
+      "p50_ns": {
+        "median": 5707,
+        "min": 5601,
+        "max": 5767
+      },
+      "p99_ns": {
+        "median": 20804,
+        "min": 17709,
+        "max": 22124
+      }
+    },
+    "engine_end -> core_write": {
+      "p50_ns": {
+        "median": 3229,
+        "min": 3192,
+        "max": 3279
+      },
+      "p99_ns": {
+        "median": 9900,
+        "min": 8146,
+        "max": 13849
+      }
+    },
+    "core_write -> gateway_core_receive": {
+      "p50_ns": {
+        "median": 20389,
+        "min": 20063,
+        "max": 20974
+      },
+      "p99_ns": {
+        "median": 179627,
+        "min": 147366,
+        "max": 193383
+      }
+    },
+    "gateway_core_receive -> gateway_client_write": {
+      "p50_ns": {
+        "median": 15999,
+        "min": 15774,
+        "max": 16097
+      },
+      "p99_ns": {
+        "median": 90670,
+        "min": 81613,
+        "max": 114112
+      }
+    },
+    "gateway_client_write -> client_receive": {
+      "p50_ns": {
+        "median": 24702,
+        "min": 23887,
+        "max": 25865
+      },
+      "p99_ns": {
+        "median": 132707,
+        "min": 112714,
+        "max": 184538
+      }
+    }
+  }
+}
