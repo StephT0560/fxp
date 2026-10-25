@@ -28,8 +28,9 @@ ports. Loopback isolation alone does not authenticate processes in that namespac
 
 | Configuration | Protection and remaining access |
 |---|---|
-| Development defaults: plaintext, no core token | External JWT/FIX authentication still applies, but traffic can be intercepted. Any process with core loopback access can claim any sender and submit orders. |
-| External TLS | Encrypts and authenticates the server on TCP, wss and FIX links. Application JWT/FIX credentials still determine trader identity. Core loopback access remains trusted unless a token is configured. |
+| Explicit dev Compose profile / native loopback plaintext without core token | External JWT/FIX authentication still applies, but traffic can be intercepted. Any process with core loopback access can claim any sender and submit orders. |
+| Default secure Compose: required TLS/mTLS + nonempty core token | Encrypts client and bridge→gateway links, requires client certificates and authenticates gateway→core admission. JWT/FIX credentials still determine trader identity. Requires generated secrets and readable certificates. |
+| External TLS (native configuration) | Encrypts and authenticates the server on TCP, wss and FIX links. Application JWT/FIX credentials still determine trader identity. Core loopback access remains trusted unless a token is configured. |
 | External mTLS | Additionally admits only clients signed by the configured client CA. Certificate subjects are not mapped to trader identities; application authentication still applies. |
 | Core shared token | Core rejects connections before parsing orders unless they present the configured token. An attacker with loopback access but without the token cannot assert a sender. An admitted gateway can assert sender identities and must remain trusted. |
 
@@ -47,8 +48,16 @@ require host access controls. A compromised admitted gateway can impersonate
 traders. TLS does not protect compromised endpoints or replace order ownership
 checks. Use container/network isolation and restrict local accounts accordingly.
 
-Production listeners should set `FXP_TLS_REQUIRED=true`; the development default
-only warns on non-loopback plaintext binds. See [TLS deployment](docs/tls-trust.md)
-for certificate reload and client configuration. The development JWT secret
-`dev-secret-change-in-production` is a documented local default, never a production
-credential.
+Native listeners default to loopback. Non-loopback plaintext is refused unless
+`FXP_ALLOW_PLAINTEXT=true`, which logs an INSECURE warning on every startup.
+The explicit dev Compose profile gives up encryption, certificate authentication
+and core admission authentication; it still requires JWT/FIX credentials and
+publishes only on host loopback. The plaintext override never bypasses secret
+checks or `FXP_TLS_REQUIRED=true`.
+
+JWT current/previous keys require at least 24 bytes; nonempty core tokens require
+24–1024 bytes. Generate independent random values (`openssl rand -hex 32`),
+rather than padding passwords. The known development JWT value is forbidden on
+any non-loopback listener, even with TLS. Servers have no built-in secret
+fallback. See [TLS migration and deployment](docs/tls-trust.md#breaking-configuration-migration-round-4-2)
+for this breaking configuration change and secure/dev Compose instructions.

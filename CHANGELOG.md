@@ -7,6 +7,25 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Breaking configuration changes (round 4 Medium #2)
+- Native gateway TCP/WS and FIX listener defaults are now loopback. Use
+  `FXP_GW_TCP_ADDR`, `FXP_GW_WS_ADDR` and `FXP_FIX_ADDR` (or bridge `-addr`)
+  for explicit binds. Non-loopback plaintext refuses startup unless
+  `FXP_ALLOW_PLAINTEXT=true`; the override warns on every startup.
+- Gateway/bridge require JWT current/previous keys of at least 24 bytes and
+  forbid the known dev JWT on non-loopback binds, including TLS/override mode.
+  Core/gateway require nonempty core tokens to contain 24–1024 bytes. Empty
+  native/dev core tokens still disable auth. No wire/schema changes.
+- Default Compose now requires TLS, mTLS by default, verified bridge upstream,
+  and a nonempty matching core token. Add `.env.example`, `make dev-certs`,
+  secure Compose smoke coverage and an explicit bannered `dev` profile in
+  `docker-compose.dev.yml` that disables transport/core authentication.
+- Migration: rotate short/default deployment keys, install trusted certificates,
+  configure explicit external binds and update clients for TLS/mTLS. Generate
+  independent random keys with `openssl rand -hex 32`; reissue JWTs when keys
+  change. Set `FXP_CERT_GID` for certificate permissions. Native loopback E2E
+  fixtures remain valid. See `docs/tls-trust.md` for full secure/dev migration.
+
 ## [0.1.0] - Pending first release
 
 ### Added
