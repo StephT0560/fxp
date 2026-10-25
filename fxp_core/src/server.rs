@@ -688,6 +688,28 @@ async fn handle_tcp_client(stream: tokio::net::TcpStream, router: SymbolRouter) 
     }
 }
 
+// Connection-auth entry point; its guard runs before parsing any FXP frame.
+async fn handle_authenticated_client(
+    mut stream: tokio::net::TcpStream,
+    router: SymbolRouter,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    writer_drain: tokio::sync::watch::Receiver<bool>,
+    writers: mpsc::UnboundedSender<tokio::task::JoinHandle<()>>,
+    auth: crate::core_auth::CoreAuth,
+) {
+    if auth.enabled() {
+        let authenticated = tokio::select! {
+            _ = shutdown.changed() => false,
+            result = tokio::time::timeout(Duration::from_secs(5), auth.authenticate(&mut stream)) => matches!(result, Ok(Ok(()))),
+        };
+        if !authenticated {
+            tracing::warn!("core authentication failed; connection closed");
+            return;
+        }
+    }
+    handle_tcp_client_with_shutdown(stream, router, shutdown, writer_drain, writers).await
+}
+
 async fn handle_tcp_client_with_shutdown(
     stream: tokio::net::TcpStream,
     router: SymbolRouter,
@@ -1250,7 +1272,9 @@ pub async fn start_server(shutdown: impl Future<Output = ()> + Send) -> Result<(
             router.restore_symbol(&symbol).await;
         }
     }
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let listener = TcpListener::bind(crate::core_auth::CORE_LISTEN_ADDR)
+        .await
+        .unwrap();
 
     tracing::info!("FXP Core running on 127.0.0.1:8080");
     tracing::info!("Architecture: per-symbol tasks + lock-free output channels");
@@ -1296,6 +1320,33 @@ async fn run_server_with_router<F>(
 where
     F: Future<Output = ()> + Send,
 {
+    let auth = crate::core_auth::CoreAuth::from_env().map_err(str::to_string)?;
+    run_server_with_router_and_auth(listener, router, shutdown, timeout, auth).await
+}
+
+async fn run_server_with_router_and_auth<F>(
+    listener: TcpListener,
+    router: SymbolRouter,
+    shutdown: F,
+    timeout: Duration,
+    auth: crate::core_auth::CoreAuth,
+) -> Result<(), String>
+where
+    F: Future<Output = ()> + Send,
+{
+    if !listener
+        .local_addr()
+        .map_err(|_| "cannot inspect core listener")?
+        .ip()
+        .is_loopback()
+    {
+        return Err("core listener must be bound to a loopback address".into());
+    }
+    if !auth.enabled() {
+        tracing::warn!(
+            "core connection authentication is disabled; any process with loopback access can claim a sender"
+        )
+    }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (writer_drain_tx, writer_drain_rx) = tokio::sync::watch::channel(false);
     let (writer_tx, mut writer_rx) = mpsc::unbounded_channel();
@@ -1313,13 +1364,15 @@ where
                     let shutdown = shutdown_rx.clone();
                     let writer_drain = writer_drain_rx.clone();
                     let writers = writer_tx.clone();
+                    let auth = auth.clone();
                     handlers.spawn(async move {
-                        handle_tcp_client_with_shutdown(
+                        handle_authenticated_client(
                             stream,
                             router_clone,
                             shutdown,
                             writer_drain,
                             writers,
+                            auth,
                         )
                         .await;
                     });
@@ -3217,5 +3270,119 @@ mod status_frame_tests {
         assert_eq!(response.request_id, "request");
         assert_eq!(response.reject_reason, "status report exceeds frame limit");
         assert!(frames.try_recv().is_err());
+    }
+}
+
+#[cfg(test)]
+mod core_auth_tests {
+    use super::*;
+    use tracing::instrument::WithSubscriber;
+    #[derive(Clone)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    #[tokio::test]
+    async fn core_auth_precedes_every_sender_command_and_never_logs_tokens() {
+        use crate::core_auth::{CoreAuth, MAGIC};
+        for supplied in [
+            None,
+            Some("wrong-private-token"),
+            Some("correct-private-token"),
+        ] {
+            let router = SymbolRouter::new(None);
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (server, _) = listener.accept().await.unwrap();
+            let (_tx, rx) = tokio::sync::watch::channel(false);
+            let (wtx, mut wrx) = mpsc::unbounded_channel();
+            let log = Capture(Default::default());
+            let capture = log.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(move || capture.clone())
+                .finish();
+            let task = tokio::spawn(
+                handle_authenticated_client(
+                    server,
+                    router.clone(),
+                    rx.clone(),
+                    rx,
+                    wtx,
+                    CoreAuth::new(Some("correct-private-token".into())).unwrap(),
+                )
+                .with_subscriber(subscriber),
+            );
+            if let Some(token) = supplied {
+                client.write_all(MAGIC).await.unwrap();
+                client.write_u16(token.len() as u16).await.unwrap();
+                client.write_all(token.as_bytes()).await.unwrap();
+                if token == "correct-private-token" {
+                    let mut ack = [0u8; 1];
+                    client.read_exact(&mut ack).await.unwrap();
+                    assert_eq!(ack, [1]);
+                }
+            }
+            let order = fxp::FxpMessage {
+                payload: Some(fxp::fxp_message::Payload::NewOrder(fxp::NewOrderSingle {
+                    order_id: "AUTH".into(),
+                    sender: "claimed-owner".into(),
+                    symbol: "AUTH".into(),
+                    price: 100,
+                    quantity: 1,
+                    side: fxp::OrderSide::Buy as i32,
+                    order_type: fxp::OrderType::Limit as i32,
+                    time_in_force: fxp::TimeInForce::Gtc as i32,
+                    ..Default::default()
+                })),
+            };
+            let _ = client.write_all(&frame_message(&order)).await;
+            let mut prefix = [0u8; 4];
+            let reply =
+                tokio::time::timeout(Duration::from_secs(2), client.read_exact(&mut prefix))
+                    .await
+                    .unwrap();
+            if supplied == Some("correct-private-token") {
+                assert!(reply.is_ok());
+                assert_eq!(router.symbols().await, vec!["AUTH"]);
+            } else {
+                assert!(reply.is_err(), "unauthenticated sender was honored");
+                assert!(router.symbols().await.is_empty());
+            }
+            drop(client);
+            task.await.unwrap();
+            while let Ok(task) = wrx.try_recv() {
+                task.abort()
+            }
+            let logs = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+            assert!(!logs.contains("correct-private-token"));
+            assert!(!logs.contains("wrong-private-token"));
+        }
+    }
+    #[tokio::test]
+    async fn non_loopback_core_listener_is_refused() {
+        let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let result = run_server_with_router_and_auth(
+            listener,
+            SymbolRouter::new(None),
+            std::future::pending(),
+            Duration::from_secs(1),
+            crate::core_auth::CoreAuth::new(Some("secret".into())).unwrap(),
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            "core listener must be bound to a loopback address"
+        );
     }
 }

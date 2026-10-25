@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"go_gateway/coreauth"
 	"go_gateway/protobuf"
 	"google.golang.org/protobuf/proto"
 )
@@ -84,6 +85,9 @@ func run(mode string) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+	if err := coreauth.Authenticate(conn, os.Getenv("FXP_CORE_AUTH_TOKEN")); err != nil {
+		return err
+	}
 	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return err
 	}

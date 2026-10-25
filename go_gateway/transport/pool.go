@@ -28,7 +28,9 @@ import (
 	"runtime"
 	"sync"
 
+	"go_gateway/coreauth"
 	"go_gateway/protobuf"
+	"os"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -67,6 +69,10 @@ func dialCore(addr string) (net.Conn, error) {
 		return nil, err
 	}
 	if err := c.(*net.TCPConn).SetNoDelay(true); err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	if err := coreauth.Authenticate(c, os.Getenv("FXP_CORE_AUTH_TOKEN")); err != nil {
 		_ = c.Close()
 		return nil, err
 	}

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+mod core_auth;
 pub mod engine;
 mod event_log;
 pub mod order_book;

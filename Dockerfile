@@ -51,6 +51,7 @@ RUN useradd --system --uid 10001 --home-dir /data --create-home fxp \
 COPY --from=core-build /src/fxp_core/target/release/fxp_core /usr/local/bin/fxp_core
 COPY --from=go-build /out/go_gateway /usr/local/bin/go_gateway
 COPY --from=go-build /out/fix_bridge /usr/local/bin/fix_bridge
+COPY --chmod=755 scripts/core_healthcheck.sh /usr/local/bin/core_healthcheck
 USER fxp
 WORKDIR /data
 ENV FXP_FIX_STORE_DIR=/data/fix_store
