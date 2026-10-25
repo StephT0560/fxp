@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"go_gateway/logging"
+	"go_gateway/startup"
 	"go_gateway/tlsconfig"
 	"go_gateway/transport"
 	"log"
@@ -26,7 +27,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("TLS configuration: %v", err)
 	}
-
+	if err := startup.ValidateSecrets(startup.Address("FXP_GW_TCP_ADDR", "127.0.0.1:8082"), startup.Address("FXP_GW_WS_ADDR", "127.0.0.1:8081")); err != nil {
+		log.Fatalf("security configuration: %v", err)
+	}
 	go manager.Watch(ctx, time.Second)
 	var wg sync.WaitGroup
 	serverErrors := make(chan error, 2)

@@ -102,7 +102,9 @@ func main() {
 	if err := configCheck.ConfigureSchedule(); err != nil {
 		log.Fatalf("FIX schedule: %v", err)
 	}
-
+	if err := startup.ValidateSecrets(*listenAddr); err != nil {
+		log.Fatalf("security configuration: %v", err)
+	}
 	jwtSecret := os.Getenv("FXP_JWT_SECRET")
 	if jwtSecret == "" {
 		log.Fatal("FXP_JWT_SECRET environment variable not set")

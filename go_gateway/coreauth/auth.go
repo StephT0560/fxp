@@ -13,11 +13,19 @@ import (
 
 var ErrAuthentication = errors.New("core authentication failed")
 
+// ValidateToken applies equally at gateway startup and before any handshake.
+func ValidateToken(token string) error {
+	if token != "" && (len(token) < 24 || len(token) > 1024) {
+		return errors.New("FXP_CORE_AUTH_TOKEN must contain 24 to 1024 bytes when set")
+	}
+	return nil
+}
+
 func Authenticate(conn net.Conn, token string) error {
 	if token == "" {
 		return nil
 	}
-	if len(token) > 1024 {
+	if ValidateToken(token) != nil {
 		return ErrAuthentication
 	}
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
