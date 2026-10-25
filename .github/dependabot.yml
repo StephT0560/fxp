@@ -2,16 +2,33 @@
 version: 2
 updates:
   - package-ecosystem: cargo
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      cargo-updates:
+        patterns: ["*"]
+        update-types: [minor, patch]
     directory: /fxp_core
     schedule:
       interval: weekly
   - package-ecosystem: gomod
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      gomod-updates:
+        patterns: ["*"]
+        update-types: [minor, patch]
     directories:
       - /go_gateway
       - /fix_bridge
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      github-actions-updates:
+        patterns: ["*"]
     directory: /
     schedule:
       interval: weekly

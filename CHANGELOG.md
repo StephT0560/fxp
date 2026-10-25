@@ -158,3 +158,5 @@ cut a release yet, so everything is under Unreleased.
 ### Repository automation (round 4 Low #3)
 - Add a stable, fail-closed `ci-success` required check over all CI jobs,
   including both Go matrix legs; PR checks need no private secrets.
+- Group Cargo and Go minor/patch updates and GitHub Actions updates; cap each
+  ecosystem at five open PRs and apply the `dependencies` label. No auto-merge.

@@ -594,3 +594,6 @@ PRs (including Dependabot) run CI with read-only repository permissions and no
 private secrets. Require the stable `ci-success` check on `main`; it fails if
 any dependency fails, is cancelled, or is skipped, including either Go matrix
 leg. See [repository settings](docs/repo-settings.md) for the manual ruleset.
+Dependabot groups Cargo/Go minor and patch updates and all Actions updates,
+with at most five open PRs per ecosystem and the `dependencies` label.
+Auto-merge is not enabled.
