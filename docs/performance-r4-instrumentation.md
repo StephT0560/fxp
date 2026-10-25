@@ -12,7 +12,7 @@ private directory. Do not enable diagnostics during baseline measurements.
 
 | Process | Variable | Default | Meaning |
 |---|---|---|---|
-| Core, gateway, bridge, Go benchmark | `FXP_HOP_TRACE` | unset | Local hop-event file (Linux CLOCK_MONOTONIC, ns); buffered, flushed on clean shutdown |
+| Core, gateway, Go benchmark | `FXP_HOP_TRACE` | unset | Local hop-event file (Linux CLOCK_MONOTONIC, ns); buffered, flushed on clean shutdown |
 | Gateway, bridge, Go benchmark | `FXP_PROFILE_DIR` | unset | CPU, cumulative allocations, block and mutex pprof files; full block/mutex sampling |
 | Gateway, bridge, Go benchmark | `FXP_TRACE_FILE` | unset | Go runtime execution trace file |
 
@@ -48,7 +48,7 @@ bind mount when collecting files (for example a writable private `/profiles`).
 No profiling directory is mounted or created in a default deployment.
 
 Compose path selectors are `FXP_CORE_HOP_TRACE`, `FXP_GW_HOP_TRACE`,
-`FXP_FIX_HOP_TRACE`, `FXP_GW_PROFILE_DIR`, `FXP_FIX_PROFILE_DIR`,
+`FXP_GW_PROFILE_DIR`, `FXP_FIX_PROFILE_DIR`,
 `FXP_GW_TRACE_FILE` and `FXP_FIX_TRACE_FILE`, all unset by default.
 
 The optional Cargo feature `dhat` installs a tracking allocator only in that
@@ -66,3 +66,6 @@ Keep the error output rather than substituting a made-up scheduler latency.
 A locally extracted Debian perf can record `cpu-clock:u` without changing the
 host. The runtime trace supplies Go scheduler-delay evidence but cannot replace
 the missing kernel scheduler view.
+
+Bridge captures use Go runtime/pprof diagnostics; the per-order hop side channel
+in this round covers the direct client → gateway → core path.

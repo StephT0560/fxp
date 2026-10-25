@@ -97,7 +97,6 @@ services:
       gateway:
         condition: service_started
     environment:
-      FXP_HOP_TRACE: ${FXP_FIX_HOP_TRACE:-}
       FXP_PROFILE_DIR: ${FXP_FIX_PROFILE_DIR:-}
       FXP_TRACE_FILE: ${FXP_FIX_TRACE_FILE:-}
       FXP_TLS_CERT_FILE: ''

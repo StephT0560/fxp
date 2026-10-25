@@ -650,9 +650,9 @@ Diagnostics are off by default and add no wire fields.
 
 | Process | Variable | Default | Purpose |
 |---|---|---|---|
-| Core, gateway, bridge, benchmark | `FXP_HOP_TRACE` | unset | Local Linux CLOCK_MONOTONIC hop-event file |
+| Core, gateway, benchmark | `FXP_HOP_TRACE` | unset | Local Linux CLOCK_MONOTONIC hop-event file |
 | Gateway, bridge, Go benchmark | `FXP_PROFILE_DIR` / `FXP_TRACE_FILE` | unset | Go CPU/alloc/block/mutex profiles / runtime trace |
-| Compose | `FXP_CORE_HOP_TRACE`, `FXP_GW_HOP_TRACE`, `FXP_FIX_HOP_TRACE` | unset | Per-container hop file paths; mount an output directory explicitly |
+| Compose | `FXP_CORE_HOP_TRACE`, `FXP_GW_HOP_TRACE` | unset | Per-container hop file paths; mount an output directory explicitly |
 | Compose | `FXP_GW_PROFILE_DIR`, `FXP_FIX_PROFILE_DIR`, `FXP_GW_TRACE_FILE`, `FXP_FIX_TRACE_FILE` | unset | Per-container Go profile/trace paths |
 | Core built with optional `dhat` feature | `FXP_DHAT_FILE` | `dhat-heap.json` | Tracking-allocator output; ignored by normal builds |
 
