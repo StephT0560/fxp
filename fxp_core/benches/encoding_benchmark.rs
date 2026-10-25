@@ -45,8 +45,9 @@
 ///
 ///   cargo bench --bench encoding_benchmark
 ///   # HTML report: fxp_core/target/criterion/report/index.html
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use prost::Message;
+use std::hint::black_box;
 
 #[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
 mod fxp {

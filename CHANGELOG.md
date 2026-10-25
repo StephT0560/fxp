@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore CI compatibility after the merged Criterion/prost-build upgrades: use standard-library black_box and scope a Zlib license exception to foldhash 0.1.5 (#1 verification).
+
 - Add opt-in limit reserve orders, displayed-only depth, FIFO replenishment, cumulative reports, reserve-aware STP/FOK and deterministic replay (additive wire v2.4, #1).
 
 - Add per-symbol price scale/tick and quantity rules, FIX/MD precision-aware formatting, int64 boundary checks and configuration-safe input-log replay (#1, order types).
