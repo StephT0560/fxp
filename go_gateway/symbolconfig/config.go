@@ -77,7 +77,9 @@ func Parse(text string) (Config, error) {
 			return bad()
 		}
 		for _, v := range []byte(cols[0]) {
-			if !(v >= 'A' && v <= 'Z' || v >= 'a' && v <= 'z' || v >= '0' && v <= '9' || strings.ContainsRune("._-/:", rune(v))) {
+			switch {
+			case v >= 'A' && v <= 'Z', v >= 'a' && v <= 'z', v >= '0' && v <= '9', strings.ContainsRune("._-/:", rune(v)):
+			default:
 				return bad()
 			}
 		}
