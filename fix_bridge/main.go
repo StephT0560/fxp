@@ -71,6 +71,7 @@ import (
 // ── Config ────────────────────────────────────────────────────────────────────
 
 var (
+	testFixture  = flag.Bool("test-fixture", false, "enable compiled-in test fixture (test builds only)")
 	listenAddr   = flag.String("addr", startup.Address("FXP_FIX_ADDR", "127.0.0.1:8083"), "FIX TCP listen address")
 	bridgeCompID = flag.String("compid", "FXPBRIDGE", "Bridge SenderCompID in outbound FIX messages")
 )
@@ -97,8 +98,17 @@ func main() {
 	if _, err = upstream.Config(); err != nil {
 		log.Fatalf("gateway TLS configuration: %v", err)
 	}
+	if err := validateTestFixture(*testFixture, *listenAddr, manager.Enabled()); err != nil {
+		log.Fatalf("FIX test fixture: %v", err)
+	}
+	if *testFixture {
+		fmt.Fprintln(os.Stderr, "WARNING: TEST-ONLY QuickFIX echo fixture enabled; no venue orders are executed")
+	}
 	go manager.Watch(ctx, time.Second)
 	configCheck := session.NewSession(nil, "", nil)
+	if err := configCheck.ConfigurePolicy(); err != nil {
+		log.Fatalf("FIX policy: %v", err)
+	}
 	if err := configCheck.ConfigureSchedule(); err != nil {
 		log.Fatalf("FIX schedule: %v", err)
 	}
@@ -354,6 +364,26 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 		jwtSecret:    jwtSecret,
 	}
 
+	if *testFixture {
+		handler := testFixtureHandler(conn)
+		if handler == nil {
+			_ = conn.Close()
+			return
+		}
+		fixtureSession := session.NewSession(conn, bridgeCompID, handler)
+		fixtureSession.ResetOnDisconnect = true // pinned echo harness resets sessions between connections
+		fixtureSession.LogonTimeout = sessionDurationEnv("FXP_FIX_LOGON_TIMEOUT", 2*time.Second)
+		fixtureSession.LogoutTimeout = sessionDurationEnv("FXP_FIX_LOGOUT_TIMEOUT", fixtureSession.LogoutTimeout)
+		fixtureSession.Auth = auth
+		fixtureSession.Registry = registry
+		if err := fixtureSession.ConfigurePolicy(); err != nil {
+			_ = conn.Close()
+			return
+		}
+		fixtureSession.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", fixtureSession.MaxLatency)
+		fixtureSession.Run()
+		return
+	}
 	// Create the FIX session — TargetCompID is filled in when Logon arrives
 	sess := session.NewSession(conn, bridgeCompID, h)
 	sess.LogonTimeout = sessionDurationEnv("FXP_FIX_LOGON_TIMEOUT", sess.LogonTimeout)
@@ -361,6 +391,11 @@ func handleFIXClient(conn net.Conn, bridgeCompID, jwtSecret string, auth session
 	sess.MaxLatency = sessionDurationEnv("FXP_FIX_MAX_LATENCY", sess.MaxLatency)
 	if err := sess.ConfigureSchedule(); err != nil {
 		log.Printf("FIX schedule: %v", err)
+		_ = conn.Close()
+		return
+	}
+	if err := sess.ConfigurePolicy(); err != nil {
+		log.Printf("FIX policy: %v", err)
 		_ = conn.Close()
 		return
 	}
