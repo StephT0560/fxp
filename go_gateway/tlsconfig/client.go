@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,14 @@ import (
 type ClientOptions struct {
 	Enabled                               bool
 	CAFile, CertFile, KeyFile, ServerName string
+}
+
+// MarshalJSON reports transport mode without publishing local material paths.
+func (o ClientOptions) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Enabled bool `json:"enabled"`
+		MTLS    bool `json:"mtls"`
+	}{Enabled: o.Enabled, MTLS: o.CertFile != ""})
 }
 
 func ClientFromEnv(prefix string) (ClientOptions, error) {

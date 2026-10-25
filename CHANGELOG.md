@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Omit local TLS material paths from benchmark artifacts and preserve fixed gateway/bridge internal ports after review (#4).
+
 - Add optional reloadable TLS 1.2+ and mTLS on gateway TCP/WebSocket and FIX listeners, mandatory-TLS startup enforcement and non-loopback plaintext warnings (#4).
 - Enforce a loopback-only core listener and optional pre-parser shared-token connection admission, including gateway reconnects and authenticated health checks (#4).
 - Add verified TLS/mTLS flags to Go/Python clients and benchmark, temporary certificate generation, rotation probes, full TLS e2e CI and deployment/trust documentation (#4).
