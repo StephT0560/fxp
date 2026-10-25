@@ -273,6 +273,11 @@ secure build and smoke check with generated credentials.
 
 ### 6. Run the trading day simulation
 
+Set `FXP_JWT_SECRET` in the environment to the gateway's secret (at least 24
+bytes); the simulator has no secret flag or fallback. JWT issuer, audience and
+key id use `FXP_JWT_ISSUER`, `FXP_JWT_AUDIENCE` and `FXP_JWT_KID`, matching the
+gateway. See [simulator configuration and smoke checks](docs/simulator.md).
+
 ```bash
 cd go_gateway
 
@@ -282,8 +287,13 @@ go run simulation/trading_day.go
 # Larger simulation
 go run simulation/trading_day.go --symbols 10 --participants 50 --duration 300
 
-# Reproducible run
+# Fixed random seed (live interleaving still depends on scheduling)
 go run simulation/trading_day.go --seed 42 --verbose
+
+# Override the gateway; flags take precedence over environment defaults
+go run simulation/trading_day.go -gateway localhost:8082 -tls \
+  -tls-ca ../certs/ca.crt -tls-cert ../certs/client.crt \
+  -tls-key ../certs/client.key -tls-server-name localhost
 ```
 
 ---
@@ -632,7 +642,8 @@ See [deployment, reload and client examples](docs/tls-trust.md) and the
 | `FXP_GATEWAY_TLS_CA_FILE` | native system roots; secure Compose `/etc/fxp/certs/ca.crt` | Bridge's trusted gateway CA bundle |
 | `FXP_GATEWAY_TLS_CERT_FILE` / `FXP_GATEWAY_TLS_KEY_FILE` | native unset; secure Compose `/etc/fxp/certs/client.crt` / `client.key` | Bridge's optional upstream mTLS identity |
 | `FXP_GATEWAY_TLS_SERVER_NAME` | native dial host; secure Compose `localhost` | Bridge's verified upstream server name |
-| `FXP_CLIENT_TLS` | `false` | Go TCP/WS clients, benchmark and Python FIX client enable verified TLS |
+| `FXP_SIM_GATEWAY_ADDR` | `127.0.0.1:8082` | Simulator TCP gateway; overridden by `-gateway` |
+| `FXP_CLIENT_TLS` | `false` | Go TCP/WS clients, simulator, benchmark and Python FIX client enable verified TLS |
 | `FXP_CLIENT_TLS_CA_FILE` | system roots | Tool clients' trusted server CA bundle |
 | `FXP_CLIENT_TLS_CERT_FILE` / `FXP_CLIENT_TLS_KEY_FILE` | unset | Tool clients' optional mTLS identity |
 | `FXP_CLIENT_TLS_SERVER_NAME` | dial host | Tool clients' verified server name |

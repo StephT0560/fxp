@@ -26,11 +26,12 @@
 // Prerequisites:
 //   cargo run  (fxp_core, terminal 1)
 //   go run main.go  (go_gateway, terminal 2)
-//   export FXP_JWT_SECRET="dev-secret-change-in-production"
+//   Set FXP_JWT_SECRET in the environment to match the gateway (at least 24 bytes).
 
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -46,7 +47,9 @@ import (
 	"time"
 
 	"go_gateway/protobuf"
+	"go_gateway/startup"
 	"go_gateway/test_clients/devjwt"
+	"go_gateway/tlsconfig"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -54,10 +57,44 @@ import (
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const (
-	gatewayAddr = "127.0.0.1:8082"
-	jwtSecret   = "dev-secret-change-in-production"
-)
+type connectionConfig struct {
+	address string
+	secret  string
+	options tlsconfig.ClientOptions
+}
+
+func validateSecret(secret string) error {
+	if len(secret) < startup.MinSecretBytes {
+		return fmt.Errorf("FXP_JWT_SECRET must be set and contain at least %d bytes", startup.MinSecretBytes)
+	}
+	return nil
+}
+
+func parseConnectionConfig(f *flag.FlagSet, args []string) (connectionConfig, error) {
+	var cfg connectionConfig
+	options, err := tlsconfig.ClientFromEnv("FXP_CLIENT_")
+	if err != nil {
+		return cfg, err
+	}
+	options.Flags(f)
+	address := os.Getenv("FXP_SIM_GATEWAY_ADDR")
+	if address == "" {
+		address = "127.0.0.1:8082"
+	}
+	f.StringVar(&cfg.address, "gateway", address, "gateway TCP address (FXP_SIM_GATEWAY_ADDR)")
+	if err := f.Parse(args); err != nil {
+		return cfg, err
+	}
+	cfg.secret = os.Getenv("FXP_JWT_SECRET")
+	if err := validateSecret(cfg.secret); err != nil {
+		return connectionConfig{}, err
+	}
+	if _, err := options.Config(); err != nil {
+		return connectionConfig{}, err
+	}
+	cfg.options = options
+	return cfg, nil
+}
 
 var (
 	numSymbols      = flag.Int("symbols", 5, "Number of symbols to trade")
@@ -229,8 +266,8 @@ func (s *SimStats) percentile(p float64) time.Duration {
 
 func generateJWT(secret, traderID string) string { return devjwt.Generate(secret, traderID) }
 
-func connectAndLogon(traderID, sessionID string) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", gatewayAddr, 5*time.Second)
+func connectAndLogon(cfg connectionConfig, traderID, sessionID string) (net.Conn, error) {
+	conn, err := cfg.options.Dial(context.Background(), cfg.address, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +275,7 @@ func connectAndLogon(traderID, sessionID string) (net.Conn, error) {
 	logon := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_Logon{
 			Logon: &protobuf.Logon{
-				Token:     generateJWT(jwtSecret, traderID),
+				Token:     generateJWT(cfg.secret, traderID),
 				SessionId: sessionID,
 				Timestamp: timestamppb.Now(),
 			},
@@ -978,11 +1015,9 @@ func runPhaseScheduler(phase *Phase, phaseMu *sync.RWMutex, totalDuration time.D
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
-	flag.Parse()
-
-	secret := os.Getenv("FXP_JWT_SECRET")
-	if secret == "" {
-		log.Fatal("FXP_JWT_SECRET not set")
+	cfg, err := parseConnectionConfig(flag.CommandLine, os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	if *seed == 0 {
@@ -1000,9 +1035,9 @@ func main() {
 	fmt.Printf("╚══════════════════════════════════════════════════════╝\n")
 
 	// Verify gateway is reachable
-	testConn, err := net.DialTimeout("tcp", gatewayAddr, 2*time.Second)
+	testConn, err := cfg.options.Dial(context.Background(), cfg.address, 2*time.Second)
 	if err != nil {
-		log.Fatalf("Gateway not reachable at %s: %v\nMake sure both servers are running.", gatewayAddr, err)
+		log.Fatalf("Gateway not reachable at %s: %v\nMake sure both servers are running.", cfg.address, err)
 	}
 	testConn.Close()
 	fmt.Println("Gateway reachable ✓")
@@ -1059,7 +1094,7 @@ func main() {
 		traderID := fmt.Sprintf("%s-%03d", ptype, i)
 		sessionID := fmt.Sprintf("sim-%d-%d", *seed, i)
 
-		conn, err := connectAndLogon(traderID, sessionID)
+		conn, err := connectAndLogon(cfg, traderID, sessionID)
 		if err != nil {
 			log.Fatalf("Participant %d connect failed: %v", i, err)
 		}
