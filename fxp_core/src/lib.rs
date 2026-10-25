@@ -4,17 +4,18 @@ pub mod engine;
 mod event_log;
 pub mod order_book;
 pub mod server;
+pub mod symbol_config;
 
 #[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
 pub mod fxp {
     include!(concat!(env!("OUT_DIR"), "/fxp.rs"));
 }
 
-pub const PROTOCOL_VERSION: &str = "2.3";
+pub const PROTOCOL_VERSION: &str = "2.4";
 
 #[test]
 fn protocol_version_is_v2() {
-    assert_eq!(PROTOCOL_VERSION, "2.3");
+    assert_eq!(PROTOCOL_VERSION, "2.4");
 }
 
 // ── Shared test helpers ───────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ mod test_helpers {
             expire_date: String::new(),
             account: String::new(),
             client_order_id: String::new(),
+            display_quantity: 0,
             stp: Default::default(),
         }
     }
@@ -109,6 +111,7 @@ fn test_full_order_lifecycle() {
         expire_date: String::new(),
         account: String::new(),
         client_order_id: String::new(),
+        display_quantity: 0,
         stp: Default::default(),
     });
 
@@ -126,6 +129,7 @@ fn test_full_order_lifecycle() {
         expire_date: String::new(),
         account: String::new(),
         client_order_id: String::new(),
+        display_quantity: 0,
         stp: Default::default(),
     });
 
@@ -1104,6 +1108,7 @@ mod critical_tests {
                 "S",
                 "S2",
                 OrderReplace {
+                    new_display_quantity: None,
                     new_price: 0,
                     new_total_qty: 0,
                     new_time_in_force: None,
@@ -1146,6 +1151,7 @@ mod critical_tests {
                 "S",
                 "S2",
                 OrderReplace {
+                    new_display_quantity: None,
                     new_price: 10_100,
                     new_total_qty: 0,
                     new_time_in_force: None,
@@ -1162,6 +1168,7 @@ mod critical_tests {
                 "S2",
                 "S3",
                 OrderReplace {
+                    new_display_quantity: None,
                     new_price: 0,
                     new_total_qty: 10,
                     new_time_in_force: None,
@@ -1178,6 +1185,7 @@ mod critical_tests {
                 "S3",
                 "S4",
                 OrderReplace {
+                    new_display_quantity: None,
                     new_price: 0,
                     new_total_qty: 4,
                     new_time_in_force: None,
@@ -1272,6 +1280,7 @@ mod critical_tests {
                 "ORD-1",
                 "ORD-2",
                 OrderReplace {
+                    new_display_quantity: None,
                     new_price: 1_00,
                     new_total_qty: 0,
                     new_time_in_force: None,
@@ -1290,6 +1299,7 @@ mod critical_tests {
                 "ORD-1",
                 "ORD-2",
                 OrderReplace {
+                    new_display_quantity: None,
                     new_price: 10_100,
                     new_total_qty: 0,
                     new_time_in_force: None,

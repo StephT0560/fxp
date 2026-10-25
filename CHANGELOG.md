@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Preserve STP-restated totals and reserve caps on price-only amendments; validate lot/min/max only on explicit new quantities (#1, review regression).
+
+- Keep unused market/stop-market limit prices and non-stop trigger fields out of symbol tick validation (#1, review regression).
+
+- Document the deferred Stage C pegged-order design and its required acceptance tests (#1).
+
+- Restore CI compatibility after the merged Criterion/prost-build upgrades: use standard-library black_box and scope a Zlib license exception to foldhash 0.1.5 (#1 verification).
+
+- Add opt-in limit reserve orders, displayed-only depth, FIFO replenishment, cumulative reports, reserve-aware STP/FOK and deterministic replay (additive wire v2.4, #1).
+
+- Add per-symbol price scale/tick and quantity rules, FIX/MD precision-aware formatting, int64 boundary checks and configuration-safe input-log replay (#1, order types).
+
 - Bound mass-status batches by encoded bytes as well as report count to prevent core-pool disconnects on large valid orders (#2).
 
 - Fix malformed MONTHYEAR acceptance and Boolean/integer reject classification introduced by dictionary validation (#2).

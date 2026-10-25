@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 use crate::order_book::execution_report::ExecutionReport;
-use crate::order_book::market_data::{
-    MarketDataIncrementalUpdate, MarketOrderUpdate, MarketUpdateType,
-};
+use crate::order_book::market_data::{MarketDataIncrementalUpdate, MarketUpdateType};
 use crate::order_book::order::{Order, OrderSide, OrderType, StpMode, TimeInForce};
 use crate::order_book::order_book::OrderBook;
 
@@ -95,177 +93,128 @@ impl OrderBook {
     // Called after add_order() to cross newly-resting limit orders.
 
     pub fn match_orders(&mut self) -> (Vec<ExecutionReport>, Vec<MarketDataIncrementalUpdate>) {
+        self.stp = StpOutcome::default();
         let mut fills = Vec::new();
-        let mut fill_updates = Vec::new();
-
-        loop {
-            let best_bid = self.buy_orders.keys().next_back().cloned();
-            let best_ask = self.sell_orders.keys().next().cloned();
-
-            match (best_bid, best_ask) {
-                (Some(bid_price), Some(ask_price)) if bid_price >= ask_price => {
-                    let bid_orders = self.buy_orders.get_mut(&bid_price).unwrap();
-                    let mut bid = match bid_orders.pop_front() {
-                        Some(o) => o,
-                        None => break,
-                    };
-                    let ask_orders = self.sell_orders.get_mut(&ask_price).unwrap();
-                    let mut ask = match ask_orders.pop_front() {
-                        Some(o) => o,
-                        None => {
-                            self.buy_orders.get_mut(&bid_price).unwrap().push_front(bid);
-                            break;
-                        }
-                    };
-
-                    // Trades execute at the price of the order that was resting first.
-                    let bid_seq = self.arrival.get(&bid.order_id).copied().unwrap_or(u64::MAX);
-                    let ask_seq = self.arrival.get(&ask.order_id).copied().unwrap_or(u64::MAX);
-
-                    let bid_newer = bid_seq > ask_seq;
-                    let (newer, older) = if bid_newer {
-                        (&bid, &ask)
-                    } else {
-                        (&ask, &bid)
-                    };
-                    if self_match(newer, older) {
-                        let mode = newer.stp.mode;
-                        let (newer, older) = if bid_newer {
-                            (&mut bid, &mut ask)
-                        } else {
-                            (&mut ask, &mut bid)
-                        };
-                        let (newer_qty, older_qty) = match mode {
-                            StpMode::CancelNewest => (0, older.quantity),
-                            StpMode::CancelOldest => (newer.quantity, 0),
-                            StpMode::CancelBoth => (0, 0),
-                            _ => {
-                                let q = newer.quantity.min(older.quantity);
-                                (newer.quantity - q, older.quantity - q)
-                            }
-                        };
-                        let before_fill = fills.len();
-                        for (o, left) in [(&mut *older, older_qty), (&mut *newer, newer_qty)] {
-                            let cut = o.quantity - left;
-                            if cut == 0 {
-                                continue;
-                            }
-                            let md = self.generate_incremental_update(
-                                MarketUpdateType::CancelOrder,
-                                o.price,
-                                cut,
-                                o.side,
-                            );
-                            self.stp.updates.push(md);
-                            o.quantity = left;
-                            Self::sync_fill(
-                                &mut self.order_lookup,
-                                &mut self.cum_filled,
-                                &mut self.arrival,
-                                &o.order_id,
-                                left,
-                                0,
-                            );
-                            self.stp.events.push(StpEvent {
-                                order_id: o.order_id.clone(),
-                                action: if left == 0 {
-                                    StpAction::Canceled
-                                } else {
-                                    StpAction::Restated(cut)
-                                },
-                                mode,
-                                before_fill,
-                            });
-                        }
-                        for (levels, price, o) in [
-                            (&mut self.buy_orders, bid_price, bid),
-                            (&mut self.sell_orders, ask_price, ask),
-                        ] {
-                            let level = levels.get_mut(&price).expect("level popped from");
-                            if o.quantity > 0 {
-                                level.push_front(o);
-                            } else if level.is_empty() {
-                                levels.remove(&price);
-                            }
-                        }
+        let mut updates = Vec::new();
+        // Replenishment changes display priority, not the identity of the
+        // aggressor whose atomic entry caused this crossing.
+        let aggressor = self.last_added.clone();
+        while let (Some(&bid_price), Some(&ask_price)) = (
+            self.buy_orders.keys().next_back(),
+            self.sell_orders.keys().next(),
+        ) {
+            if bid_price < ask_price {
+                break;
+            }
+            let mut bid = self.pop_best(OrderSide::Buy).expect("bid level");
+            let mut ask = self.pop_best(OrderSide::Sell).expect("ask level");
+            let bid_newer = if aggressor.as_deref() == Some(bid.order_id.as_str()) {
+                true
+            } else if aggressor.as_deref() == Some(ask.order_id.as_str()) {
+                false
+            } else {
+                self.arrival[&bid.order_id] > self.arrival[&ask.order_id]
+            };
+            let (newer, older) = if bid_newer {
+                (&bid, &ask)
+            } else {
+                (&ask, &bid)
+            };
+            if self_match(newer, older) {
+                let mode = newer.stp.mode;
+                let (newer, older) = if bid_newer {
+                    (&mut bid, &mut ask)
+                } else {
+                    (&mut ask, &mut bid)
+                };
+                let (new_left, old_left) = match mode {
+                    StpMode::CancelNewest => (0, older.quantity),
+                    StpMode::CancelOldest => (newer.quantity, 0),
+                    StpMode::CancelBoth => (0, 0),
+                    _ => {
+                        let q = newer.quantity.min(older.quantity);
+                        (newer.quantity - q, older.quantity - q)
+                    }
+                };
+                for (order, left) in [(older, old_left), (newer, new_left)] {
+                    let cut = order.quantity - left;
+                    if cut == 0 {
                         continue;
                     }
-                    let trade_price = if bid_seq < ask_seq {
-                        bid_price
-                    } else {
-                        ask_price
-                    };
-
-                    let trade_qty = bid.quantity.min(ask.quantity);
-                    bid.quantity -= trade_qty;
-                    ask.quantity -= trade_qty;
-
-                    let buy_done = bid.quantity == 0;
-                    let sell_done = ask.quantity == 0;
-                    Self::sync_fill(
-                        &mut self.order_lookup,
-                        &mut self.cum_filled,
-                        &mut self.arrival,
-                        &bid.order_id,
-                        bid.quantity,
-                        trade_qty,
-                    );
-                    Self::sync_fill(
-                        &mut self.order_lookup,
-                        &mut self.cum_filled,
-                        &mut self.arrival,
-                        &ask.order_id,
-                        ask.quantity,
-                        trade_qty,
-                    );
-
-                    fills.push(ExecutionReport {
-                        buy_order_id: bid.order_id.clone(),
-                        sell_order_id: ask.order_id.clone(),
-                        trade_price,
-                        trade_quantity: trade_qty,
-                        buy_fully_filled: buy_done,
-                        sell_fully_filled: sell_done,
-                    });
-                    fill_updates.push(MarketDataIncrementalUpdate {
-                        symbol: self.symbol.clone(),
-                        changes: vec![MarketOrderUpdate {
-                            update_type: MarketUpdateType::ModifyOrder,
-                            price: trade_price,
-                            quantity: trade_qty,
-                            side: if bid_seq < ask_seq {
-                                OrderSide::Buy
-                            } else {
-                                OrderSide::Sell
-                            },
-                        }],
-                    });
-
-                    if buy_done {
-                        if bid_orders.is_empty() {
-                            self.buy_orders.remove(&bid_price);
-                        }
-                    } else {
-                        bid_orders.push_front(bid);
+                    let before = self.visible(order);
+                    let visible = before.min(left);
+                    order.quantity = left;
+                    if before > visible {
+                        self.stp.updates.push(self.generate_incremental_update(
+                            MarketUpdateType::CancelOrder,
+                            order.price,
+                            before - visible,
+                            order.side,
+                        ));
                     }
-                    if sell_done {
-                        if ask_orders.is_empty() {
-                            self.sell_orders.remove(&ask_price);
-                        }
-                    } else {
-                        ask_orders.push_front(ask);
-                    }
+                    self.sync_visible_fill(order, 0, visible);
+                    self.stp.events.push(StpEvent {
+                        order_id: order.order_id.clone(),
+                        action: if left == 0 {
+                            StpAction::Canceled
+                        } else {
+                            StpAction::Restated(cut)
+                        },
+                        mode,
+                        before_fill: fills.len(),
+                    });
                 }
-                _ => break,
+                self.requeue(bid, false);
+                self.requeue(ask, false);
+                continue;
             }
+            let bid_visible = self.visible(&bid);
+            let ask_visible = self.visible(&ask);
+            let quantity = bid_visible.min(ask_visible);
+            bid.quantity -= quantity;
+            ask.quantity -= quantity;
+            self.sync_visible_fill(&bid, quantity, bid_visible - quantity);
+            self.sync_visible_fill(&ask, quantity, ask_visible - quantity);
+            fills.push(ExecutionReport {
+                buy_order_id: bid.order_id.clone(),
+                sell_order_id: ask.order_id.clone(),
+                trade_price: if bid_newer { ask_price } else { bid_price },
+                trade_quantity: quantity,
+                buy_fully_filled: bid.quantity == 0,
+                sell_fully_filled: ask.quantity == 0,
+            });
+            if bid.display_quantity > 0 || ask.display_quantity > 0 {
+                for order in [&bid, &ask] {
+                    updates.push(self.generate_incremental_update(
+                        MarketUpdateType::ModifyOrder,
+                        order.price,
+                        quantity,
+                        order.side,
+                    ));
+                }
+            } else {
+                updates.push(self.generate_incremental_update(
+                    MarketUpdateType::ModifyOrder,
+                    if bid_newer { ask_price } else { bid_price },
+                    quantity,
+                    if bid_newer {
+                        OrderSide::Sell
+                    } else {
+                        OrderSide::Buy
+                    },
+                ));
+            }
+            let bid_refresh = self.replenish(&bid);
+            let ask_refresh = self.replenish(&ask);
+            let bid_back = bid_refresh.is_some();
+            let ask_back = ask_refresh.is_some();
+            updates.extend(bid_refresh);
+            updates.extend(ask_refresh);
+            self.requeue(bid, bid_back);
+            self.requeue(ask, ask_back);
         }
-
-        (fills, fill_updates)
+        (fills, updates)
     }
-
-    // ── Aggressive order entry point ──────────────────────────────────────────
-    // Called by the symbol task BEFORE add_order() for any order type.
-    // Returns AggressiveResult which tells the caller whether to rest the order.
 
     pub fn process_aggressive(&mut self, order: Order) -> AggressiveResult {
         match (order.order_type, order.time_in_force) {
@@ -375,17 +324,36 @@ impl OrderBook {
         let want = u64::from(order.quantity);
         let mut available = 0u64;
         let mut self_matched = false;
-        for resting in crossing {
-            if self_match(&order, resting) {
-                self_matched = true;
-                break;
+        let mut crossing = crossing.peekable();
+        while available < want {
+            let Some(first) = crossing.peek() else { break };
+            let price = first.price;
+            let mut queue = std::collections::VecDeque::new();
+            while crossing.peek().is_some_and(|o| o.price == price) {
+                let o = crossing.next().unwrap();
+                queue.push_back((o, o.quantity, self.visible(o)));
             }
-            available += u64::from(resting.quantity);
-            if available >= want {
+            // A self order already in this level is encountered in the
+            // first rotation, before any refreshed slice. With no self
+            // orders, every reserve unit is available: sum it in O(orders),
+            // rather than iterating potentially billions of unit slices.
+            let has_self = queue.iter().any(|(r, _, _)| self_match(&order, r));
+            for (resting, total, visible) in queue {
+                if available >= want {
+                    break;
+                }
+                if self_match(&order, resting) {
+                    self_matched = true;
+                    break;
+                }
+                available += u64::from(if has_self { visible } else { total });
+            }
+            if self_matched {
                 break;
             }
         }
 
+        drop(crossing);
         if self_matched {
             self.stp.events.push(StpEvent {
                 order_id: order.order_id.clone(),
@@ -421,16 +389,17 @@ impl OrderBook {
     // ── fill_level: fill aggressor against one resting price level ────────────
 
     fn fill_level(&mut self, aggressor: &Order, price: i64, sweep: &mut Sweep) {
-        let resting = match aggressor.side {
-            OrderSide::Buy => self.sell_orders.get_mut(&price),
-            OrderSide::Sell => self.buy_orders.get_mut(&price),
-        };
-        let Some(resting) = resting else { return };
-
-        while sweep.live() && !resting.is_empty() {
-            let top = resting.front_mut().unwrap();
-
-            if self_match(aggressor, top) {
+        let mut level = match aggressor.side {
+            OrderSide::Buy => self.sell_orders.remove(&price),
+            OrderSide::Sell => self.buy_orders.remove(&price),
+        }
+        .unwrap_or_default();
+        while sweep.live() {
+            let Some(mut top) = level.pop_front() else {
+                break;
+            };
+            let visible = self.visible(&top);
+            if self_match(aggressor, &top) {
                 let mode = aggressor.stp.mode;
                 let before_fill = sweep.fills.len();
                 let (aggr_left, top_left) = match mode {
@@ -444,24 +413,17 @@ impl OrderBook {
                 };
                 let cut = top.quantity - top_left;
                 if cut > 0 {
-                    self.stp.updates.push(MarketDataIncrementalUpdate {
-                        symbol: self.symbol.clone(),
-                        changes: vec![MarketOrderUpdate {
-                            update_type: MarketUpdateType::CancelOrder,
-                            price,
-                            quantity: cut,
-                            side: top.side,
-                        }],
-                    });
                     top.quantity = top_left;
-                    Self::sync_fill(
-                        &mut self.order_lookup,
-                        &mut self.cum_filled,
-                        &mut self.arrival,
-                        &top.order_id,
-                        top_left,
-                        0,
-                    );
+                    let left_visible = visible.min(top_left);
+                    if visible > left_visible {
+                        self.stp.updates.push(self.generate_incremental_update(
+                            MarketUpdateType::CancelOrder,
+                            price,
+                            visible - left_visible,
+                            top.side,
+                        ));
+                    }
+                    self.sync_visible_fill(&top, 0, left_visible);
                     self.stp.events.push(StpEvent {
                         order_id: top.order_id.clone(),
                         action: if top_left == 0 {
@@ -491,76 +453,57 @@ impl OrderBook {
                         before_fill,
                     });
                 }
-                if top_left == 0 {
-                    resting.pop_front();
-                }
+                if top.quantity > 0 {
+                    level.push_front(top)
+                };
                 continue;
             }
-
-            let trade_qty = top.quantity.min(sweep.remaining);
-            top.quantity -= trade_qty;
-            sweep.remaining -= trade_qty;
-
-            let resting_done = top.quantity == 0;
-            Self::sync_fill(
-                &mut self.order_lookup,
-                &mut self.cum_filled,
-                &mut self.arrival,
-                &top.order_id,
-                top.quantity,
-                trade_qty,
-            );
-            let aggressor_done = sweep.remaining == 0;
-
+            let quantity = visible.min(sweep.remaining);
+            top.quantity -= quantity;
+            sweep.remaining -= quantity;
+            self.sync_visible_fill(&top, quantity, visible - quantity);
             let (buy_id, sell_id, buy_done, sell_done) = match aggressor.side {
                 OrderSide::Buy => (
                     aggressor.order_id.clone(),
                     top.order_id.clone(),
-                    aggressor_done,
-                    resting_done,
+                    sweep.remaining == 0,
+                    top.quantity == 0,
                 ),
                 OrderSide::Sell => (
                     top.order_id.clone(),
                     aggressor.order_id.clone(),
-                    resting_done,
-                    aggressor_done,
+                    top.quantity == 0,
+                    sweep.remaining == 0,
                 ),
             };
-
             sweep.fills.push(ExecutionReport {
                 buy_order_id: buy_id,
                 sell_order_id: sell_id,
                 trade_price: price,
-                trade_quantity: trade_qty,
+                trade_quantity: quantity,
                 buy_fully_filled: buy_done,
                 sell_fully_filled: sell_done,
             });
-            sweep.fill_updates.push(MarketDataIncrementalUpdate {
-                symbol: aggressor.symbol.clone(),
-                changes: vec![MarketOrderUpdate {
-                    update_type: MarketUpdateType::ModifyOrder,
-                    price,
-                    quantity: trade_qty,
-                    side: match aggressor.side {
-                        OrderSide::Buy => OrderSide::Sell,
-                        OrderSide::Sell => OrderSide::Buy,
-                    },
-                }],
-            });
-
-            if resting_done {
-                resting.pop_front();
+            sweep.fill_updates.push(self.generate_incremental_update(
+                MarketUpdateType::ModifyOrder,
+                price,
+                quantity,
+                top.side,
+            ));
+            if let Some(md) = self.replenish(&top) {
+                sweep.fill_updates.push(md);
+                level.push_back(top)
+            } else if top.quantity > 0 {
+                level.push_front(top)
             }
         }
-
-        // Remove empty price level
-        if resting.is_empty() {
+        if !level.is_empty() {
             match aggressor.side {
                 OrderSide::Buy => {
-                    self.sell_orders.remove(&price);
+                    self.sell_orders.insert(price, level);
                 }
                 OrderSide::Sell => {
-                    self.buy_orders.remove(&price);
+                    self.buy_orders.insert(price, level);
                 }
             }
         }

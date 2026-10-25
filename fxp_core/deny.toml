@@ -17,6 +17,9 @@ allow = [
     "Unicode-3.0",
 ]
 confidence-threshold = 0.8
+# prost-build 0.14 -> petgraph -> hashbrown -> foldhash. Keep the
+# permissive Zlib exception scoped to the actual reviewed dependency.
+exceptions = [{ name = "foldhash", version = "0.1.5", allow = ["Zlib"] }]
 
 [licenses.private]
 ignore = true

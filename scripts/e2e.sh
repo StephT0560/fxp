@@ -16,9 +16,10 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 log_dir="${E2E_LOG_DIR:-$repo_root/target/e2e}"
 mkdir -p "$log_dir" "$repo_root/bin"
 
+export FXP_SYMBOL_CONFIG="${FXP_SYMBOL_CONFIG:-$repo_root/config/symbols.example.csv}"
 export FXP_JWT_SECRET="${FXP_JWT_SECRET:-dev-secret-change-in-production}"
 export FXP_FIX_PASSWORD="${FXP_FIX_PASSWORD:-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
-export FXP_FIX_CREDENTIALS="${FXP_FIX_CREDENTIALS:-TESTFIRM01:$FXP_FIX_PASSWORD,VICTIM01:$FXP_FIX_PASSWORD,ATTACKER01:$FXP_FIX_PASSWORD,SEQCHECK01:$FXP_FIX_PASSWORD,MDCHECK01:$FXP_FIX_PASSWORD,DURABLE01:$FXP_FIX_PASSWORD,MASSCXL01:$FXP_FIX_PASSWORD,CODTEST01:$FXP_FIX_PASSWORD,CODCHK01:$FXP_FIX_PASSWORD,GRACE01:$FXP_FIX_PASSWORD,GRACE02:$FXP_FIX_PASSWORD}"
+export FXP_FIX_CREDENTIALS="${FXP_FIX_CREDENTIALS:-TESTFIRM01:$FXP_FIX_PASSWORD,VICTIM01:$FXP_FIX_PASSWORD,ATTACKER01:$FXP_FIX_PASSWORD,SEQCHECK01:$FXP_FIX_PASSWORD,MDCHECK01:$FXP_FIX_PASSWORD,DURABLE01:$FXP_FIX_PASSWORD,MASSCXL01:$FXP_FIX_PASSWORD,CODTEST01:$FXP_FIX_PASSWORD,CODCHK01:$FXP_FIX_PASSWORD,GRACE01:$FXP_FIX_PASSWORD,GRACE02:$FXP_FIX_PASSWORD,ORDERTYPES01:$FXP_FIX_PASSWORD}"
 if [[ -z "${FXP_FIX_STORE_DIR:-}" ]]; then
     export FXP_FIX_STORE_DIR="$log_dir/fix_store"
     rm -rf "$FXP_FIX_STORE_DIR"
@@ -70,6 +71,8 @@ start_bridge
 
 python3 "$repo_root/fix_test_client/fix_client.py" | tee "$log_dir/fix_client.log"
 grep -Eq 'Results: ([1-9][0-9]*)/\1 passed$' "$log_dir/fix_client.log"
+
+python3 "$repo_root/fix_test_client/order_types.py" | tee "$log_dir/order_types.log"
 
 # Cancel-on-disconnect: reset a COD session's TCP socket; its resting and stop
 # orders must leave the book and the cancels must be resent after reconnect.

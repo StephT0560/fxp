@@ -409,6 +409,70 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         }
                     }
                 };
+                let reason = reason.or_else(|| {
+                    if c.new_quantity < 0 || c.new_price < 0 || c.new_stop_price < 0 {
+                        return Some("negative replace fields are invalid".into());
+                    }
+                    // An omitted quantity retains the live restated total,
+                    // which may now be below entry min/lot constraints.
+                    let quantity_reason = if c.new_quantity > 0 {
+                        self.symbol_rules
+                            .validate_quantity(c.new_quantity as u32)
+                            .err()
+                    } else {
+                        None
+                    };
+                    quantity_reason
+                        .or_else(|| {
+                            if c.new_price > 0 {
+                                self.symbol_rules.validate_price(c.new_price).err()
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| {
+                            if c.new_stop_price > 0 {
+                                self.symbol_rules.validate_price(c.new_stop_price).err()
+                            } else {
+                                None
+                            }
+                        })
+                });
+                let reason = reason.or_else(|| {
+                    let state = state.unwrap();
+                    let display = c
+                        .new_display_quantity
+                        .unwrap_or(state.display_quantity as i32);
+                    let ty = if self.call_markets.contains_key(&c.order_id) {
+                        OrderType::Market
+                    } else if self.stop_book.contains(&c.order_id) {
+                        OrderType::Stop
+                    } else {
+                        OrderType::Limit
+                    };
+                    let tif = if c.new_time_in_force == 0 {
+                        state.time_in_force
+                    } else {
+                        parse_replace_time_in_force(c.new_time_in_force).ok()??
+                    };
+                    if state.display_quantity>0 && !matches!(tif,TimeInForce::Day|TimeInForce::GTC|TimeInForce::Gtd) {
+                        return Some("iceberg replacements require DAY/GTC/GTD; cancel and enter a new order to change to IOC/FOK/auction".into());
+                    }
+                    // A retained cap may exceed total after reserve-first
+                    // STP. Revalidate the ceiling only when quantity/cap is
+                    // explicitly amended; preserve existing values otherwise.
+                    let display_ceiling=if c.new_quantity==0 && c.new_display_quantity.is_none() {
+                        state.order_qty.max(state.display_quantity)
+                    } else if c.new_quantity==0 {state.order_qty} else {c.new_quantity as u32};
+                    iceberg_reason(
+                        display,
+                        display_ceiling,
+                        ty,
+                        tif,
+                        self.schedule.is_some_and(SessionSchedule::is_full),
+                        self.symbol_rules.lot_size,
+                    )
+                });
                 if let Some(reason) = reason {
                     out.push(Output::ExecutionReport(
                         c.output_tx.clone(),

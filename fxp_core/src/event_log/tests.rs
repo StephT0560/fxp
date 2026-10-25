@@ -232,3 +232,54 @@ fn sequence_gap_does_not_silently_delete_history() {
     assert!(EventLog::open(&dir.log(), None, StpMode::None).is_err());
     assert_eq!(std::fs::metadata(dir.log()).unwrap().len(), len);
 }
+
+#[test]
+fn iceberg_replay_restores_partial_slice_and_replacement_presence() {
+    fn snapshot(j: &mut Journal<u32>) -> fxp::MarketDataSnapshot {
+        j.apply("TEST", time(), Input::Subscribe, 1)
+            .unwrap()
+            .into_iter()
+            .find_map(|o| {
+                if let Output::Snapshot(_, s) = o {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    }
+    let dir = TestDir::new();
+    let mut j = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+    let mut reserve = order();
+    reserve.display_quantity = 2;
+    reserve.quantity = 10;
+    j.apply("TEST", time(), Input::New(reserve), 1).unwrap();
+    let mut sell = order();
+    sell.order_id = "S".into();
+    sell.sender = "other".into();
+    sell.side = fxp::OrderSide::Sell as i32;
+    sell.quantity = 3;
+    j.apply("TEST", time(), Input::New(sell), 2).unwrap();
+    assert_eq!(snapshot(&mut j).bid_levels[0].size, 1);
+    drop(j);
+    let mut j = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+    assert_eq!(snapshot(&mut j).bid_levels[0].size, 1);
+    j.apply(
+        "TEST",
+        time(),
+        Input::Replace(fxp::OrderCancelReplaceRequest {
+            symbol: "TEST".into(),
+            order_id: "B".into(),
+            new_order_id: "R".into(),
+            sender: "owner".into(),
+            new_display_quantity: Some(0),
+            ..Default::default()
+        }),
+        1,
+    )
+    .unwrap();
+    assert_eq!(snapshot(&mut j).bid_levels[0].size, 7);
+    drop(j);
+    let mut j = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+    assert_eq!(snapshot(&mut j).bid_levels[0].size, 7);
+}

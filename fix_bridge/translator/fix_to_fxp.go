@@ -26,9 +26,8 @@ package translator
 
 import (
 	"fmt"
-	"math"
+	"go_gateway/symbolconfig"
 	"strconv"
-	"strings"
 	"time"
 
 	"fix_bridge/codec"
@@ -115,7 +114,7 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 	var price int64
 	priceStr := msg.Get(codec.TagPrice)
 	if priceStr != "" {
-		price, err = parseFixedPoint(priceStr)
+		price, err = symbolconfig.Current().ParsePrice(msg.Get(codec.TagSymbol), priceStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid Price %q: %w", priceStr, err)
 		}
@@ -127,7 +126,7 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 	var stopPx int64
 	stopPxStr := msg.Get(codec.TagStopPx)
 	if stopPxStr != "" {
-		stopPx, err = parseFixedPoint(stopPxStr)
+		stopPx, err = symbolconfig.Current().ParsePrice(msg.Get(codec.TagSymbol), stopPxStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid StopPx %q: %w", stopPxStr, err)
 		}
@@ -154,7 +153,12 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 		return nil, err
 	}
 
+	display, err := parseMaxFloor(msg)
+	if err != nil {
+		return nil, err
+	}
 	order := &protobuf.NewOrderSingle{
+		DisplayQuantity: display,
 		Header: &protobuf.FXPHeader{
 			ProtocolVersion: "1.1",
 		},
@@ -234,7 +238,7 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 	var newPrice int64
 	if priceStr := msg.Get(codec.TagPrice); priceStr != "" {
 		var err error
-		newPrice, err = parseFixedPoint(priceStr)
+		newPrice, err = symbolconfig.Current().ParsePrice(msg.Get(codec.TagSymbol), priceStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid Price %q: %w", priceStr, err)
 		}
@@ -254,7 +258,7 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 	var newStopPrice int64
 	if stopStr := msg.Get(codec.TagStopPx); stopStr != "" {
 		var err error
-		newStopPrice, err = parseFixedPoint(stopStr)
+		newStopPrice, err = symbolconfig.Current().ParsePrice(msg.Get(codec.TagSymbol), stopStr)
 		if err != nil || newStopPrice <= 0 {
 			return nil, fmt.Errorf("invalid StopPx %q", stopStr)
 		}
@@ -269,7 +273,16 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		}
 	}
 
+	var display *int32
+	if msg.Get(111) != "" {
+		value, err := parseMaxFloor(msg)
+		if err != nil {
+			return nil, err
+		}
+		display = &value
+	}
 	cr := &protobuf.OrderCancelReplaceRequest{
+		NewDisplayQuantity: display,
 		Header: &protobuf.FXPHeader{
 			ProtocolVersion: "1.1",
 		},
@@ -440,56 +453,17 @@ func mapTimeInForce(s string) (protobuf.TimeInForce, error) {
 // parseFixedPoint converts a FIX decimal price string to fixed-point cents.
 // "185.42" → 18542, "185" → 18500, "0.50" → 50
 // Supports up to 2 decimal places (cent precision).
-func parseFixedPoint(s string) (int64, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty price string")
-	}
+func parseFixedPoint(s string) (int64, error) { return symbolconfig.ParseDefault(s) }
 
-	negative := strings.HasPrefix(s, "-")
-	if negative {
-		s = s[1:]
+// MaxFloor is integral in FXP; zero explicitly disables reserve on replacement.
+func parseMaxFloor(msg *codec.Message) (int32, error) {
+	value := msg.Get(111)
+	if value == "" {
+		return 0, nil
 	}
-	parts := strings.SplitN(s, ".", 2)
-	dollars, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || dollars < 0 {
-		return 0, fmt.Errorf("invalid integer part %q", parts[0])
+	n, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid MaxFloor (111) %q", value)
 	}
-
-	var cents int64
-	if len(parts) == 2 {
-		dec := parts[1]
-		if dec == "" {
-			return 0, fmt.Errorf("invalid decimal part %q", dec)
-		}
-		for _, digit := range []byte(dec) {
-			if digit < '0' || digit > '9' {
-				return 0, fmt.Errorf("invalid decimal part %q", dec)
-			}
-		}
-		rounded := dec + "00"
-		cents, err = strconv.ParseInt(rounded[:2], 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid decimal part %q", parts[1])
-		}
-		if len(dec) > 2 && dec[2] >= '5' {
-			cents++
-		}
-	}
-
-	maxMagnitude := int64(math.MaxInt32)
-	if negative {
-		maxMagnitude = -int64(math.MinInt32)
-	}
-	if dollars > maxMagnitude/100 {
-		return 0, fmt.Errorf("price %q out of range", s)
-	}
-	result := dollars*100 + cents
-	if result > maxMagnitude {
-		return 0, fmt.Errorf("price %q out of range", s)
-	}
-	if negative {
-		result = -result
-	}
-	return result, nil
+	return int32(n), nil
 }

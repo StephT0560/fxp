@@ -45,8 +45,9 @@
 ///
 ///   cargo bench --bench encoding_benchmark
 ///   # HTML report: fxp_core/target/criterion/report/index.html
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use prost::Message;
+use std::hint::black_box;
 
 #[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
 mod fxp {
@@ -91,6 +92,7 @@ fn make_fxp_new_order() -> fxp::FxpMessage {
             client_order_id: String::new(),
             stp_mode: 0,
             stp_group: String::new(),
+            display_quantity: 0,
         })),
     }
 }
@@ -100,6 +102,7 @@ fn make_fxp_execution_report() -> fxp::FxpMessage {
         payload: Some(fxp::fxp_message::Payload::ExecutionReport(
             fxp::ExecutionReport {
                 auction: false,
+                display_quantity: 0,
                 header: Some(fxp::FxpHeader {
                     protocol_version: fxp_core::PROTOCOL_VERSION.to_string(),
                     sequence_number: SEQ_NUM + 1,

@@ -316,3 +316,22 @@ fn downtime_runs_auction_without_clients_and_catch_up_itself_replays() {
     );
     assert!(restarted.tick("TEST", at(41)).unwrap().is_empty());
 }
+
+#[test]
+fn symbol_config_is_replayed_and_cannot_change_silently() {
+    let dir = TestDir::new();
+    let config = crate::symbol_config::SymbolConfig::parse("TEST,8,5,10,10,100").unwrap();
+    let mut live =
+        Journal::open_configured(&dir.log(), None, StpMode::None, 0, config.clone()).unwrap();
+    let mut input = order("O", fxp::TimeInForce::Gtc);
+    input.quantity = 20;
+    input.price = 105;
+    live.apply("TEST", at(0), Input::New(input), 0).unwrap();
+    drop(live);
+    assert!(Journal::open(&dir.log(), None, StpMode::None, 0).is_err());
+    let replay = Journal::open_configured(&dir.log(), None, StpMode::None, 0, config).unwrap();
+    assert_eq!(
+        replay.engines["TEST"].order_status("owner", "O", 0)[0].leaves_quantity,
+        20
+    );
+}

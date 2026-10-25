@@ -9,7 +9,8 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.3 adds order-status requests/replies.
+// FXP Protocol — v2.4 adds iceberg display quantities.
+// v2.3 added order-status requests/replies.
 // v2.2 added self-trade prevention, cancel-on-disconnect and mass cancel.
 // v2.1 added auction/session messages.
 // Version 2.0 shifts all enum numbers and is wire-breaking with v1.x.
@@ -182,7 +183,7 @@ message NewOrderSingle {
   string                    sender          = 3;  // SenderCompID
   string                    receiver        = 4;  // TargetCompID
   string                    symbol          = 5;
-  int64                     price           = 6;  // fixed-point cents (10050 = $100.50)
+  int64                     price           = 6;  // int64 minor units; per-symbol price_scale (default 2)
   OrderSide                 side            = 7;
   int32                     quantity        = 8;
   OrderType                 order_type      = 9;
@@ -194,6 +195,7 @@ message NewOrderSingle {
   string                    client_order_id = 15; // optional secondary client reference
   SelfTradePrevention       stp_mode        = 16; // v2.2
   string                    stp_group       = 17; // v2.2: optional; namespaced per owner by the gateway
+  int32                     display_quantity = 18; // v2.4: 0 fully displayed, positive = MaxFloor
 
   // Field numbers 1000–1999 reserved for firm-specific extensions.
   // Example: int32 short_sale_indicator = 1000;
@@ -234,6 +236,7 @@ message OrderCancelReplaceRequest {
   TimeInForce               new_time_in_force = 10; // TIME_IN_FORCE_UNSPECIFIED (0) = no change
   google.protobuf.Timestamp timestamp         = 11;
   int64                     new_stop_price    = 12; // 0 = no change (Stop / StopLimit only)
+  optional int32            new_display_quantity = 13; // v2.4: absent keep, 0 fully displayed
 }
 
 // OrderAcknowledgment: legacy. Prefer ExecutionReport with exec_type=EXEC_NEW.
@@ -276,6 +279,7 @@ message ExecutionReport {
   OrderSide                 side              = 17; // side of the order
   int32                     order_quantity    = 18; // total order quantity (FIX OrderQty)
   bool                      auction           = 19;
+  int32                     display_quantity  = 20; // v2.4: configured MaxFloor, 0 fully displayed
 
   // Field numbers 1000–1999 reserved for firm-specific extensions.
 }

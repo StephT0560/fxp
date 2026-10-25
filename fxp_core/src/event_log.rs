@@ -156,16 +156,31 @@ struct EventLog {
 }
 
 impl EventLog {
+    #[cfg(test)]
     fn open(
         path: &Path,
         schedule: Option<SessionSchedule>,
         stp_default: StpMode,
+    ) -> io::Result<(Self, Vec<Record>)> {
+        Self::open_configured(path, schedule, stp_default, &Default::default())
+    }
+    fn open_configured(
+        path: &Path,
+        schedule: Option<SessionSchedule>,
+        stp_default: StpMode,
+        symbol_config: &crate::symbol_config::SymbolConfig,
     ) -> io::Result<(Self, Vec<Record>)> {
         // Replay must resolve STP_UNSPECIFIED the same way; logs written
         // without an STP default keep their original header.
         let stp = match stp_default {
             StpMode::None => String::new(),
             mode => format!(";stp_default={}", mode.as_str()),
+        };
+        let symbol_text = symbol_config.canonical();
+        let symbol_suffix = if symbol_text.is_empty() {
+            String::new()
+        } else {
+            format!(";symbols={symbol_text}")
         };
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
@@ -182,7 +197,8 @@ impl EventLog {
             nanos: 0,
             symbol: String::new(),
             kind: 0,
-            payload: format!("{REPLAY_VERSION};schedule={schedule:?}{stp}").into_bytes(),
+            payload: format!("{REPLAY_VERSION};schedule={schedule:?}{stp}{symbol_suffix}")
+                .into_bytes(),
         };
         if file.metadata()?.len() == 0 {
             file.write_all(MAGIC)?;
@@ -296,16 +312,28 @@ pub(crate) struct Journal<R> {
     schedule: Option<SessionSchedule>,
     stp_default: StpMode,
     detached: R,
+    symbol_config: crate::symbol_config::SymbolConfig,
 }
 
 impl<R: Clone> Journal<R> {
+    #[cfg(test)]
     pub(crate) fn open(
         path: &Path,
         schedule: Option<SessionSchedule>,
         stp_default: StpMode,
         detached: R,
     ) -> io::Result<Self> {
-        let (log, records) = EventLog::open(path, schedule, stp_default)?;
+        Self::open_configured(path, schedule, stp_default, detached, Default::default())
+    }
+    pub(crate) fn open_configured(
+        path: &Path,
+        schedule: Option<SessionSchedule>,
+        stp_default: StpMode,
+        detached: R,
+        symbol_config: crate::symbol_config::SymbolConfig,
+    ) -> io::Result<Self> {
+        let (log, records) =
+            EventLog::open_configured(path, schedule, stp_default, &symbol_config)?;
         let mut journal = Self {
             log,
             engines: HashMap::new(),
@@ -317,6 +345,7 @@ impl<R: Clone> Journal<R> {
             schedule,
             stp_default,
             detached,
+            symbol_config,
         };
         for record in records {
             let input = Input::decode(&record)?;
@@ -368,6 +397,7 @@ impl<R: Clone> Journal<R> {
         let engine = self.engines.entry(symbol.to_string()).or_insert_with(|| {
             Engine::new(symbol, self.clock.clone(), self.ids.clone(), self.schedule)
                 .with_stp_default(self.stp_default)
+                .with_symbol_rules(self.symbol_config.get(symbol))
         });
         match input {
             Input::New(order) => engine.new_order(order, owner),
@@ -386,6 +416,7 @@ impl<R: Clone> Journal<R> {
                 new_quantity: m.new_quantity,
                 new_time_in_force: m.new_time_in_force,
                 new_stop_price: m.new_stop_price,
+                new_display_quantity: m.new_display_quantity,
                 output_tx: owner,
             }),
             Input::Tick => engine.tick(),
