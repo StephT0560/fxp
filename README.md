@@ -69,7 +69,7 @@ Client ← ExecutionReport + MarketDataIncrementalUpdate
 | `AT_OPEN` | Limit/market accepted only during OpeningCall; unfilled remainder canceled at open | ✅ Full schedule required |
 | `AT_CLOSE` | Limit/market held off-book during Continuous/OpeningCall, joins ClosingCall; remainder canceled at close | ✅ Full schedule required |
 
-Day orders expire at configured close, after the closing uncross. GTD orders expire at midnight UTC following their date, with or without a schedule. GTC orders survive sessions but are not persisted across process restarts. Price levels use FIFO order (`VecDeque::push_back` on add and `pop_front` on match), covered by `p01_time_priority_fifo_within_level`.
+Day orders expire at configured close, after the closing uncross. GTD orders expire at midnight UTC following their date, with or without a schedule. GTC orders survive sessions and are restored across process restarts when `FXP_EVENT_LOG` is configured; without it, orders remain in memory only. Price levels use FIFO order (`VecDeque::push_back` on add and `pop_front` on match), covered by `p01_time_priority_fifo_within_level`.
 
 Closed rejects new orders and replaces but permits cancellation. Calls may expose a crossed limit book; they never run continuous matching. Replaces during a call lose priority and do not match. Held AT_CLOSE orders can be canceled but not replaced. When moved at close_call, held limits retain their original arrival order relative to each other but queue behind orders already resting at the same price. Auction-only TIFs are not supported for stops. With no full schedule, AT_OPEN and AT_CLOSE are rejected.
 
@@ -311,7 +311,7 @@ Simulates a realistic institutional trading session with 4 participant archetype
 | CLOSE_AUCTION | 8% | 2× burst, AT_CLOSE/MOC orders |
 | CLOSED | 2% | Wind-down |
 
-The simulation labels these as auction phases, but the matching engine currently treats AT_OPEN/AT_CLOSE orders as ordinary resting limit orders; it does not run auction batch matching.
+The engine supports scheduled opening/closing call books and batch uncrosses. The simulation phase labels alone do not configure the engine schedule: set `FXP_SESSION_SCHEDULE` on the core to exercise matching at those boundaries. The configuration table above documents the schedule format.
 
 **Sample output (120s, 5 symbols, 20 participants):**
 
@@ -344,7 +344,7 @@ The FIX 4.4 bridge (`fix_bridge`, port 8083) handles these inbound messages:
 | `V` | MarketDataRequest (snapshot, subscribe, unsubscribe) | ✅ |
 | `q` | OrderMassCancelRequest (`530=7` all orders, `530=1` by symbol; optional `54`) | ✅ answered with `35=r` (531/532/533); other 530 values rejected with `531=0 532=0` |
 | `H`, `AF` | OrderStatusRequest / OrderMassStatusRequest | ✅ owner-scoped snapshots, including retained terminal orders; mass types 1 (symbol) and 7 (all) |
-| any other application type | e.g. `AD`, `c` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
+| any other application type | e.g. `AE`, `AD`, `c`, unknown `ZZ` | ❌ BusinessMessageReject (`35=j`, `380=3`) before application body dictionary validation; supported types retain full dictionary checks |
 
 Outbound: ExecutionReport (`8`, ExecType `D` = restated by decrement-and-cancel STP), OrderCancelReject (`9`), OrderMassCancelReport (`r`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`), BusinessMessageReject (`j`) plus the session messages.
 
@@ -364,7 +364,7 @@ and a `seqnums` file replaced atomically on every change.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FXP_FIX_STORE_DIR` | `fix_store` | Store root; set empty for in-memory state (lost on restart) |
+| `FXP_FIX_STORE_DIR` | native `fix_store`; Compose `/data/fix_store` | Store root; set empty for in-memory state (lost on restart) |
 | `FXP_FIX_STORE_FSYNC` | `strict` | `strict`: fsync every write; `group`: fsync every `FXP_FIX_STORE_GROUP_INTERVAL` (default `10ms`); `async`: never fsync. All modes survive a killed process; they differ only on power loss |
 | `FXP_FIX_STORE_MAX_MESSAGES` | `100000` | Outbound messages retained for resend; older ones are answered with SequenceReset-GapFill |
 
@@ -383,25 +383,29 @@ the simulation read the same variables when minting.
 |---|---|---|
 | `FXP_JWT_SECRET` | (required) | Current HS256 key, minimum 24 bytes; known dev key forbidden on non-loopback binds |
 | `FXP_JWT_KID` | unset | `kid` of the current key; tokens without `kid` always use the current key |
-| `FXP_JWT_PREVIOUS_KID` / `FXP_JWT_PREVIOUS_SECRET` | unset | Previous key, still accepted for tokens carrying this `kid` during a rotation |
+| `FXP_JWT_PREVIOUS_KID` / `FXP_JWT_PREVIOUS_SECRET` | unset | Previous key, set both with a distinct kid; minimum 24 bytes and no known dev key on non-loopback binds; accepted for that `kid` during rotation |
 | `FXP_JWT_ISSUER` | `fxp-dev` | Required `iss` |
 | `FXP_JWT_AUDIENCE` | `fxp-gateway` | Required `aud` (string or array) |
 | `FXP_JWT_LEEWAY_SEC` | `30` | Clock-skew leeway on `nbf` |
 | `FXP_JWT_REPLAY_CACHE` | off | `on`: require `jti` and reject a reused `jti` until its token expires (per gateway process) |
 | `FXP_GW_WS_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to open the WebSocket. Same-origin requests and clients sending no `Origin` header are always allowed; any other origin gets 403 |
 | `FXP_GW_CLIENT_QUEUE` | `8192` | Bounded per-client queue for execution reports and other critical output; overflow closes the client |
+| `FXP_GW_MASS_CANCEL_TIMEOUT_SEC` | `30` | Pending mass-cancel confirmation deadline in seconds (1–86400; invalid values fall back to 30); timeout rejects the request but does not roll back core actions. Status uses a fixed 30s deadline; both share a 4096-entry cap and disconnect cleanup |
 | `FXP_GW_MD_QUEUE` | `4096` | Bounded per-client market-data queue; overflow drops market data and increments `MarketDataDropped()` |
 
 ## Tests
 
-Counts observed at this revision:
+The [CI workflow](https://github.com/StephT0560/fxp/actions/workflows/ci.yml)
+runs Rust/Go unit and race checks, schema compatibility, production FIX/order-type
+and restart E2E, TLS/mTLS and secure Compose smoke tests, and both QuickFIX
+acceptance profiles. Require the stable `ci-success` check. Test totals are
+reported by each run rather than copied here, so this section cannot drift as
+coverage grows. Local commands are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-| Suite | Test count |
-|---|---:|
-| `fxp_core` (`cargo test`) | 163 unit tests |
-| `go_gateway` (`go test ./...`) | 49 top-level tests |
-| `fix_bridge` (`go test ./...`) | 123 top-level tests |
-| Python FIX E2E client (`scripts/e2e.sh`) | 69 main checks, plus cancel-on-disconnect and restart/persistence checks |
+P09 is already the per-print integration regression
+[`p09_cascade_uses_every_print_not_only_the_last_print`](fxp_core/src/order_book/edge_tests.rs):
+it calls `run_stop_cascade`. The separate `drain_triggered_stops` unit tests
+remain because they check the lower-level predicate, not cascade behavior.
 
 ---
 
@@ -429,57 +433,48 @@ bursts and loopback figures are not production capacity or WAN SLO claims.
 
 ## Repository Structure
 
-```
+```text
 fxp/
-├── fxp_core/                    Rust matching engine
-│   ├── src/
-│   │   ├── server.rs            TCP server, per-symbol dispatch, stop trigger logic
-│   │   ├── lib.rs               Unit tests
-│   │   └── order_book/
-│   │       ├── order.rs         Order struct, OrderType, TimeInForce enums
-│   │       ├── order_book.rs    BTreeMap price-time priority book
-│   │       ├── matcher.rs       Aggressive matching: Market/IOC/FOK/Stop
-│   │       └── execution_report.rs
-│   ├── benches/
-│   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
-│   └── proto/
-│       └── fxp.proto            Protocol schema v2.4
-│
-├── go_gateway/                  Go gateway
-│   ├── logging/                 slog setup (FXP_LOG_LEVEL), shared with fix_bridge
-│   ├── transport/
-│   │   ├── pool.go              Pool defaults to runtime.NumCPU()
-│   │   ├── tcp_server.go        TCP server, auth routing
-│   │   ├── common.go            Message router, market data fan-out
-│   │   ├── ws_server.go         WebSocket server
-│   │   └── auth.go              JWT validation, session management
-│   ├── benchmark/
-│   │   └── benchmark.go         End-to-end latency and throughput benchmark
-│   └── simulation/
-│       └── trading_day.go       Trading day simulation
-│
-├── fix_bridge/                  FIX 4.4 session, codec, and translators
-│   ├── main.go
-│   ├── codec/
-│   ├── session/
-│   └── translator/
-├── fix_test_client/
-│   └── fix_client.py            FIX E2E scenarios
+├── .github/                    CI, benchmark/release workflows and Dependabot
+├── fxp_core/                   Rust matching engine, protobuf v2.4, Criterion
+│   └── src/                    server/core auth, engine, order_book, event log,
+│                               schedule, symbol configuration and regressions
+├── go_gateway/                 Native TCP/WebSocket gateway
+│   ├── transport/              pooling, bounded writers, pending-request routing
+│   ├── coreauth/, tlsconfig/   shared core-token/TLS support
+│   ├── startup/, logging/      startup policy and slog configuration
+│   └── benchmark/, simulation/, test_clients/
+├── fix_bridge/                 FIX codec/dictionary, session, gateway, translators
+│   └── fixture_*.go            compile-gated QuickFIX echo fixture / rejecting stub
+├── fix_test_client/            Python FIX and order-type E2E clients
+├── tests/                      CI/Compose/security/release/QuickFIX gate tests
 ├── scripts/
-│   ├── gen_proto.sh             Generate protobuf bindings
-│   └── e2e.sh                   Start core → gateway → bridge and run the FIX E2E suite
-├── Dockerfile                   Multi-stage build of all three binaries
-├── docker-compose.yml           core + gateway + bridge, secrets from the environment
-└── Benchmark.md                 Full benchmark methodology and results
+│   ├── gen_proto.sh            pinned protobuf generation
+│   ├── ci_success.py           stable required-check aggregator
+│   ├── e2e.sh, e2e_tls.sh      production FIX/order/persistence and TLS probes
+│   ├── compose_check.sh, compose_smoke.py
+│   ├── gen_test_certs.sh, tls_reload_probe.py, core_healthcheck.sh
+│   ├── quickfix_acceptance.py  both pinned upstream acceptance profiles
+│   └── bench.sh, collect_encoding.py, build_release.sh, verify_static_elf.py
+├── docs/                       operations.md, risk-controls.md, fix-conformance.md,
+│                               gtc-persistence.md, symbol-config.md, tls-trust.md,
+│                               iceberg-orders.md, pegged-orders.md,
+│                               benchmark-methodology.md, repo-settings.md,
+│                               releasing.md, release-process.md
+├── config/                     symbol CSV examples
+├── benchmarks/                 retained measurements and provenance
+├── Dockerfile, docker-compose.yml, docker-compose.dev.yml
+├── .env.example, go.work, Makefile
+└── README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, LICENSE
 ```
 
 ---
 
 ## Roadmap
 
-- [ ] Opening/closing auction batch matching at phase transitions
-- [ ] Stop/StopLimit trigger on live last-trade-price feed
-- [ ] `OrderCancelRequest` / `OrderCancelReplaceRequest` full round-trip in simulation
+- [x] Opening/closing auction batch matching at phase transitions
+- [x] Stop/StopLimit trigger on live last-trade-price feed
+- [x] `OrderCancelRequest` / `OrderCancelReplaceRequest` full round-trip in simulation
 - [x] Release build benchmarks
 - [x] CI/CD pipeline (GitHub Actions: `.github/workflows/ci.yml`)
 - [x] Optional TLS/mTLS listeners and authenticated core connections
@@ -517,8 +512,10 @@ Side enum from an ExecutionReport rejection to session Reject reason 5.
 Order status replies use ExecutionReport `150=I`, `17=0`, the current `39`,
 and original cumulative/leaves quantities. Queries do not redirect fills.
 Single status echoes OrdStatusReqID(790); mass status echoes 584 and includes
-911/912 count/final markers. Unknown/foreign IDs and empty mass results get
-BusinessMessageReject (`380=1`). See [status retention and consistency](docs/fix-conformance.md#order-status).
+911/912 count/final markers. Unknown/foreign single-order IDs get indistinguishable status ExecutionReports
+(`35=8`, `150=I`, `39=8`, `103=5`, `37=NONE`, zero quantities). Only request
+identifiers, Symbol and Side are echoed; the owner receives nothing. Empty mass
+results still get BusinessMessageReject (`380=1`). See [status retention and consistency](docs/fix-conformance.md#order-status).
 
 #### FIX conformance
 
@@ -626,14 +623,14 @@ See [deployment, reload and client examples](docs/tls-trust.md) and the
 | `FXP_FIX_ADDR` | native `127.0.0.1:8083`; Compose `0.0.0.0:8083` | FIX bind; `-addr` overrides |
 | `FXP_CERTS_DIR` | `./certs` | Host certificate directory for Compose and `make dev-certs` |
 | `FXP_CERT_GID` | `1000` | Secure Compose supplementary group for read-only certificate access; set to host certificate group |
-| `FXP_TLS_CERT_FILE` / `FXP_TLS_KEY_FILE` | unset | Gateway and bridge server certificate/key PEM; both required to enable TLS 1.2–1.3 |
-| `FXP_TLS_CLIENT_CA_FILE` | unset | Gateway and bridge: require and verify client certificates against this PEM CA bundle |
+| `FXP_TLS_CERT_FILE` / `FXP_TLS_KEY_FILE` | native unset; secure Compose `/etc/fxp/certs/server.crt` / `server.key` | Gateway and bridge server certificate/key PEM; both required to enable TLS 1.2–1.3 |
+| `FXP_TLS_CLIENT_CA_FILE` | native unset; secure Compose `/etc/fxp/certs/ca.crt` | Gateway and bridge: require and verify client certificates against this PEM CA bundle |
 | `FXP_TLS_REQUIRED` | native `false`; secure Compose `true` | Gateway and bridge refuse startup without TLS; malformed booleans fail startup |
-| `FXP_CORE_AUTH_TOKEN` | unset | Core and gateway only: optional natively, required in secure Compose; shared token, 24–1024 UTF-8 bytes when nonempty; use a random secret distinct from JWT |
-| `FXP_GATEWAY_TLS` | `false` | Bridge enables verified TLS to the gateway |
-| `FXP_GATEWAY_TLS_CA_FILE` | system roots | Bridge's trusted gateway CA bundle |
-| `FXP_GATEWAY_TLS_CERT_FILE` / `FXP_GATEWAY_TLS_KEY_FILE` | unset | Bridge's optional upstream mTLS identity |
-| `FXP_GATEWAY_TLS_SERVER_NAME` | dial host | Bridge's verified upstream server name |
+| `FXP_CORE_AUTH_TOKEN` | native unset; secure Compose required | Core and gateway only: optional natively, required in secure Compose; shared token, 24–1024 UTF-8 bytes when nonempty; use a random secret distinct from JWT |
+| `FXP_GATEWAY_TLS` | native `false`; secure Compose `true` | Bridge enables verified TLS to the gateway |
+| `FXP_GATEWAY_TLS_CA_FILE` | native system roots; secure Compose `/etc/fxp/certs/ca.crt` | Bridge's trusted gateway CA bundle |
+| `FXP_GATEWAY_TLS_CERT_FILE` / `FXP_GATEWAY_TLS_KEY_FILE` | native unset; secure Compose `/etc/fxp/certs/client.crt` / `client.key` | Bridge's optional upstream mTLS identity |
+| `FXP_GATEWAY_TLS_SERVER_NAME` | native dial host; secure Compose `localhost` | Bridge's verified upstream server name |
 | `FXP_CLIENT_TLS` | `false` | Go TCP/WS clients, benchmark and Python FIX client enable verified TLS |
 | `FXP_CLIENT_TLS_CA_FILE` | system roots | Tool clients' trusted server CA bundle |
 | `FXP_CLIENT_TLS_CERT_FILE` / `FXP_CLIENT_TLS_KEY_FILE` | unset | Tool clients' optional mTLS identity |

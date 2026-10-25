@@ -8,6 +8,11 @@ date when the reviewed main commit is tagged.
 ## [Unreleased]
 
 ### Round 4 low findings
+- Refresh implemented roadmap items, event-log persistence wording and repository
+  layout; replace stale test totals with CI links. Reconcile native/Compose
+  defaults in configuration tables. P09 already uses `run_stop_cascade` on main;
+  retain and verify that regression rather than delete valid drain-helper unit
+  tests (#6 / stale-test review).
 - Return indistinguishable rejected status ExecutionReports for unknown/foreign
   single-order queries (`35=8`, `150=I`, `39=8`, `103=5`), without notifying the
   real owner. Unsupported/unknown application types are business-rejected before
