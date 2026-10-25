@@ -141,7 +141,11 @@ jobs:
           path: ${{ runner.temp }}/e2e
 
   quickfix-acceptance:
-    name: quickfix-acceptance
+    name: quickfix-acceptance (${{ matrix.compat }})
+    strategy:
+      fail-fast: false
+      matrix:
+        compat: [default, quickfix]
     needs: [rust, go]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -166,14 +170,17 @@ jobs:
         with:
           ruby-version: "3.3"
       - run: python3 -m unittest discover -s tests/quickfix -v
-      - run: python3 scripts/quickfix_acceptance.py
+      - name: Test compiled fixture guards
+        working-directory: fix_bridge
+        run: go test -race -tags quickfix_fixture -count=1 ./...
+      - run: python3 scripts/quickfix_acceptance.py --compat ${{ matrix.compat }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: quickfix-acceptance
+          name: quickfix-acceptance-${{ matrix.compat }}
           path: |
-            target/quickfix-acceptance/*.log
-            target/quickfix-acceptance/results.json
+            target/quickfix-acceptance/${{ matrix.compat }}/*.log
+            target/quickfix-acceptance/${{ matrix.compat }}/results.json
 
   proto:
     name: proto
