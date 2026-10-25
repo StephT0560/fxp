@@ -62,11 +62,7 @@ func RunWebSocketServer(ctx context.Context) error {
 	return RunWebSocketServerWithTLS(ctx, manager)
 }
 func RunWebSocketServerWithTLS(ctx context.Context, manager *tlsconfig.Server) error {
-	addr := os.Getenv("FXP_GW_WS_ADDR")
-	if addr == "" {
-		addr = ":8081"
-	}
-	listener, err := manager.Listen(addr)
+	listener, err := manager.Listen(":8081")
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,6 @@ import (
 	"log"
 	"log/slog"
 	"net"
-	"os"
 	"sync"
 	"time"
 
@@ -38,11 +37,7 @@ func RunTCPServerWithTLS(ctx context.Context, manager *tlsconfig.Server) error {
 	if err := InitPool(); err != nil {
 		return err
 	}
-	addr := os.Getenv("FXP_GW_TCP_ADDR")
-	if addr == "" {
-		addr = ":8082"
-	}
-	listener, err := manager.Listen(addr)
+	listener, err := manager.Listen(":8082")
 	if err != nil {
 		return err
 	}

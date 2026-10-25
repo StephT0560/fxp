@@ -455,7 +455,7 @@ fxp/
 - [ ] `OrderCancelRequest` / `OrderCancelReplaceRequest` full round-trip in simulation
 - [x] Release build benchmarks
 - [x] CI/CD pipeline (GitHub Actions: `.github/workflows/ci.yml`)
-- [ ] TLS support (infrastructure exists in proto; not yet wired)
+- [x] Optional TLS/mTLS listeners and authenticated core connections
 - [x] FIX 4.x bridge (inbound FIX → FXP translation layer)
 
 ---
@@ -570,8 +570,6 @@ See [deployment, reload and client examples](docs/tls-trust.md) and the
 | `FXP_TLS_CERT_FILE` / `FXP_TLS_KEY_FILE` | unset | Gateway and bridge server certificate/key PEM; both required to enable TLS 1.2–1.3 |
 | `FXP_TLS_CLIENT_CA_FILE` | unset | Gateway and bridge: require and verify client certificates against this PEM CA bundle |
 | `FXP_TLS_REQUIRED` | `false` | Gateway and bridge refuse startup without TLS; malformed booleans fail startup |
-| `FXP_GW_TCP_ADDR` | `:8082` | Gateway native TCP bind address |
-| `FXP_GW_WS_ADDR` | `:8081` | Gateway WebSocket bind address (wss when TLS enabled) |
 | `FXP_CORE_AUTH_TOKEN` | unset | Core and gateway only: optional shared connection token, maximum 1024 UTF-8 bytes; use a random secret distinct from JWT |
 | `FXP_GATEWAY_TLS` | `false` | Bridge enables verified TLS to the gateway |
 | `FXP_GATEWAY_TLS_CA_FILE` | system roots | Bridge's trusted gateway CA bundle |
