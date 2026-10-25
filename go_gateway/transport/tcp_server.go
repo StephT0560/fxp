@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go_gateway/protobuf"
+	"go_gateway/startup"
 	"go_gateway/tlsconfig"
 
 	"github.com/gorilla/websocket"
@@ -37,7 +38,7 @@ func RunTCPServerWithTLS(ctx context.Context, manager *tlsconfig.Server) error {
 	if err := InitPool(); err != nil {
 		return err
 	}
-	listener, err := manager.Listen(":8082")
+	listener, err := manager.Listen(startup.Address("FXP_GW_TCP_ADDR", "127.0.0.1:8082"))
 	if err != nil {
 		return err
 	}

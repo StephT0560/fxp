@@ -61,6 +61,7 @@ import (
 
 	"go_gateway/logging"
 	"go_gateway/protobuf"
+	"go_gateway/startup"
 	"go_gateway/symbolconfig"
 	"go_gateway/tlsconfig"
 
@@ -70,7 +71,7 @@ import (
 // ── Config ────────────────────────────────────────────────────────────────────
 
 var (
-	listenAddr   = flag.String("addr", ":8083", "FIX TCP listen address")
+	listenAddr   = flag.String("addr", startup.Address("FXP_FIX_ADDR", "127.0.0.1:8083"), "FIX TCP listen address")
 	bridgeCompID = flag.String("compid", "FXPBRIDGE", "Bridge SenderCompID in outbound FIX messages")
 )
 
@@ -101,6 +102,7 @@ func main() {
 	if err := configCheck.ConfigureSchedule(); err != nil {
 		log.Fatalf("FIX schedule: %v", err)
 	}
+
 	jwtSecret := os.Getenv("FXP_JWT_SECRET")
 	if jwtSecret == "" {
 		log.Fatal("FXP_JWT_SECRET environment variable not set")

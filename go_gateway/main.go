@@ -26,6 +26,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("TLS configuration: %v", err)
 	}
+
 	go manager.Watch(ctx, time.Second)
 	var wg sync.WaitGroup
 	serverErrors := make(chan error, 2)
@@ -40,11 +41,13 @@ func main() {
 		serverErrors <- transport.RunTCPServerWithTLS(ctx, manager)
 	}()
 
+	failed := false
 	log.Println("🚀 Go API Gateway is running...")
 	select {
 	case <-ctx.Done():
 	case err := <-serverErrors:
 		if err != nil {
+			failed = true
 			log.Printf("gateway server stopped: %v", err)
 		}
 		cancel()
@@ -54,8 +57,11 @@ func main() {
 	close(serverErrors)
 	for err := range serverErrors {
 		if err != nil {
+			failed = true
 			log.Printf("gateway server stopped: %v", err)
-			os.Exit(1)
 		}
+	}
+	if failed {
+		os.Exit(1)
 	}
 }
