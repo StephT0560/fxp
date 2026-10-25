@@ -67,7 +67,10 @@ def run():
         check([m.get(32) if m else None for m in fills] == ['3', '2', '2'],
               'slice replenishment gives peer priority')
         fills = [s.wait_for(a, 'F') for _ in range(2)]
-        check([(m.get(14), m.get(151)) if m else None for m in fills] == [('3', '7'), ('5', '5')],
+        # wait_for requeues nonmatching reports while collecting taker fills,
+        # so maker reports may be rotated in the shared inbox. Compare values
+        # without asserting that this test client's queue preserves wire order.
+        check(sorted((m.get(14), m.get(151)) if m else ('', '') for m in fills) == [('3', '7'), ('5', '5')],
               'iceberg cumulative fills use total quantity')
         check(snapshot(symbol).get(271) == '1', 'partial slice shown after fills')
         replacement = order_id('R')

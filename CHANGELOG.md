@@ -67,6 +67,9 @@ date when the reviewed main commit is tagged.
 - Benchmark deadline refresh, blocked sender cancellation and joined error
   diagnostics; clippy and license compatibility after dependency upgrades.
 
+- Correct the iceberg E2E fixture's assumption that requeued maker reports retain
+  inbox order; expected cumulative fill values and taker-priority checks remain.
+
 ### Removed
 - Committed Windows benchmark executable and dead uncompiled Rust test files;
   unused Rust dependencies and wildcard version requirements. The old executable
