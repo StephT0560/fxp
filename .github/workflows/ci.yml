@@ -170,6 +170,7 @@ jobs:
         with:
           ruby-version: "3.3"
       - run: python3 -m unittest discover -s tests/quickfix -v
+      - run: bash scripts/gen_proto.sh
       - name: Test compiled fixture guards
         working-directory: fix_bridge
         run: go test -race -tags quickfix_fixture -count=1 ./...
