@@ -152,7 +152,12 @@ func (s *Server) Listen(addr string) (net.Listener, error) {
 			_ = ln.Close()
 			return nil, errors.New("refusing plaintext non-loopback listener: configure TLS or explicitly set FXP_ALLOW_PLAINTEXT=true")
 		}
-		slog.Warn("INSECURE: FXP_ALLOW_PLAINTEXT=true permits plaintext non-loopback traffic; credentials and orders are exposed", "address", ln.Addr().String())
+		// This deliberate security downgrade must be visible even at ERROR level.
+		logger := slog.Default()
+		if !logger.Enabled(context.Background(), slog.LevelWarn) {
+			logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+		}
+		logger.Warn("INSECURE: FXP_ALLOW_PLAINTEXT=true permits plaintext non-loopback traffic; credentials and orders are exposed", "address", ln.Addr().String())
 	}
 	return ln, nil
 }

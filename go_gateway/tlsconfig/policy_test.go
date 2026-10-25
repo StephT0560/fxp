@@ -3,7 +3,9 @@ package tlsconfig
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 )
@@ -32,7 +34,7 @@ func TestListenerPolicy(t *testing.T) {
 			}
 			ln, err := server.Listen(tc.addr)
 			if ln != nil {
-				defer ln.Close()
+				defer func() { _ = ln.Close() }()
 			}
 			if (err != nil) != tc.denied {
 				t.Fatalf("error=%v denied=%v", err, tc.denied)
@@ -61,12 +63,43 @@ func TestNonLoopbackTLSNeedsNoPlaintextOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 }
 
 func TestMalformedPlaintextOverrideFails(t *testing.T) {
 	t.Setenv("FXP_ALLOW_PLAINTEXT", "yes")
 	if _, err := ServerFromEnv(); err == nil {
 		t.Fatal("malformed override accepted")
+	}
+}
+
+func TestOverrideWarningCannotBeMutedByLogLevel(t *testing.T) {
+	t.Setenv("FXP_ALLOW_PLAINTEXT", "true")
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})))
+	defer slog.SetDefault(oldLogger)
+	oldStderr := os.Stderr
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = writer
+	defer func() { os.Stderr = oldStderr; _ = reader.Close(); _ = writer.Close() }()
+	server, err := NewServer(ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := server.Listen("0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = listener.Close()
+	_ = writer.Close()
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), "FXP_ALLOW_PLAINTEXT") {
+		t.Fatal("startup warning suppressed by log level")
 	}
 }
