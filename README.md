@@ -372,9 +372,9 @@ Counts observed at this revision:
 
 | Suite | Test count |
 |---|---:|
-| `fxp_core` (`cargo test`) | 161 unit tests |
+| `fxp_core` (`cargo test`) | 163 unit tests |
 | `go_gateway` (`go test ./...`) | 49 top-level tests |
-| `fix_bridge` (`go test ./...`) | 121 top-level tests |
+| `fix_bridge` (`go test ./...`) | 123 top-level tests |
 | Python FIX E2E client (`scripts/e2e.sh`) | 69 main checks, plus cancel-on-disconnect and restart/persistence checks |
 
 ---
@@ -525,3 +525,9 @@ The [per-case reasons](tests/quickfix/expected-failures.json) preserve unsupport
 features and policy differences; this is a regression gate, not certification.
 See [runner/adapter details](tests/quickfix/README.md) and the command in
 [CONTRIBUTING.md](CONTRIBUTING.md#quickfix-fix44-acceptance).
+
+Status batches are bounded by both 64 reports and the gateway's 1 MiB frame
+limit, so large valid order identifiers cannot disconnect the core pool.
+Dictionary `MONTHYEAR` accepts only real dates or weeks 1–5; invalid Boolean
+values and negative nonnegative-integer fields use Reject reason 5, while
+malformed integer syntax uses reason 6.

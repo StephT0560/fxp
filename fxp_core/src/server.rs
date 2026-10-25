@@ -1000,24 +1000,70 @@ async fn order_status(router: &SymbolRouter, request: fxp::OrderStatusRequest, o
         if reports.is_empty() && !request.order_id.is_empty() && reject.is_empty() {
             reject = "Unknown order";
         }
-        let total_reports = reports.len() as u32;
-        let batches = reports.len().div_ceil(64).max(1);
-        for i in 0..batches {
-            let batch = reports[i * 64..((i + 1) * 64).min(reports.len())].to_vec();
-            out.try_send_frame(frame_message(&fxp::FxpMessage {
-                payload: Some(fxp::fxp_message::Payload::OrderStatusResponse(
-                    fxp::OrderStatusResponse {
-                        request_id: request.request_id.clone(),
-                        sender: request.sender.clone(),
-                        reports: batch,
-                        reject_reason: reject.into(),
-                        complete: i + 1 == batches,
-                        total_reports,
-                    },
-                )),
-            }));
-        }
+        send_order_status(&out, &request, reports, reject);
     });
+}
+
+const MAX_STATUS_FRAME_BYTES: usize = 1_048_576;
+
+fn status_response_mut(message: &mut fxp::FxpMessage) -> &mut fxp::OrderStatusResponse {
+    let Some(fxp::fxp_message::Payload::OrderStatusResponse(response)) = message.payload.as_mut()
+    else {
+        unreachable!("status envelope")
+    };
+    response
+}
+
+fn send_order_status(
+    out: &OutputTx,
+    request: &fxp::OrderStatusRequest,
+    reports: Vec<fxp::ExecutionReport>,
+    reject: &str,
+) {
+    let mut message = fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::OrderStatusResponse(
+            fxp::OrderStatusResponse {
+                request_id: request.request_id.clone(),
+                sender: request.sender.clone(),
+                reports: Vec::new(),
+                reject_reason: reject.into(),
+                complete: true,
+                total_reports: reports.len() as u32,
+            },
+        )),
+    };
+    for report in reports {
+        status_response_mut(&mut message).reports.push(report);
+        if status_response_mut(&mut message).reports.len() > 64
+            || message.encoded_len() > MAX_STATUS_FRAME_BYTES
+        {
+            let tail = status_response_mut(&mut message)
+                .reports
+                .pop()
+                .expect("just pushed report");
+            if !status_response_mut(&mut message).reports.is_empty() {
+                status_response_mut(&mut message).complete = false;
+                out.try_send_frame(frame_message(&message));
+                status_response_mut(&mut message).reports.clear();
+                status_response_mut(&mut message).complete = true;
+            }
+            status_response_mut(&mut message).reports.push(tail);
+            if message.encoded_len() > MAX_STATUS_FRAME_BYTES {
+                let response = status_response_mut(&mut message);
+                response.reports.clear();
+                response.total_reports = 0;
+                response.reject_reason = "status report exceeds frame limit".into();
+                break;
+            }
+        }
+    }
+    if message.encoded_len() <= MAX_STATUS_FRAME_BYTES {
+        out.try_send_frame(frame_message(&message));
+    } else {
+        // Even the echoed request metadata cannot fit. Disconnect rather than
+        // sending a frame that would desynchronize the pool's reader.
+        out.slow.notify_one();
+    }
 }
 
 /// Fans an owner-scoped mass cancel out to the requested symbol (or every
@@ -3053,5 +3099,80 @@ mod shutdown_tests {
             .expect("client did not observe EOF")
             .unwrap();
         assert_eq!(eof, 0);
+    }
+}
+
+#[cfg(test)]
+mod status_frame_tests {
+    use super::*;
+    #[test]
+    fn long_status_reports_stay_within_the_gateway_frame_limit() {
+        let (out, mut frames, _) = ClientTx::channel(128, 1);
+        let reports: Vec<_> = (0..64)
+            .map(|i| fxp::ExecutionReport {
+                order_id: format!("{i}-{}", "x".repeat(32_000)),
+                client_order_id: "y".repeat(32_000),
+                ..Default::default()
+            })
+            .collect();
+        send_order_status(
+            &out,
+            &fxp::OrderStatusRequest {
+                request_id: "request".into(),
+                sender: "owner".into(),
+                ..Default::default()
+            },
+            reports,
+            "",
+        );
+        let mut count = 0;
+        let mut completed = false;
+        while let Ok(frame) = frames.try_recv() {
+            assert!(
+                frame.len() - 4 <= 1_048_576,
+                "status batch exceeded the gateway limit: {} bytes",
+                frame.len() - 4
+            );
+            let message = fxp::FxpMessage::decode(&frame[4..]).unwrap();
+            let Some(fxp::fxp_message::Payload::OrderStatusResponse(response)) = message.payload
+            else {
+                panic!("expected status response")
+            };
+            assert!(!completed, "report after completion");
+            assert_eq!(response.total_reports, 64);
+            assert_eq!(response.request_id, "request");
+            count += response.reports.len();
+            completed = response.complete;
+        }
+        assert_eq!(count, 64);
+        assert!(completed);
+    }
+    #[test]
+    fn oversized_individual_status_report_returns_a_bounded_rejection() {
+        let (out, mut frames, _) = ClientTx::channel(8, 1);
+        send_order_status(
+            &out,
+            &fxp::OrderStatusRequest {
+                request_id: "request".into(),
+                sender: "owner".into(),
+                ..Default::default()
+            },
+            vec![fxp::ExecutionReport {
+                order_id: "x".repeat(MAX_STATUS_FRAME_BYTES),
+                ..Default::default()
+            }],
+            "",
+        );
+        let frame = frames.try_recv().expect("bounded reject");
+        assert!(frame.len() - 4 <= MAX_STATUS_FRAME_BYTES);
+        let message = fxp::FxpMessage::decode(&frame[4..]).unwrap();
+        let Some(fxp::fxp_message::Payload::OrderStatusResponse(response)) = message.payload else {
+            panic!("expected status response")
+        };
+        assert!(response.complete);
+        assert!(response.reports.is_empty());
+        assert_eq!(response.request_id, "request");
+        assert_eq!(response.reject_reason, "status report exceeds frame limit");
+        assert!(frames.try_recv().is_err());
     }
 }

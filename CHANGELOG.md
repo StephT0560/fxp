@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bound mass-status batches by encoded bytes as well as report count to prevent core-pool disconnects on large valid orders (#2).
+
 - Fix malformed MONTHYEAR acceptance and Boolean/integer reject classification introduced by dictionary validation (#2).
 
 - Freeze/reset released FIX session state atomically and preserve old messages/sequences when scheduled archiving fails (#2).

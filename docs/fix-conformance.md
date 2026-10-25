@@ -66,7 +66,7 @@ The additive FXP v2.3 request/response uses new envelope fields 20/21 and
 ExecutionType 10 (`EXEC_ORDER_STATUS`). Existing wire numbers are unchanged.
 Gateway authentication overwrites sender and namespaces the query ID. Reply
 routing uses fresh internal request IDs; it never changes live order routes.
-The response is batched in groups of at most 64 reports and supplies completion
+The response is batched by encoded size (at most 1 MiB) and at most 64 reports and supplies completion
 and total fields. Inquiries time out after 30 seconds. Disconnect removes routes.
 
 Each symbol snapshots its serialized engine state after applying due expiry.
@@ -129,3 +129,11 @@ callbacks from advancing newly reset sequences. If scheduled archiving fails,
 the old messages and sequence state are preserved rather than truncated; the
 next scheduled Logon retries the archive and fails closed while it remains
 unavailable. Operator intervention may be required to restore archive access.
+
+Review regressions now cover large status records: valid records split before
+exceeding the core-pool frame limit, while an individually oversized record
+returns a bounded status rejection. This prevents status queries from taking
+down the shared pool reader. FIX `MONTHYEAR` validation checks the entire
+YYYYMM / YYYYMMDD / YYYYMMwN value (weeks 1–5), including real calendar dates.
+Boolean enum violations and negative nonnegative-integer fields use reason 5;
+leading-plus integer syntax is invalid and uses reason 6.
