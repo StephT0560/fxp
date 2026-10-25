@@ -94,3 +94,19 @@ pinning or its absence. These are neither WAN numbers nor exchange capacity,
 production SLOs or independent confirmations of historical Windows figures.
 Report slower results and full run spread. No automated regression threshold is
 justified yet; nightly runs archive evidence for manual comparison.
+
+## Round-4 pacing attribution
+
+`--pacer sleep|busy-spin|hybrid` selects deadline waiting without changing the
+absolute open-loop schedule. The default remains `sleep`; hybrid sleeps until
+100 microseconds before the deadline and then spins. Busy-spin can consume an
+entire generator CPU and compete with its receiver; record CPU quota as well as
+affinity. It is an experiment, not a production tuning recommendation.
+
+Each ACK now has paired `send_lag` (intended to pre-construction send) and
+`ack_after_send` (pre-construction send to receive) histograms. The latter still
+includes construction, marshal and blocked write, not just server time. These
+sample durations add to intended ACK latency, but their independently computed
+percentiles do **not** add; do not subtract p50s to estimate a causal fraction.
+`max_send_lag_ns` retains its original meaning. Attribution is available for
+closed mode too, where no predetermined arrival schedule exists.
