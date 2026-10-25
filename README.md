@@ -597,3 +597,7 @@ leg. See [repository settings](docs/repo-settings.md) for the manual ruleset.
 Dependabot groups Cargo/Go minor and patch updates and all Actions updates,
 with at most five open PRs per ecosystem and the `dependencies` label.
 Auto-merge is not enabled.
+
+First-release preparation and exact maintainer-only tagging commands are in
+[the release process](docs/release-process.md); the prepared changelog does not
+indicate an existing release. Manual release builds create artifacts only.

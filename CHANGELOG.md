@@ -1,162 +1,79 @@
 # Changelog
 
-## Unreleased
-
-- Omit local TLS material paths from benchmark artifacts and preserve fixed gateway/bridge internal ports after review (#4).
-
-- Add optional reloadable TLS 1.2+ and mTLS on gateway TCP/WebSocket and FIX listeners, mandatory-TLS startup enforcement and non-loopback plaintext warnings (#4).
-- Enforce a loopback-only core listener and optional pre-parser shared-token connection admission, including gateway reconnects and authenticated health checks (#4).
-- Add verified TLS/mTLS flags to Go/Python clients and benchmark, temporary certificate generation, rotation probes, full TLS e2e CI and deployment/trust documentation (#4).
-
-- Repeat all measurements after the closed-loop deadline fix and retain the complete initial dataset; latest reused FXP/FIX encode is 149.3/133.8ns and the worst c10 fill tail is 15.630ms (#3 review verification).
-
-- Refresh closed-loop benchmark response deadlines per send so healthy long phases do not expire midstream; preserve the intended-time deadline for open-loop runs (#3 review).
-
-- Abort blocked benchmark senders immediately when the receiver rejects/fails, retaining the original receiver error instead of waiting out the phase deadline (#3 verification).
-
-- Preserve both sender and joined-reader errors on failed benchmark writes; regression coverage prevents silently losing receiver diagnostics (#3 verification).
-
-- Supersede historical performance claims with recorded corrected measurements and raw artifacts: reusable FIX encode is faster than FXP in this run; publish five-run live endpoint spreads and full caveats (#3).
-
-- Add non-gating nightly/manual benchmark artifacts, functional harness smoke coverage, and tag-triggered static Linux amd64/arm64 builds with checksums, CycloneDX inventories and draft-only releases (#3).
-
-- Add reusable integer-format FIX encoding, opaque SBE input/output and full owned fixture decoding, matching NewOrder timestamps/TIF, and measured encode/decode roundtrips with wire-integrity tests (#3).
-
-- Replace the live benchmark with intended-time open-loop and labeled ACK-controlled closed-loop modes, exact ACK/fill accounting, separate warmup, five-run HDR/spread reports, environment/JSON/Markdown output, shared JWT config and precision-correct $3000 pricing (#3).
-
-- Add behavior-level P09 per-print stop cascade and round-3 auction, exact-expiry, transition and torn-replay edge coverage (#3/§2).
-
-- Preserve STP-restated totals and reserve caps on price-only amendments; validate lot/min/max only on explicit new quantities (#1, review regression).
-
-- Keep unused market/stop-market limit prices and non-stop trigger fields out of symbol tick validation (#1, review regression).
-
-- Document the deferred Stage C pegged-order design and its required acceptance tests (#1).
-
-- Restore CI compatibility after the merged Criterion/prost-build upgrades: use standard-library black_box and scope a Zlib license exception to foldhash 0.1.5 (#1 verification).
-
-- Add opt-in limit reserve orders, displayed-only depth, FIFO replenishment, cumulative reports, reserve-aware STP/FOK and deterministic replay (additive wire v2.4, #1).
-
-- Add per-symbol price scale/tick and quantity rules, FIX/MD precision-aware formatting, int64 boundary checks and configuration-safe input-log replay (#1, order types).
-
-- Bound mass-status batches by encoded bytes as well as report count to prevent core-pool disconnects on large valid orders (#2).
-
-- Fix malformed MONTHYEAR acceptance and Boolean/integer reject classification introduced by dictionary validation (#2).
-
-- Freeze/reset released FIX session state atomically and preserve old messages/sequences when scheduled archiving fails (#2).
-
-- Stabilize the existing gateway reconnect fixture with a TCP half-close, preserving complete-frame and single-reader assertions (#2 verification).
-
-- Gate PRs on all 59 pinned QuickFIX FIX44 server definitions, with a documented per-case expected-failure baseline and explicit runner/result validation (#2).
-
-- Bind recycled terminal status IDs to their newly accepted owner, preserving owner isolation at the trusted core boundary (#2).
-
-- Keep empty-value and duplicate checks enabled for permitted user-defined FIX fields (#2).
-
-- Enforce MsgType as the third wire field and validate Reset-mode dictionary fields while ignoring its sequence number (#2).
-
-- Complete header/trailer ordering and FIX decimal lexical checks; distinguish missing/empty CompIDs from authenticated identity mismatches (#2).
-
-- Additive protocol v2.3 owner-scoped order status (FIX H/AF), terminal-history snapshots and independent batched query routing (#2).
-
-- Pinned FIX44 XML dictionary validation with reject diagnostics, group validation and optional strict user-tag validation (#2).
-
-- Optional FIX daily/weekly schedules, timezone-aware boundaries, archived durable resets and reset-on-logon/logout/disconnect policies (#2).
-
-All notable changes to this project are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The project has not
-cut a release yet, so everything is under Unreleased.
+All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The 0.1.0 section is prepared from repository history through the round-4 CI
+work; it is not a claim that a tag or release has been created. Set its release
+date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+## [0.1.0] - Pending first release
+
 ### Added
-- Bounded core and gateway client output queues isolate slow consumers; critical
-  output overflow disconnects the client while market-data overflow is dropped.
-- Core symbol admission controls via `FXP_SYMBOLS` and `FXP_MAX_SYMBOLS`, with
-  graceful SIGINT/SIGTERM handling across core, gateway, and FIX bridge.
-- Operations guidance for backpressure, symbol admission, and graceful shutdown.
-- Self-trade prevention (FXP v2.2, additive): per-order `stp_mode`/`stp_group`
-  with cancel-newest, cancel-oldest, cancel-both and decrement-and-cancel,
-  scoped to the owner or a per-trader STP group; engine default
-  `FXP_STP_DEFAULT` (default `none`, unchanged behavior). Prevented matches
-  print no trade and cancel with text `self-trade prevention (<mode>)`.
-  FIX tags 2362/2964. Explicit STP on auction-only orders is rejected;
-  auction uncrossing ignores STP (#1).
-- Owner-scoped `OrderMassCancelRequest`/`OrderMassCancelReport` (optional
-  symbol and side filters, parked stops included); FIX `35=q` (530=7 all,
-  530=1 by symbol) answered with `35=r` (531/532/533) (#1).
-- Cancel-on-disconnect per session (`Logon.cancel_on_disconnect`, FIX Logon
-  `8013=Y`; default off): any disconnect mass-cancels the trader's orders,
-  and the bridge stores the canceled ERs for resend (#1).
-- Opt-in core input-log persistence with synchronous write-ahead fsync, checksum
-  tail repair, deterministic replay and downtime catch-up, enabled by
-  `FXP_EVENT_LOG`; includes a core SIGKILL/restart E2E check (#8).
-- Engine auction phases and full daily UTC schedules: non-matching call books,
-  held AT_CLOSE orders, opening/closing uncrosses, auction-flagged fills,
-  indicative/session feeds, and opening-only stop election (#8).
-- Pure deterministic auction uncrossing/allocation and additive FXP v2.1:
-  trading phases, session status, indicative auction data and an execution
-  report auction flag. Session/auction frames follow symbol subscriptions;
-  the FIX bridge ignores them without consuming sequence numbers (#8).
-- FIX bridge required-field dictionary for NewOrderSingle, OrderCancelRequest,
-  OrderCancelReplaceRequest and MarketDataRequest; a message missing one gets
-  `Reject(35=3)` with `373=1`, `371=<tag>`, `372=<MsgType>` (#9).
-- Multi-stage `Dockerfile`, `docker-compose.yml`, GitHub issue and PR templates.
-- `RUST_LOG` (core) and `FXP_LOG_LEVEL` (gateway, bridge) log-level control (#10).
+- Rust matching core, Go TCP/WebSocket gateway, FIX 4.4 bridge and Python test
+  client; protobuf FXP protocol, Go workspace, Docker/Compose and CI tooling.
+- Limit, market, stop/stop-limit, cancel/replace, time-in-force and expiry;
+  per-print stop cascades, opening/closing call auctions, daily UTC schedules,
+  indicative feeds and additive FXP v2.1 auction/session messages.
+- Opt-in write-ahead input-log persistence (`FXP_EVENT_LOG`), checksum tail repair,
+  deterministic replay, downtime catch-up and crash/restart checks.
+- Owner/group self-trade prevention, owner-scoped mass cancel and opt-in
+  cancel-on-disconnect (additive FXP v2.2), owner-scoped order/mass status (v2.3),
+  and FIFO iceberg reserve replenishment with displayed-only depth (v2.4).
+- Per-symbol price precision, tick/lot/min/max quantity rules and replay checks.
+- FIX durable sequence/message storage, resend/gap recovery, pinned FIX44 XML
+  dictionary validation, daily/weekly schedules and archived session resets.
+- Reloadable TLS 1.2+/mTLS on gateway and FIX listeners, verified upstream
+  clients, and optional constant-time core token handshake before frame parsing.
+  TLS and core authentication remain opt-in; default configuration is unchanged.
+- Bounded slow-consumer queues, symbol admission limits, and graceful shutdown
+  across core, gateway and bridge; operations and security guidance.
+- Intended-time open-loop and ACK-controlled closed-loop benchmarks, warmup,
+  repeated HDR/spread reports, reusable FIX encoding, wire-integrity tests and
+  retained raw measurements; nightly/manual non-gating benchmark artifacts.
+- Static Linux amd64/arm64 release builds, ELF verification, SHA256SUMS,
+  CycloneDX source/binary inventories and draft-only tag releases. Manual builds
+  create reviewable artifacts without creating a release.
+- QuickFIX acceptance gate: 28 of 59 definitions pass strictly, with 31
+  documented allow-listed cases. TLS, persistence and order-type E2E coverage.
+- Stable `ci-success` required check over every CI job, including both Go matrix
+  legs; failed, cancelled or skipped dependencies fail the gate (round 4 Low #3).
+- Dependabot Cargo/Go minor/patch grouping, Actions grouping, five open PRs per
+  ecosystem and dependency labels. Auto-merge remains disabled. Manual main
+  ruleset, branch hygiene and first-release checklists (round 4 Low #3 / §6).
 
 ### Changed
-- Gateway authentication failures and pre-authentication errors are flushed
-  before the TCP or WebSocket connection closes. The FIX bridge synthesizes a
-  unique tag 17 for ExecutionReports without an execution ID, including
-  gateway-generated rejects; non-empty core execution IDs are unchanged.
-- Core shutdown drains connected-client writers without waiting for
-  journal-held senders, and FIX bridge Logout requests share one shutdown
-  deadline before remaining sessions are closed.
-- Unsupported FIX application messages (e.g. OrderStatusRequest `35=H`) get
-  `BusinessMessageReject(35=j)` with `380=3` and an explicit text, even while
-  the gateway is disconnected (#9).
-- Core logs through `tracing`, gateway and bridge through `log/slog`;
-  per-order/per-fill/per-message events moved to debug (#10).
-- CI clippy runs with `-D warnings` (#10).
-- **Token format (breaking):** the gateway now requires JWT header
-  `alg: HS256` and the claims `iss` (default `fxp-dev`) and `aud` (default
-  `fxp-gateway`) in addition to `sub`/`exp`/`iat`, honours `nbf`, and accepts
-  an optional `kid` that selects the current or previous key
-  (`FXP_JWT_KID`, `FXP_JWT_PREVIOUS_KID`, `FXP_JWT_PREVIOUS_SECRET`). Tokens
-  minted by other issuers must add `iss`/`aud`. The bridge, `devjwt`, the
-  benchmark and the simulation now mint `iss`, `aud`, `nbf`, `jti` (and `kid`
-  when set). Optional `jti` replay cache: `FXP_JWT_REPLAY_CACHE=on`.
-- WebSocket upgrades are same-origin only by default; extra browser origins
-  via `FXP_GW_WS_ALLOWED_ORIGINS`. Clients without an `Origin` header are
-  unaffected.
-- Sockets between core, gateway and bridge set `TCP_NODELAY`, removing the
-  ~40 ms Nagle/delayed-ACK stall on back-to-back execution reports.
-- Gateway pool: exactly one reader goroutine per pooled core connection
-  across reconnects.
-- FIX codec rejects empty fields (SOH SOH), malformed `tag=value` pairs and
-  any BeginString other than the configured one (default `FIX.4.4`).
-- Benchmarks moved to `fxp_core/benches/`; `go_gateway/test_clients` split
-  into `tcp_client` and `ws_client` so `go build ./...` succeeds.
-- Removed unused Rust dependencies (`tokio-tungstenite`, `futures-util`,
-  `url`, `rand`, `hex`); no wildcard versions remain.
+- JWTs require HS256 and issuer/audience claims as well as subject/expiry/issued
+  time, honor `nbf`, and support key rotation and optional `jti` replay checks.
+  Existing external token issuers must supply `iss`/`aud` (defaults `fxp-dev` /
+  `fxp-gateway`). WebSocket upgrades are same-origin by default with an allowlist.
+- FXP v2.0 introduced explicit unspecified enum sentinels; later v2.1–v2.4 schema
+  additions are additive. Unknown enum values are rejected.
+- Core binds to loopback; gateway limits frames, connections and request rate.
+  TCP_NODELAY, one reader per pooled core connection and flushed terminal replies
+  improve transport behavior. Logging uses tracing/slog with configurable levels.
+- Corrected benchmark methodology supersedes historical latency claims: retained
+  results show reusable FIX encoding faster than FXP for that fixture/run.
 
-### Added
-- `go.work`, `Makefile`, `scripts/e2e.sh`, `rustfmt.toml`, `.golangci.yml`,
-  `SECURITY.md`, `CONTRIBUTING.md`, SPDX headers.
+### Fixed
+- FIFO price-level priority, order lookup bookkeeping, resting-price execution,
+  cumulative report fields, FOK arithmetic and order ownership isolation.
+- FIX BodyLength/checksum handling, a single session-owned outbound sequence
+  counter, authenticated Logon, malformed field rejection and session recovery.
+- Auction/expiry transitions, per-print stop election, iceberg/STP replace totals,
+  reserve caps, active-field tick validation and deterministic replay edges.
+- FIX dictionary lexical validation, bounded status batches, recycled status-owner
+  isolation and preservation of durable messages when reset archiving fails.
+- Benchmark deadline refresh, blocked sender cancellation and joined error
+  diagnostics; clippy and license compatibility after dependency upgrades.
 
 ### Removed
-- Committed Windows binary `go_gateway/bench` and the dead, uncompiled
-  `fxp_core/src/test.rs` / `integration_test.rs`.
+- Committed Windows benchmark executable and dead uncompiled Rust test files;
+  unused Rust dependencies and wildcard version requirements. The old executable
+  remains in Git history; no history rewrite was performed.
 
-### Fixed (earlier audit work)
-- Medium: FXP schema v2.0 (explicit `*_UNSPECIFIED` enums), dependency and
-  toolchain bumps, FIX codec/session hardening, README/Benchmark.md accuracy.
-- High: resting-price execution, execution report fields, FIX session
-  authentication/resend/gap handling, gateway limits.
-- Critical: FIFO within a price level, `order_lookup` bookkeeping, order
-  ownership checks, FIX BodyLength, single MsgSeqNum counter.
-
-### Repository automation (round 4 Low #3)
-- Add a stable, fail-closed `ci-success` required check over all CI jobs,
-  including both Go matrix legs; PR checks need no private secrets.
-- Group Cargo and Go minor/patch updates and GitHub Actions updates; cap each
-  ecosystem at five open PRs and apply the `dependencies` label. No auto-merge.
+### Known limitations
+- Pegged orders remain design-only. QuickFIX allow-listed differences and routing
+  gaps remain; this release is not a counterparty certification claim.
+- Production operators must explicitly configure TLS/core auth. Main's required
+  check ruleset and stale branch cleanup require maintainer action.

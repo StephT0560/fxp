@@ -21,9 +21,9 @@ changed by this branch, and auto-merge is not enabled.
 6. In **Settings → General → Pull Requests**, enable **Automatically delete head
    branches**. This affects future merges; inspect and manually delete these
    already-merged Dependabot branches in **Code → Branches**:
-   - `dependabot/cargo/fxp_core/criterion-0.8.2` (PR #6)
-   - `dependabot/cargo/fxp_core/prost-build-0.14.4` (PR #7)
-   - `dependabot/github_actions/actions/setup-go-7` (PR #8)
+   - `dependabot/cargo/fxp_core/criterion-0.8.2`
+   - `dependabot/cargo/fxp_core/prost-build-0.14.4`
+   - `dependabot/github_actions/actions/setup-go-7`
    Confirm each full branch name and merged status before deletion.
 
 Verification: open a small PR, confirm `ci-success` is required and pending until
