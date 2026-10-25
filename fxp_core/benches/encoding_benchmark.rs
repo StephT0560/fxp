@@ -1,50 +1,13 @@
 // SPDX-License-Identifier: MIT
+//! Local serialization fixtures; see docs/benchmark-methodology.md.
+//! NewOrder variants include timestamp/TIF. FIX_format allocates; FIX_preallocated
+//! reuses two buffers with integer decimal conversion. SBE is a local hand-written
+//! layout; owned decode reads all fields and allocates strings. The FIX generic
+//! tag-map decoder is not a typed production parser. Secondary fixtures are field
+//! subsets, so their sizes/timings do not establish semantic equivalence.
+//! Fixture construction is outside timing. Inputs and full outputs are opaque.
+//! Roundtrip executes both operations rather than adding separate medians.
 
-/// FXP Encoding Benchmark — v2
-///
-/// ## Methodology
-///
-/// Each format (FXP/Protobuf, FIX 4.4, SBE) is tested under identical conditions:
-///
-///   1. Messages are pre-constructed OUTSIDE the timed loop — we measure
-///      encode/decode time only, not object construction or string allocation.
-///
-///   2. FXP uses a pre-allocated `Vec` with `reserve()` to eliminate heap
-///      reallocation cost, giving it the same allocation advantage as SBE.
-///
-///   3. SBE is benchmarked with BOTH stack allocation (its natural advantage)
-///      AND heap allocation (matching FXP's model) — the numbers are labelled
-///      so the comparison is explicit about what each means.
-///
-///   4. Payloads are REALISTIC: order IDs (21 chars), sender IDs (14 chars),
-///      full counterparty names, realistic prices and large sequence numbers.
-///
-///   5. Four message types are benchmarked:
-///        - NewOrderSingle        (most common order entry message)
-///        - ExecutionReport       (fill confirmation, high volume)
-///        - MarketDataSnapshot    (5-level order book, typical exchange depth)
-///        - MarketDataIncremental (single level update, highest frequency)
-///
-///   6. `black_box()` wraps all inputs AND outputs to prevent the compiler
-///      from optimising away any work being measured.
-///
-/// ## What the SBE vs FXP gap means
-///
-///   SBE is a memcpy into a fixed struct — it has zero schema flexibility,
-///   cannot evolve fields without breaking compatibility, and requires
-///   out-of-band schema management. The encode speed reflects this.
-///
-///   FXP (Protobuf) supports schema evolution, optional fields, and
-///   cross-language code generation. The pre-allocated variant shows the
-///   realistic production cost with allocation amortised away.
-///
-///   The market snapshot benchmark is where FXP's variable-length repeated
-///   fields beat SBE's fixed arrays — deeper books widen this advantage.
-///
-/// ## Reproducing
-///
-///   cargo bench --bench encoding_benchmark
-///   # HTML report: fxp_core/target/criterion/report/index.html
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use prost::Message;
 #[path = "support/encoding.rs"]
@@ -396,8 +359,8 @@ fn print_size_report() {
         );
     }
     println!("╚══════════════════════════╩═════════╩═══════╩════════╩═════════╩══════════╝");
-    println!("\nNote: FXP beats SBE on MarketSnapshot — Protobuf repeated fields are more");
-    println!("      compact than SBE fixed arrays for variable-depth order books.\n");
+    println!("\nSizes describe these fixture subsets; the SBE snapshot is a size-only estimate.");
+    println!("See docs/benchmark-methodology.md for allocation and validation differences.\n");
 }
 
 // ── Benchmarks ────────────────────────────────────────────────────────────────

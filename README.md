@@ -569,3 +569,16 @@ orders can consume reserve with the existing STP policy. See the complete
 Pegged orders (Stage C) are deferred; the [design note](docs/pegged-orders.md)
 specifies references, cycles, priority, caps, interactions and acceptance tests.
 They are not enabled by this change.
+
+## Nightly benchmarks and draft releases
+
+`bash scripts/bench.sh target/bench` builds an isolated release stack, runs
+five-repetition intended-time/open and labeled closed-loop scenarios, then the
+corrected encoding suite. JSON, Markdown, raw Criterion estimates and actual
+build/affinity metadata are retained. Nightly/manual [bench.yml](.github/workflows/bench.yml)
+uses `ubuntu-24.04` with no numerical regression threshold.
+
+Tagged [release.yml](.github/workflows/release.yml) builds static Linux amd64 and
+arm64 core/gateway/bridge archives, SHA256SUMS and CycloneDX inventories, and
+attaches them to a draft for manual review. Manual workflow runs build artifacts
+only. See [required checks and repository configuration](docs/releasing.md).

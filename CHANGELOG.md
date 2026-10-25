@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add non-gating nightly/manual benchmark artifacts, functional harness smoke coverage, and tag-triggered static Linux amd64/arm64 builds with checksums, CycloneDX inventories and draft-only releases (#3).
+
 - Add reusable integer-format FIX encoding, opaque SBE input/output and full owned fixture decoding, matching NewOrder timestamps/TIF, and measured encode/decode roundtrips with wire-integrity tests (#3).
 
 - Replace the live benchmark with intended-time open-loop and labeled ACK-controlled closed-loop modes, exact ACK/fill accounting, separate warmup, five-run HDR/spread reports, environment/JSON/Markdown output, shared JWT config and precision-correct $3000 pricing (#3).
