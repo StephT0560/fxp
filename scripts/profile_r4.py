@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pinned, fresh-stack round-4 experiments. Raw failed runs are retained too."""
 
-import argparse, gzip, hashlib, json, os, pathlib, resource, signal, socket, subprocess, time
+import argparse, gzip, hashlib, json, os, pathlib, resource, signal, subprocess, time
+from profile_guard import ensure_ports_free, wait_port
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
@@ -55,16 +56,6 @@ for key in [
 layout = "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs"
 
 
-def ready(port):
-    for _ in range(100):
-        try:
-            with socket.create_connection(("127.0.0.1", port), 0.1):
-                return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError(f"port {port} not ready")
-
-
 def cpu(pid):
     fields = pathlib.Path(f"/proc/{pid}/stat").read_text().split()
     return sum(map(int, fields[13:15])) / os.sysconf("SC_CLK_TCK")
@@ -84,6 +75,7 @@ def scenario(
     subscribers=0,
     orders=1000,
 ):
+    ensure_ports_free([8080, 8081, 8082] + ([8083] if fix_mode is not None else []))
     procs = []
     logs = []
     components = []
@@ -141,7 +133,7 @@ def scenario(
                     stderr=subprocess.STDOUT,
                 )
             )
-            ready(port)
+            wait_port(port, procs[-1])
         if a.perf_binary:
             log = open(out / f"{name}-perf.txt", "w")
             logs.append(log)
@@ -223,6 +215,13 @@ def scenario(
         result = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
         usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
         elapsed = time.monotonic() - start
+        generator = (
+            ROOT / "scripts/bench_fix.py" if fix_mode is not None else bins / "bench"
+        )
+        binaries["generator"] = {
+            "path": str(generator),
+            "sha256": hashlib.sha256(generator.read_bytes()).hexdigest(),
+        }
         meta = {
             "source_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
@@ -253,7 +252,8 @@ def scenario(
         print(name, result.returncode, flush=True)
     finally:
         if sampler is not None:
-            sampler.send_signal(signal.SIGINT)
+            if sampler.poll() is None:
+                sampler.send_signal(signal.SIGINT)
             sampler.wait(timeout=20)
             with open(out / f"{name}-core-stacks.txt", "w") as dest:
                 subprocess.run(
@@ -275,7 +275,8 @@ def scenario(
                     stderr=subprocess.DEVNULL,
                 )
         for proc in reversed(procs):
-            proc.send_signal(signal.SIGTERM)
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGTERM)
         for proc in procs:
             try:
                 proc.wait(timeout=10)
