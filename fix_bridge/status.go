@@ -27,7 +27,7 @@ func (h *bridgeHandler) onStatus(rep *protobuf.OrderStatusResponse) {
 		return
 	}
 	r := v.(statusRequest)
-	if rep.Complete {
+	if rep.Complete || rep.RejectReason != "" || len(rep.Reports) == 0 {
 		h.statusPending.Delete(rep.RequestId)
 	}
 	if rep.RejectReason != "" || len(rep.Reports) == 0 {
