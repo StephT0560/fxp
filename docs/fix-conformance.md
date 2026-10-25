@@ -43,8 +43,13 @@ undefined tags 0, tags from a different message type 2, empty values 4,
 invalid enums 5, incorrect datatypes 6, duplicate tags 13, misplaced header/trailer fields 14, group order 15 and
 incorrect NumInGroup counts 16. Replies include RefTagID/RefMsgType and consume
 the invalid message's inbound sequence number. Garbled framing/checksum is
-still ignored without consuming a sequence number. Unknown application types
-are answered with BusinessMessageReject by the application handler.
+still ignored without consuming a sequence number. Well-formed unsupported/unknown
+application types are identified before body
+dictionary validation and answered with BusinessMessageReject (`35=j`, `380=3`),
+including `AE`, `AD` and unknown `ZZ` without body fields. Framing, authenticated
+session identity, sequencing and SendingTime checks still precede dispatch.
+Supported application types retain full dictionary validation; an incomplete
+supported NewOrderSingle still gets session Reject, not a business rejection.
 
 `FXP_FIX_DICTIONARY_STRICT=false` permits unknown user-defined tags >=5000.
 Strict mode rejects them; declared STP and COD extensions remain allowed.
@@ -74,9 +79,14 @@ Mass queries across symbols are independently consistent per symbol, not a
 global atomic snapshot. Reports include new, partial, filled, canceled, expired
 and parked-stop states, with cumulative/leaves/average values. They use FIX
 ExecType I and ExecID 0, and do not create fills. Mass replies echo 584, set
-911=total reports, and set 912=Y on the final report. Empty mass results and
-unknown/foreign single-order IDs get BusinessMessageReject 380=1; the latter
-share exactly the same text and disclose no existence information.
+911=total reports, and set 912=Y on the final report. Unknown/foreign single-order
+IDs get status ExecutionReport (`35=8`, `150=I`,
+`39=8`, `103=5` Unknown order). These two cases share the same text, `37=NONE`,
+`17=0`, zero `14`/`151`/`6`, and only echo client-provided identifiers, Symbol and
+Side; no order existence or owner information is disclosed. The real owner sees
+nothing. Empty mass results still get BusinessMessageReject 380=1. Other backend-
+reported single-status failures use the status ExecutionReport shape with OrdRejReason
+99 for non-lookup errors such as core unavailability/timeout.
 
 Live state remains queryable; at most 100,000 terminal transitions per symbol
 are retained in memory. Older terminal orders become unknown. Input-log replay

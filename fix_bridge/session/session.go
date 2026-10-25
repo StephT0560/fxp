@@ -511,6 +511,10 @@ func (s *Session) dispatchOne(msg *codec.Message) error {
 		s.sendRejectRef(seq, 0, msgType, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
 		return nil
 	}
+	if support, ok := s.handler.(interface{ SupportsApplicationMessage(string) bool }); ok && !isAdminMsgType(msgType) && !support.SupportsApplicationMessage(msgType) {
+		s.handler.Handle(msg, s)
+		return nil
+	}
 	if prepare, ok := s.handler.(interface{ PrepareInbound(*codec.Message) }); ok {
 		prepare.PrepareInbound(msg)
 	}

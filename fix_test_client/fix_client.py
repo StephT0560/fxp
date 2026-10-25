@@ -603,19 +603,36 @@ def test_order_status_request(s, r):
     s.new_order(stop, sym, '1', 1, '3', stop_px=200.00)
     s.wait_for(order_id=stop, exec_type='0')
     query(stop, '1', '0')
-    unknown = s.seq
-    s.send('H', [(11, order_id('UNKNOWN')), (55, sym), (54, '1')])
-    msg = s.wait_for_reject(unknown)
-    check(r, bool(msg and msg.get(35) == 'j' and msg.get(380) == '1'), 'unknown status: Unknown ID', msg)
+    unknown_id = order_id('UNKNOWN')
+    s.send('H', [(11, unknown_id), (55, sym), (54, '1'), (790, 'unknown-probe')])
+    msg = s.wait_for(order_id=unknown_id, exec_type='I')
+    check(r, bool(msg and msg.get(39) == '8' and msg.get(103) == '5' and msg.get(37) == 'NONE'
+                  and msg.get(17) == '0' and msg.get(790) == 'unknown-probe'),
+          'unknown status uses rejected status ExecutionReport', msg)
+    s.drain()
     victim = FIXSession(s.host, s.port, 'VICTIM01', s.target, verbose=s.verbose)
     try:
         victim.connect(); victim.logon()
-        foreign = victim.seq
-        victim.send('H', [(11, buy), (55, sym), (54, '1')])
-        msg = victim.wait_for_reject(foreign)
-        check(r, bool(msg and msg.get(380) == '1' and msg.get(58) == 'Unknown order'), 'foreign order indistinguishable from unknown', msg)
+        replies = []
+        for oid in [order_id('MISSING'), buy]:
+            victim.send('H', [(11, oid), (55, sym), (54, '1'), (790, 'privacy-probe')])
+            reply = victim.wait_for(order_id=oid, exec_type='I')
+            check(r, bool(reply and reply.get(39) == '8' and reply.get(103) == '5'
+                          and reply.get(58) == 'Unknown order'), 'private unknown/foreign status rejection', reply)
+            replies.append({tag: value for tag, value in (reply or {}).items()
+                            if isinstance(tag, int) and tag not in (9, 10, 11, 34, 52)})
+        check(r, replies[0] == replies[1] and bool(replies[0]),
+              'unknown and foreign replies indistinguishable beyond echoed request id', None)
+        time.sleep(.25)
+        check(r, s.inbox.empty(), 'owner receives no foreign status reply', None)
     finally:
         victim.logout()
+    for typ in ['AE', 'AD', 'ZZ']:
+        reference = s.seq
+        s.send(typ, [], 'unsupported type without body fields')
+        reply = s.wait_for_reject(reference)
+        check(r, bool(reply and reply.get(35) == 'j' and reply.get(380) == '3'
+                      and reply.get(372) == typ), 'unsupported ' + typ + ' precedes body dictionary', reply)
     mass = order_id('MASSSTATUS')
     s.send('AF', [(584, mass), (585, '1'), (55, sym)])
     received = []

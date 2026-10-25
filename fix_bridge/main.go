@@ -578,6 +578,12 @@ func (h *bridgeHandler) OnDisconnect(sess *session.Session) {
 
 // Handle is called by the session for each inbound application message.
 // Translates the FIX message to FXP and forwards to the gateway.
+// SupportsApplicationMessage lets the session reject unsupported application
+// types before applying a body schema for an operation the venue cannot handle.
+func (h *bridgeHandler) SupportsApplicationMessage(msgType string) bool {
+	return supportedAppMsgTypes[msgType]
+}
+
 func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 	if !supportedAppMsgTypes[msg.MsgType()] {
 		sess.SendWithSeq(func(seq int) []byte {

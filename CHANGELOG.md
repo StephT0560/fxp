@@ -8,6 +8,10 @@ date when the reviewed main commit is tagged.
 ## [Unreleased]
 
 ### Round 4 low findings
+- Return indistinguishable rejected status ExecutionReports for unknown/foreign
+  single-order queries (`35=8`, `150=I`, `39=8`, `103=5`), without notifying the
+  real owner. Unsupported/unknown application types are business-rejected before
+  body dictionary checks; supported types retain full validation (#5).
 - Bound pending gateway mass-cancel/status requests with a shared 4096-entry
   tracker, configurable mass-cancel timeout (`FXP_GW_MASS_CANCEL_TIMEOUT_SEC`,
   default 30s), stopped timers and disconnect/writer cleanup. Timeout rejects
