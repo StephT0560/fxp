@@ -61,7 +61,7 @@ jobs:
         module: [go_gateway, fix_bridge]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: "**/go.sum"
@@ -94,7 +94,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fxp_core
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go_gateway/go.mod
           cache-dependency-path: "**/go.sum"
@@ -125,7 +125,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fxp_core
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go_gateway/go.mod
           cache-dependency-path: "**/go.sum"
