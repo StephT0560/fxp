@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Supersede historical performance claims with recorded corrected measurements and raw artifacts: reusable FIX encode is faster than FXP in this run; publish five-run live endpoint spreads and full caveats (#3).
+
 - Add non-gating nightly/manual benchmark artifacts, functional harness smoke coverage, and tag-triggered static Linux amd64/arm64 builds with checksums, CycloneDX inventories and draft-only releases (#3).
 
 - Add reusable integer-format FIX encoding, opaque SBE input/output and full owned fixture decoding, matching NewOrder timestamps/TIF, and measured encode/decode roundtrips with wire-integrity tests (#3).

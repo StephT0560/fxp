@@ -22,7 +22,8 @@ the old uncorrelated "next update" probe has been removed.
 `phase_start + i/R` using a common monotonic start. The sender never advances
 that schedule when late and never uses a ticker that can discard ticks. Latency
 starts at that **intended** time, before message construction, serialization,
-blocked writes and scheduling delays. `max_send_lag_ns` exposes backlog. This
+blocked writes and scheduling delays. `max_send_lag_ns` exposes lateness immediately before constructing each order;
+latency also includes that order's serialization and blocked write. This
 accounts for coordinated omission in this finite prescribed workload; it cannot
 infer traffic after the requested order count or make an overloaded run a
 steady-state capacity estimate. It does not apply an additional synthetic HDR
