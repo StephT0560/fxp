@@ -508,6 +508,17 @@ async fn configured_order_book_task(
             }
             other => other,
         });
+        let trace_id = if crate::diagnostics::enabled() {
+            match &msg {
+                Some(SymbolMsg::Order(m)) => Some(m.order.order_id.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(id) = &trace_id {
+            crate::diagnostics::event("engine_start", id);
+        }
         let outputs = if let Some(runtime) = &persistence {
             persisted_input(runtime, &symbol, msg)
         } else {
@@ -554,6 +565,9 @@ async fn configured_order_book_task(
                 },
             }
         };
+        if let Some(id) = &trace_id {
+            crate::diagnostics::event("engine_end", id);
+        }
         for output in outputs {
             match output {
                 Output::MassCancelCount(n) => {
@@ -733,12 +747,12 @@ async fn handle_tcp_client_with_shutdown(
                 changed = writer_drain.changed() => {
                     if changed.is_err() || *writer_drain.borrow() {
                         while let Ok(frame) = output_rx.try_recv() {
-                            if w.write_all(&frame).await.is_err() {
+                            if { crate::diagnostics::frame("core_write", &frame[4..]); w.write_all(&frame).await }.is_err() {
                                 break;
                             }
                         }
                         while let Ok(frame) = md_rx.try_recv() {
-                            if w.write_all(&frame).await.is_err() {
+                            if { crate::diagnostics::frame("core_write", &frame[4..]); w.write_all(&frame).await }.is_err() {
                                 break;
                             }
                         }
@@ -764,7 +778,11 @@ async fn handle_tcp_client_with_shutdown(
                 },
             };
             if let Some(frame) = frame
-                && w.write_all(&frame).await.is_err()
+                && {
+                    crate::diagnostics::frame("core_write", &frame[4..]);
+                    w.write_all(&frame).await
+                }
+                .is_err()
             {
                 break;
             }
@@ -808,6 +826,7 @@ async fn handle_tcp_client_with_shutdown(
         match fxp::FxpMessage::decode(body.as_slice()) {
             Ok(msg) => match msg.payload {
                 Some(fxp::fxp_message::Payload::NewOrder(order)) => {
+                    crate::diagnostics::event("core_receive", &order.order_id);
                     let symbol = order.symbol.clone();
                     let tx = match router.get_or_admit(&symbol).await {
                         Ok(tx) => tx,

@@ -1,0 +1,26 @@
+File: gateway
+Build ID: 554e9780a58f6e9cb267eab8149571d934ccbf69
+Type: alloc_space
+Time: 2026-10-25 18:49:22 UTC
+Showing nodes accounting for 1065.70MB, 99.10% of 1075.36MB total
+Dropped 20 nodes (cum <= 5.38MB)
+Showing top 18 nodes out of 41
+      flat  flat%   sum%        cum   cum%
+  313.06MB 29.11% 29.11%   313.06MB 29.11%  reflect.unsafe_New
+  138.02MB 12.83% 41.95%   138.02MB 12.83%  google.golang.org/protobuf/proto.MarshalOptions.marshal
+  112.51MB 10.46% 52.41%   487.06MB 45.29%  go_gateway/transport.readCoreFrames
+   92.51MB  8.60% 61.01%    92.51MB  8.60%  google.golang.org/protobuf/internal/impl.consumeStringValidateUTF8
+   80.08MB  7.45% 68.46%    80.08MB  7.45%  go_gateway/transport.registerClientWriter
+   66.01MB  6.14% 74.60%   244.53MB 22.74%  go_gateway/transport.SendOrderToRust
+   49.50MB  4.60% 79.20%    49.50MB  4.60%  go_gateway/transport.(*clientWriter).enqueue
+   44.50MB  4.14% 83.34%    44.50MB  4.14%  go_gateway/transport.(*clientWriter).write
+   40.50MB  3.77% 87.11%   332.04MB 30.88%  go_gateway/transport.HandleFXPMessage
+   20.50MB  1.91% 89.01%    40.50MB  3.77%  go_gateway/transport.registerRoute
+   18.50MB  1.72% 90.73%    18.50MB  1.72%  go_gateway/transport.readFrame
+      18MB  1.67% 92.41%       18MB  1.67%  go_gateway/transport.namespacedOrderID (inline)
+      16MB  1.49% 93.89%   462.06MB 42.97%  go_gateway/transport.handleTCPClientWithWriter
+   15.50MB  1.44% 95.34%   138.51MB 12.88%  go_gateway/transport.routeFromCore
+      12MB  1.12% 96.45%    61.51MB  5.72%  go_gateway/transport.deliverReport
+   11.50MB  1.07% 97.52%    11.50MB  1.07%  internal/sync.newEntryNode[go.shape.interface {},go.shape.interface {}] (inline)
+    8.50MB  0.79% 98.31%     8.50MB  0.79%  internal/sync.newIndirectNode[go.shape.interface {},go.shape.interface {}] (inline)
+    8.50MB  0.79% 99.10%     8.50MB  0.79%  fmt.Sprintf

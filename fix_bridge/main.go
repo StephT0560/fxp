@@ -59,6 +59,7 @@ import (
 	"fix_bridge/session"
 	"fix_bridge/translator"
 
+	"go_gateway/diagnostics"
 	"go_gateway/logging"
 	"go_gateway/protobuf"
 	"go_gateway/startup"
@@ -80,6 +81,11 @@ var (
 
 func main() {
 	logging.Setup()
+	stopDiagnostics, diagnosticErr := diagnostics.Start()
+	if diagnosticErr != nil {
+		log.Fatalf("diagnostics: %v", diagnosticErr)
+	}
+	defer stopDiagnostics()
 	if err := symbolconfig.Configure(os.Getenv("FXP_SYMBOL_CONFIG")); err != nil {
 		log.Fatalf("FXP_SYMBOL_CONFIG: %v", err)
 	}

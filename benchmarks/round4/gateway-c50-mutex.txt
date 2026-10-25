@@ -1,0 +1,25 @@
+File: gateway
+Build ID: 554e9780a58f6e9cb267eab8149571d934ccbf69
+Type: delay
+Time: 2026-10-25 18:49:22 UTC
+Showing nodes accounting for 142.48us, 100% of 142.48us total
+Showing top 18 nodes out of 70
+      flat  flat%   sum%        cum   cum%
+   97.67us 68.55% 68.55%    97.67us 68.55%  runtime.unlock (inline)
+   44.81us 31.45%   100%    44.81us 31.45%  sync.(*Mutex).Unlock (partial-inline)
+         0     0%   100%    12.24us  8.59%  go_gateway/transport.(*clientWriter).enqueue
+         0     0%   100%     3.17us  2.22%  go_gateway/transport.(*clientWriter).run
+         0     0%   100%     3.17us  2.22%  go_gateway/transport.(*clientWriter).write
+         0     0%   100%    39.50us 27.72%  go_gateway/transport.(*pooledConn).shutdown
+         0     0%   100%     4.69us  3.29%  go_gateway/transport.(*pooledConn).write
+         0     0%   100%     4.69us  3.29%  go_gateway/transport.HandleFXPMessage
+         0     0%   100%     4.69us  3.29%  go_gateway/transport.HandleFXPMessageAuthenticated
+         0     0%   100%     3.98us  2.80%  go_gateway/transport.RunTCPServerWithTLS
+         0     0%   100%     5.32us  3.73%  go_gateway/transport.RunWebSocketServerWithTLS
+         0     0%   100%     4.69us  3.29%  go_gateway/transport.SendFramedToCore
+         0     0%   100%     4.69us  3.29%  go_gateway/transport.SendOrderToRust
+         0     0%   100%    39.50us 27.72%  go_gateway/transport.ShutdownPool
+         0     0%   100%    12.24us  8.59%  go_gateway/transport.deliverReport
+         0     0%   100%    12.24us  8.59%  go_gateway/transport.enqueueClientData
+         0     0%   100%    18.72us 13.14%  go_gateway/transport.handleTCPClientWithWriter
+         0     0%   100%    21.54us 15.12%  go_gateway/transport.poolReader

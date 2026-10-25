@@ -1,0 +1,33 @@
+File: gateway
+Build ID: 6bddd6b2487e9fb327fa94f9c84ae58c776b8b57
+Type: delay
+Time: 2026-10-25 19:10:42 UTC
+Showing nodes accounting for 7.29ms, 99.86% of 7.30ms total
+Dropped 59 nodes (cum <= 0.04ms)
+Showing top 25 nodes out of 33
+      flat  flat%   sum%        cum   cum%
+    7.29ms 99.86% 99.86%     7.29ms 99.86%  runtime.unlock (inline)
+         0     0% 99.86%     3.61ms 49.54%  go_gateway/transport.(*pooledConn).write
+         0     0% 99.86%     3.62ms 49.58%  go_gateway/transport.HandleFXPMessage
+         0     0% 99.86%     3.62ms 49.58%  go_gateway/transport.HandleFXPMessageAuthenticated
+         0     0% 99.86%     3.61ms 49.54%  go_gateway/transport.SendFramedToCore
+         0     0% 99.86%     3.62ms 49.55%  go_gateway/transport.SendOrderToRust
+         0     0% 99.86%     7.23ms 99.02%  go_gateway/transport.handleTCPClientWithWriter
+         0     0% 99.86%     0.04ms  0.57%  go_gateway/transport.poolReader
+         0     0% 99.86%     0.04ms  0.57%  go_gateway/transport.readCoreFrames
+         0     0% 99.86%     3.61ms 49.44%  go_gateway/transport.readFrame
+         0     0% 99.86%     7.23ms 99.02%  go_gateway/transport.serveTCPContext.func2
+         0     0% 99.86%     3.61ms 49.54%  go_gateway/transport.writeToCore
+         0     0% 99.86%     3.63ms 49.80%  internal/poll.(*FD).Read
+         0     0% 99.86%     3.61ms 49.54%  internal/poll.(*FD).Write
+         0     0% 99.86%     7.25ms 99.34%  internal/poll.ignoringEINTRIO (inline)
+         0     0% 99.86%     3.63ms 49.80%  io.ReadAtLeast
+         0     0% 99.86%     3.63ms 49.80%  io.ReadFull (inline)
+         0     0% 99.86%     3.63ms 49.80%  net.(*conn).Read
+         0     0% 99.86%     3.61ms 49.54%  net.(*conn).Write
+         0     0% 99.86%     3.63ms 49.80%  net.(*netFD).Read
+         0     0% 99.86%     3.61ms 49.54%  net.(*netFD).Write
+         0     0% 99.86%     3.63ms 49.74%  runtime.entersyscall
+         0     0% 99.86%     3.63ms 49.74%  runtime.entersyscallWakeSysmon
+         0     0% 99.86%     3.62ms 49.62%  runtime.exitsyscall
+         0     0% 99.86%     3.62ms 49.62%  runtime.exitsyscall.func3

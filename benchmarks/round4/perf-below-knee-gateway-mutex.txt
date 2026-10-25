@@ -1,0 +1,33 @@
+File: gateway
+Build ID: 6bddd6b2487e9fb327fa94f9c84ae58c776b8b57
+Type: delay
+Time: 2026-10-25 19:11:08 UTC
+Showing nodes accounting for 815.26us, 100% of 815.26us total
+Dropped 31 nodes (cum <= 4.08us)
+Showing top 25 nodes out of 98
+      flat  flat%   sum%        cum   cum%
+  801.76us 98.34% 98.34%   801.76us 98.34%  runtime.unlock (inline)
+   13.50us  1.66%   100%    13.50us  1.66%  sync.(*Mutex).Unlock (partial-inline)
+         0     0%   100%    84.16us 10.32%  compress/flate.(*compressor).init
+         0     0%   100%    85.44us 10.48%  compress/flate.NewWriter (inline)
+         0     0%   100%    85.44us 10.48%  compress/gzip.(*Writer).Write
+         0     0%   100%    85.44us 10.48%  go_gateway/diagnostics.Start.func1
+         0     0%   100%    85.44us 10.48%  go_gateway/diagnostics.Start.func4
+         0     0%   100%    83.87us 10.29%  go_gateway/transport.(*clientWriter).enqueue
+         0     0%   100%     6.84us  0.84%  go_gateway/transport.(*clientWriter).run
+         0     0%   100%     6.84us  0.84%  go_gateway/transport.(*clientWriter).write
+         0     0%   100%     5.47us  0.67%  go_gateway/transport.(*pooledConn).shutdown
+         0     0%   100%    13.06us  1.60%  go_gateway/transport.(*pooledConn).write
+         0     0%   100%    16.73us  2.05%  go_gateway/transport.HandleFXPMessage
+         0     0%   100%    16.73us  2.05%  go_gateway/transport.HandleFXPMessageAuthenticated
+         0     0%   100%     8.03us  0.99%  go_gateway/transport.RunWebSocketServerWithTLS
+         0     0%   100%    13.06us  1.60%  go_gateway/transport.SendFramedToCore
+         0     0%   100%    14.92us  1.83%  go_gateway/transport.SendOrderToRust
+         0     0%   100%     5.47us  0.67%  go_gateway/transport.ShutdownPool
+         0     0%   100%    83.87us 10.29%  go_gateway/transport.deliverReport
+         0     0%   100%    83.87us 10.29%  go_gateway/transport.enqueueClientData
+         0     0%   100%   418.39us 51.32%  go_gateway/transport.handleTCPClientWithWriter
+         0     0%   100%   181.66us 22.28%  go_gateway/transport.poolReader
+         0     0%   100%   181.66us 22.28%  go_gateway/transport.readCoreFrames
+         0     0%   100%   401.66us 49.27%  go_gateway/transport.readFrame
+         0     0%   100%    83.87us 10.29%  go_gateway/transport.routeFromCore

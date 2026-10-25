@@ -1,0 +1,460 @@
+{
+  "closed-c50": {
+    "before": {
+      "ack_after_send_max_ns": {
+        "median": 21725183,
+        "min": 15851519,
+        "max": 26099711
+      },
+      "ack_after_send_p50_ns": {
+        "median": 1660927,
+        "min": 1655807,
+        "max": 1690623
+      },
+      "ack_after_send_p90_ns": {
+        "median": 3108863,
+        "min": 2963455,
+        "max": 3377151
+      },
+      "ack_after_send_p99_9_ns": {
+        "median": 16523263,
+        "min": 14548991,
+        "max": 17907711
+      },
+      "ack_after_send_p99_ns": {
+        "median": 10125311,
+        "min": 9617407,
+        "max": 11755519
+      },
+      "ack_max_ns": {
+        "median": 21725183,
+        "min": 15851519,
+        "max": 26099711
+      },
+      "ack_p50_ns": {
+        "median": 1661951,
+        "min": 1656831,
+        "max": 1691647
+      },
+      "ack_p90_ns": {
+        "median": 3108863,
+        "min": 2965503,
+        "max": 3379199
+      },
+      "ack_p99_9_ns": {
+        "median": 16523263,
+        "min": 14548991,
+        "max": 17907711
+      },
+      "ack_p99_ns": {
+        "median": 10125311,
+        "min": 9617407,
+        "max": 11755519
+      },
+      "fill_max_ns": {
+        "median": 23773183,
+        "min": 18087935,
+        "max": 43843583
+      },
+      "fill_p50_ns": {
+        "median": 2600959,
+        "min": 2588671,
+        "max": 2666495
+      },
+      "fill_p90_ns": {
+        "median": 5058559,
+        "min": 4829183,
+        "max": 5443583
+      },
+      "fill_p99_9_ns": {
+        "median": 18563071,
+        "min": 16547839,
+        "max": 25034751
+      },
+      "fill_p99_ns": {
+        "median": 13041663,
+        "min": 12582911,
+        "max": 14393343
+      },
+      "max_send_lag_ns": {
+        "median": 574030,
+        "min": 356273,
+        "max": 10302442
+      },
+      "orders_per_second": {
+        "median": 24235.037508744466,
+        "min": 22924.627206211502,
+        "max": 24507.02984592257
+      },
+      "send_lag_max_ns": {
+        "median": 574463,
+        "min": 356351,
+        "max": 10305535
+      },
+      "send_lag_p50_ns": {
+        "median": 393,
+        "min": 391,
+        "max": 395
+      },
+      "send_lag_p90_ns": {
+        "median": 452,
+        "min": 448,
+        "max": 456
+      },
+      "send_lag_p99_9_ns": {
+        "median": 36415,
+        "min": 35615,
+        "max": 36895
+      },
+      "send_lag_p99_ns": {
+        "median": 852,
+        "min": 826,
+        "max": 871
+      }
+    },
+    "after": {
+      "ack_after_send_max_ns": {
+        "median": 21086207,
+        "min": 19365887,
+        "max": 38174719
+      },
+      "ack_after_send_p50_ns": {
+        "median": 1676287,
+        "min": 1636351,
+        "max": 1821695
+      },
+      "ack_after_send_p90_ns": {
+        "median": 3129343,
+        "min": 2942975,
+        "max": 4179967
+      },
+      "ack_after_send_p99_9_ns": {
+        "median": 17055743,
+        "min": 15695871,
+        "max": 29081599
+      },
+      "ack_after_send_p99_ns": {
+        "median": 11206655,
+        "min": 8470527,
+        "max": 14524415
+      },
+      "ack_max_ns": {
+        "median": 21086207,
+        "min": 19365887,
+        "max": 38174719
+      },
+      "ack_p50_ns": {
+        "median": 1677311,
+        "min": 1636351,
+        "max": 1821695
+      },
+      "ack_p90_ns": {
+        "median": 3131391,
+        "min": 2945023,
+        "max": 4179967
+      },
+      "ack_p99_9_ns": {
+        "median": 17055743,
+        "min": 15695871,
+        "max": 29081599
+      },
+      "ack_p99_ns": {
+        "median": 11206655,
+        "min": 8470527,
+        "max": 14524415
+      },
+      "fill_max_ns": {
+        "median": 23527423,
+        "min": 22822911,
+        "max": 43909119
+      },
+      "fill_p50_ns": {
+        "median": 2611199,
+        "min": 2547711,
+        "max": 2895871
+      },
+      "fill_p90_ns": {
+        "median": 5013503,
+        "min": 4759551,
+        "max": 6529023
+      },
+      "fill_p99_9_ns": {
+        "median": 19873791,
+        "min": 19005439,
+        "max": 33914879
+      },
+      "fill_p99_ns": {
+        "median": 14286847,
+        "min": 11165695,
+        "max": 25427967
+      },
+      "max_send_lag_ns": {
+        "median": 544552,
+        "min": 237804,
+        "max": 9639080
+      },
+      "orders_per_second": {
+        "median": 24061.14023894734,
+        "min": 20279.413441133416,
+        "max": 24972.819146616486
+      },
+      "send_lag_max_ns": {
+        "median": 544767,
+        "min": 237823,
+        "max": 9641983
+      },
+      "send_lag_p50_ns": {
+        "median": 396,
+        "min": 395,
+        "max": 396
+      },
+      "send_lag_p90_ns": {
+        "median": 469,
+        "min": 467,
+        "max": 472
+      },
+      "send_lag_p99_9_ns": {
+        "median": 36415,
+        "min": 35775,
+        "max": 37599
+      },
+      "send_lag_p99_ns": {
+        "median": 866,
+        "min": 828,
+        "max": 995
+      }
+    },
+    "throughput_gain": -173.89726979712577,
+    "larger_run_spread": 4693.40570548307,
+    "gain_exceeds_spread": false
+  },
+  "below-knee": {
+    "before": {
+      "ack_after_send_max_ns": {
+        "median": 52920319,
+        "min": 18153471,
+        "max": 154140671
+      },
+      "ack_after_send_p50_ns": {
+        "median": 868351,
+        "min": 815615,
+        "max": 949759
+      },
+      "ack_after_send_p90_ns": {
+        "median": 4362239,
+        "min": 3121151,
+        "max": 5423103
+      },
+      "ack_after_send_p99_9_ns": {
+        "median": 44662783,
+        "min": 14213119,
+        "max": 150732799
+      },
+      "ack_after_send_p99_ns": {
+        "median": 16941055,
+        "min": 7987199,
+        "max": 126025727
+      },
+      "ack_max_ns": {
+        "median": 57114623,
+        "min": 24182783,
+        "max": 176553983
+      },
+      "ack_p50_ns": {
+        "median": 1289215,
+        "min": 1219583,
+        "max": 1413119
+      },
+      "ack_p90_ns": {
+        "median": 5095423,
+        "min": 3778559,
+        "max": 6344703
+      },
+      "ack_p99_9_ns": {
+        "median": 45285375,
+        "min": 17301503,
+        "max": 154271743
+      },
+      "ack_p99_ns": {
+        "median": 18448383,
+        "min": 9814015,
+        "max": 130154495
+      },
+      "fill_max_ns": {
+        "median": 57114623,
+        "min": 25673727,
+        "max": 176947199
+      },
+      "fill_p50_ns": {
+        "median": 1650687,
+        "min": 1531903,
+        "max": 1753087
+      },
+      "fill_p90_ns": {
+        "median": 5378047,
+        "min": 4012031,
+        "max": 6672383
+      },
+      "fill_p99_9_ns": {
+        "median": 45645823,
+        "min": 17694719,
+        "max": 154271743
+      },
+      "fill_p99_ns": {
+        "median": 18694143,
+        "min": 10092543,
+        "max": 130285567
+      },
+      "max_send_lag_ns": {
+        "median": 10803069,
+        "min": 10124929,
+        "max": 31545458
+      },
+      "orders_per_second": {
+        "median": 19966.945177504993,
+        "min": 19940.0628510143,
+        "max": 19972.011614375046
+      },
+      "send_lag_max_ns": {
+        "median": 10805247,
+        "min": 10125311,
+        "max": 31555583
+      },
+      "send_lag_p50_ns": {
+        "median": 229631,
+        "min": 219135,
+        "max": 249727
+      },
+      "send_lag_p90_ns": {
+        "median": 1051647,
+        "min": 1033215,
+        "max": 1099775
+      },
+      "send_lag_p99_9_ns": {
+        "median": 7417855,
+        "min": 6852607,
+        "max": 25198591
+      },
+      "send_lag_p99_ns": {
+        "median": 3672063,
+        "min": 2762751,
+        "max": 8888319
+      }
+    },
+    "after": {
+      "ack_after_send_max_ns": {
+        "median": 68943871,
+        "min": 41189375,
+        "max": 179175423
+      },
+      "ack_after_send_p50_ns": {
+        "median": 889343,
+        "min": 815615,
+        "max": 1004543
+      },
+      "ack_after_send_p90_ns": {
+        "median": 6627327,
+        "min": 3188735,
+        "max": 14761983
+      },
+      "ack_after_send_p99_9_ns": {
+        "median": 59572223,
+        "min": 34406399,
+        "max": 168820735
+      },
+      "ack_after_send_p99_ns": {
+        "median": 42270719,
+        "min": 13123583,
+        "max": 133562367
+      },
+      "ack_max_ns": {
+        "median": 69533695,
+        "min": 45252607,
+        "max": 180223999
+      },
+      "ack_p50_ns": {
+        "median": 1327103,
+        "min": 1198079,
+        "max": 1499135
+      },
+      "ack_p90_ns": {
+        "median": 7798783,
+        "min": 3835903,
+        "max": 18333695
+      },
+      "ack_p99_9_ns": {
+        "median": 60358655,
+        "min": 36536319,
+        "max": 170000383
+      },
+      "ack_p99_ns": {
+        "median": 46333951,
+        "min": 16629759,
+        "max": 134348799
+      },
+      "fill_max_ns": {
+        "median": 69533695,
+        "min": 45776895,
+        "max": 180355071
+      },
+      "fill_p50_ns": {
+        "median": 1693695,
+        "min": 1531903,
+        "max": 1853439
+      },
+      "fill_p90_ns": {
+        "median": 8040447,
+        "min": 4128767,
+        "max": 18579455
+      },
+      "fill_p99_9_ns": {
+        "median": 60522495,
+        "min": 36765695,
+        "max": 170393599
+      },
+      "fill_p99_ns": {
+        "median": 46596095,
+        "min": 16990207,
+        "max": 134742015
+      },
+      "max_send_lag_ns": {
+        "median": 27748616,
+        "min": 9877690,
+        "max": 34430311
+      },
+      "orders_per_second": {
+        "median": 19959.95060262723,
+        "min": 19956.101322651062,
+        "max": 19971.05356353237
+      },
+      "send_lag_max_ns": {
+        "median": 27754495,
+        "min": 9879551,
+        "max": 34439167
+      },
+      "send_lag_p50_ns": {
+        "median": 241023,
+        "min": 216447,
+        "max": 284415
+      },
+      "send_lag_p90_ns": {
+        "median": 1090559,
+        "min": 998399,
+        "max": 1313791
+      },
+      "send_lag_p99_9_ns": {
+        "median": 21790719,
+        "min": 6283263,
+        "max": 28524543
+      },
+      "send_lag_p99_ns": {
+        "median": 9846783,
+        "min": 2559999,
+        "max": 16990207
+      }
+    },
+    "throughput_gain": -6.994574877764535,
+    "larger_run_spread": 31.948763360745943,
+    "gain_exceeds_spread": false
+  }
+}

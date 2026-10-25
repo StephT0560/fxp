@@ -1,0 +1,1974 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="518" onload="init(evt)" viewBox="0 0 1200 518" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="518.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >perf-closed-c50 Rust core, user CPU clock 99 Hz</text>
+<text id="details" x="10.00" y="501" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="501" > </text>
+<g id="frames">
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (10,101,010 samples, 0.38%)</title><rect x="1064.8" y="85" width="4.5" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="1067.85" y="95.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::watch::big_notify::BigNotify&gt;::notified (10,101,010 samples, 0.38%)</title><rect x="613.4" y="325" width="4.5" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="616.41" y="335.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt; (20,202,020 samples, 0.76%)</title><rect x="550.8" y="341" width="9.0" height="15.0" fill="rgb(225,96,22)" rx="2" ry="2" />
+<text  x="553.83" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (60,606,060 samples, 2.27%)</title><rect x="711.7" y="229" width="26.9" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="714.74" y="239.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::remember_status (60,606,060 samples, 2.27%)</title><rect x="32.3" y="197" width="26.9" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="35.35" y="207.5" >&lt;..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="273.7" y="341" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="276.71" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::sys::thread::unix::Thread&gt;::new::thread_start (20,202,020 samples, 0.76%)</title><rect x="14.5" y="437" width="8.9" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="17.47" y="447.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::sync_fill (40,404,040 samples, 1.52%)</title><rect x="117.3" y="325" width="17.9" height="15.0" fill="rgb(235,141,33)" rx="2" ry="2" />
+<text  x="120.27" y="335.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;(tokio[fb708733e28cbe28]::sync::notify::Notified, &lt;tokio[fb708733e28cbe28]::sync::watch::Receiver&lt;bool&gt;&gt;::changed::{closure#0}, fxp_core[f40cc18480f81a90]::server::read_framed_message::{closure#0})&gt; (20,202,020 samples, 0.76%)</title><rect x="693.9" y="373" width="8.9" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="696.86" y="383.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::hash::sip::Hasher&lt;core[efd5e57aef94d71e]::hash::sip::Sip13Rounds&gt; as core[efd5e57aef94d71e]::hash::Hasher&gt;::write (10,101,010 samples, 0.38%)</title><rect x="465.9" y="325" width="4.5" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="468.91" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (10,101,010 samples, 0.38%)</title><rect x="10.0" y="437" width="4.5" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="13.00" y="447.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="1033.6" y="69" width="8.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1036.56" y="79.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (838,383,830 samples, 31.44%)</title><rect x="197.7" y="421" width="371.0" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="200.73" y="431.5" >&lt;tokio[fb708733e28cbe28]::runtime::task::core::Cor..</text>
+</g>
+<g >
+<title>[libc.so.6] (30,303,030 samples, 1.14%)</title><rect x="1002.3" y="53" width="13.4" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1005.27" y="63.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run_task (80,808,080 samples, 3.03%)</title><rect x="23.4" y="277" width="35.8" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="26.41" y="287.5" >&lt;to..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::broadcast_md (10,101,010 samples, 0.38%)</title><rect x="859.2" y="165" width="4.5" height="15.0" fill="rgb(233,129,31)" rx="2" ry="2" />
+<text  x="862.24" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="14.5" y="373" width="8.9" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="17.47" y="383.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (111,111,110 samples, 4.17%)</title><rect x="59.2" y="197" width="49.1" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="62.17" y="207.5" >&lt;all..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::pop_best (20,202,020 samples, 0.76%)</title><rect x="108.3" y="325" width="9.0" height="15.0" fill="rgb(251,211,50)" rx="2" ry="2" />
+<text  x="111.33" y="335.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::context::runtime::enter_runtime::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}, ()&gt; (80,808,080 samples, 3.03%)</title><rect x="23.4" y="325" width="35.8" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="26.41" y="335.5" >tok..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::match_into (60,606,060 samples, 2.27%)</title><rect x="108.3" y="357" width="26.9" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="111.33" y="367.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::MarketOrderUpdate as prost[cc3a2d452dcd771]::message::Message&gt;::encode_raw::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="1047.0" y="117" width="4.4" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="1049.97" y="127.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rdl_alloc (10,101,010 samples, 0.38%)</title><rect x="291.6" y="325" width="4.5" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="294.59" y="335.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="1006.7" y="37" width="9.0" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1009.74" y="47.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (30,303,030 samples, 1.14%)</title><rect x="1002.3" y="101" width="13.4" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1005.27" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::NotifiedProject&gt;::drop_notified (20,202,020 samples, 0.76%)</title><rect x="1149.8" y="149" width="8.9" height="15.0" fill="rgb(227,104,24)" rx="2" ry="2" />
+<text  x="1152.77" y="159.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (10,101,010 samples, 0.38%)</title><rect x="510.6" y="277" width="4.5" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="513.61" y="287.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (20,202,020 samples, 0.76%)</title><rect x="282.7" y="341" width="8.9" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="285.65" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::task::atomic_waker::AtomicWaker&gt;::wake (10,101,010 samples, 0.38%)</title><rect x="684.9" y="357" width="4.5" height="15.0" fill="rgb(252,217,51)" rx="2" ry="2" />
+<text  x="687.92" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;alloc[c23e483dde3f7cfb]::string::String&gt; (20,202,020 samples, 0.76%)</title><rect x="479.3" y="341" width="9.0" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="482.32" y="351.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="193.3" y="325" width="4.4" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="196.26" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::OrderState&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;&gt;::new (20,202,020 samples, 0.76%)</title><rect x="282.7" y="357" width="8.9" height="15.0" fill="rgb(236,146,35)" rx="2" ry="2" />
+<text  x="285.65" y="367.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::context::runtime::enter_runtime::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}, ()&gt; (20,202,020 samples, 0.76%)</title><rect x="14.5" y="309" width="8.9" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="17.47" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::new_order (50,505,050 samples, 1.89%)</title><rect x="716.2" y="181" width="22.4" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="719.21" y="191.5" >&lt;..</text>
+</g>
+<g >
+<title>[libc.so.6] (40,404,040 samples, 1.52%)</title><rect x="349.7" y="277" width="17.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="352.70" y="287.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::task::waker::clone_waker (10,101,010 samples, 0.38%)</title><rect x="711.7" y="149" width="4.5" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="714.74" y="159.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="836.9" y="149" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="839.89" y="159.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::context::scoped::Scoped&lt;tokio[fb708733e28cbe28]::runtime::scheduler::Context&gt;&gt;::set::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}::{closure#0}, ()&gt; (111,111,110 samples, 4.17%)</title><rect x="59.2" y="341" width="49.1" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="62.17" y="351.5" >&lt;tok..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (10,101,010 samples, 0.38%)</title><rect x="403.3" y="293" width="4.5" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="406.33" y="303.5" ></text>
+</g>
+<g >
+<title>realloc (20,202,020 samples, 0.76%)</title><rect x="533.0" y="309" width="8.9" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="535.95" y="319.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::varint::encode_varint::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (20,202,020 samples, 0.76%)</title><rect x="1060.4" y="117" width="8.9" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="1063.38" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::TaskIdGuard&gt;::enter (10,101,010 samples, 0.38%)</title><rect x="747.5" y="181" width="4.5" height="15.0" fill="rgb(218,62,15)" rx="2" ry="2" />
+<text  x="750.50" y="191.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="394.4" y="277" width="4.5" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="397.39" y="287.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::mpsc::list::Tx&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt;&gt;::push (20,202,020 samples, 0.76%)</title><rect x="814.5" y="149" width="9.0" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="817.55" y="159.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rdl_realloc (10,101,010 samples, 0.38%)</title><rect x="912.9" y="85" width="4.4" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="915.88" y="95.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="68.1" y="181" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="71.11" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (20,202,020 samples, 0.76%)</title><rect x="1073.8" y="85" width="8.9" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="1076.79" y="95.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (60,606,060 samples, 2.27%)</title><rect x="930.8" y="69" width="26.8" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="933.76" y="79.5" >[..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Inner&gt;::run (979,797,970 samples, 36.74%)</title><rect x="738.6" y="357" width="433.5" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="741.56" y="367.5" >&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Inner&gt;::..</text>
+</g>
+<g >
+<title>alloc[c23e483dde3f7cfb]::fmt::format::format_inner (10,101,010 samples, 0.38%)</title><rect x="510.6" y="341" width="4.5" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="513.61" y="351.5" ></text>
+</g>
+<g >
+<title>[libm.so.6] (10,101,010 samples, 0.38%)</title><rect x="1167.7" y="213" width="4.4" height="15.0" fill="rgb(208,16,4)" rx="2" ry="2" />
+<text  x="1170.65" y="223.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (838,383,830 samples, 31.44%)</title><rect x="197.7" y="437" width="371.0" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="200.73" y="447.5" >&lt;tokio[fb708733e28cbe28]::runtime::task::harness::..</text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="1176.6" y="421" width="4.5" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="1179.59" y="431.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (30,303,030 samples, 1.14%)</title><rect x="1002.3" y="85" width="13.4" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="1005.27" y="95.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::handle_tcp_client_with_shutdown::{closure#0}::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (141,414,140 samples, 5.30%)</title><rect x="1100.6" y="197" width="62.6" height="15.0" fill="rgb(220,73,17)" rx="2" ry="2" />
+<text  x="1103.61" y="207.5" >&lt;tokio..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::io::util::read_exact::ReadExact&lt;tokio[fb708733e28cbe28]::net::tcp::split_owned::OwnedReadHalf&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (10,101,010 samples, 0.38%)</title><rect x="591.1" y="357" width="4.4" height="15.0" fill="rgb(214,45,10)" rx="2" ry="2" />
+<text  x="594.06" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::map::HashMap&lt;alloc[c23e483dde3f7cfb]::string::String, (alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::fxp::ExecutionReport), std[68c81ae915296b05]::hash::random::RandomState&gt;&gt;::rustc_entry (80,808,080 samples, 3.03%)</title><rect x="769.8" y="133" width="35.8" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="772.85" y="143.5" >&lt;ha..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::Notified as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (30,303,030 samples, 1.14%)</title><rect x="1136.4" y="117" width="13.4" height="15.0" fill="rgb(218,64,15)" rx="2" ry="2" />
+<text  x="1139.36" y="127.5" ></text>
+</g>
+<g >
+<title>realloc (30,303,030 samples, 1.14%)</title><rect x="1002.3" y="69" width="13.4" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1005.27" y="79.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::task::atomic_waker::AtomicWaker&gt;::register_by_ref (20,202,020 samples, 0.76%)</title><rect x="23.4" y="165" width="8.9" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="26.41" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::run_server_with_router_and_auth&lt;fxp_core[d155aad447da815d]::shutdown_signal::{closure#0}&gt;::{closure#0}::{closure#4}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (313,131,310 samples, 11.74%)</title><rect x="568.7" y="421" width="138.6" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="571.71" y="431.5" >&lt;tokio[fb708733e2..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (979,797,970 samples, 36.74%)</title><rect x="738.6" y="341" width="433.5" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="741.56" y="351.5" >&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;t..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::frame_message (525,252,520 samples, 19.70%)</title><rect x="863.7" y="165" width="232.4" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="866.71" y="175.5" >fxp_core[f40cc18480f81a90]::se..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (10,101,010 samples, 0.38%)</title><rect x="170.9" y="325" width="4.5" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="173.91" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (30,303,030 samples, 1.14%)</title><rect x="957.6" y="85" width="13.4" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="960.58" y="95.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::mpsc::list::Tx&lt;fxp_core[f40cc18480f81a90]::server::SymbolMsg&gt;&gt;::push (10,101,010 samples, 0.38%)</title><rect x="680.5" y="357" width="4.4" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="683.45" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::add_order (171,717,170 samples, 6.44%)</title><rect x="313.9" y="341" width="76.0" height="15.0" fill="rgb(235,142,34)" rx="2" ry="2" />
+<text  x="316.94" y="351.5" >&lt;fxp_cor..</text>
+</g>
+<g >
+<title>&lt;usize as core[efd5e57aef94d71e]::fmt::Display&gt;::fmt (10,101,010 samples, 0.38%)</title><rect x="510.6" y="309" width="4.5" height="15.0" fill="rgb(216,50,12)" rx="2" ry="2" />
+<text  x="513.61" y="319.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="188.8" y="309" width="4.5" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="191.79" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;fxp_core[f40cc18480f81a90]::order_book::market_data::MarketDataIncrementalUpdate&gt; as alloc[c23e483dde3f7cfb]::vec::spec_extend::SpecExtend&lt;fxp_core[f40cc18480f81a90]::order_book::market_data::MarketDataIncrementalUpdate, alloc[c23e483dde3f7cfb]::vec::into_iter::IntoIter&lt;fxp_core[f40cc18480f81a90]::order_book::market_data::MarketDataIncrementalUpdate&gt;&gt;&gt;::spec_extend (20,202,020 samples, 0.76%)</title><rect x="398.9" y="325" width="8.9" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="401.86" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="14.5" y="245" width="8.9" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="17.47" y="255.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::time::sleep::Sleep as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="23.4" y="181" width="8.9" height="15.0" fill="rgb(208,14,3)" rx="2" ry="2" />
+<text  x="26.41" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;str&gt; (10,101,010 samples, 0.38%)</title><rect x="148.6" y="341" width="4.4" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="151.56" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::thread::lifecycle::spawn_unchecked&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt;::{closure#1} as core[efd5e57aef94d71e]::ops::function::FnOnce&lt;()&gt;&gt;::call_once::{shim:vtable#0} (979,797,970 samples, 36.74%)</title><rect x="738.6" y="389" width="433.5" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="741.56" y="399.5" >&lt;std[68c81ae915296b05]::thread::lifecycle::spawn_unchecked&lt;..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (20,202,020 samples, 0.76%)</title><rect x="291.6" y="357" width="8.9" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="294.59" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (50,505,050 samples, 1.89%)</title><rect x="1020.2" y="117" width="22.3" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1023.15" y="127.5" >&lt;..</text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::fxp::FxpMessage&gt; (20,202,020 samples, 0.76%)</title><rect x="841.4" y="165" width="8.9" height="15.0" fill="rgb(209,19,4)" rx="2" ry="2" />
+<text  x="844.36" y="175.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rust_alloc (10,101,010 samples, 0.38%)</title><rect x="1064.8" y="69" width="4.5" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="1067.85" y="79.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::future::poll_fn::PollFn&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}::{closure#3}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="23.4" y="213" width="8.9" height="15.0" fill="rgb(205,4,0)" rx="2" ry="2" />
+<text  x="26.41" y="223.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::varint::encode_varint::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (30,303,030 samples, 1.14%)</title><rect x="1069.3" y="117" width="13.4" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="1072.32" y="127.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::context::runtime::enter_runtime::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}, ()&gt; (60,606,060 samples, 2.27%)</title><rect x="711.7" y="293" width="26.9" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="714.74" y="303.5" >t..</text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;alloc[c23e483dde3f7cfb]::string::String&gt; (10,101,010 samples, 0.38%)</title><rect x="367.6" y="309" width="4.4" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="370.58" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run_task (20,202,020 samples, 0.76%)</title><rect x="14.5" y="261" width="8.9" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="17.47" y="271.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (60,606,060 samples, 2.27%)</title><rect x="246.9" y="277" width="26.8" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="249.89" y="287.5" >[..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0} (838,383,830 samples, 31.44%)</title><rect x="197.7" y="405" width="371.0" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="200.73" y="415.5" >fxp_core[f40cc18480f81a90]::server::configured_ord..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::NewOrderSingle as prost[cc3a2d452dcd771]::message::Message&gt;::merge_field::&lt;&amp;mut &amp;[u8]&gt; (60,606,060 samples, 2.27%)</title><rect x="640.2" y="325" width="26.8" height="15.0" fill="rgb(226,98,23)" rx="2" ry="2" />
+<text  x="643.23" y="335.5" >&lt;..</text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run (60,606,060 samples, 2.27%)</title><rect x="711.7" y="309" width="26.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="714.74" y="319.5" >t..</text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rust_dealloc (10,101,010 samples, 0.38%)</title><rect x="859.2" y="149" width="4.5" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="862.24" y="159.5" ></text>
+</g>
+<g >
+<title>malloc (20,202,020 samples, 0.76%)</title><rect x="220.1" y="341" width="8.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="223.08" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run (20,202,020 samples, 0.76%)</title><rect x="14.5" y="277" width="8.9" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="17.47" y="287.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::collections::btree::map::entry::VacantEntry&lt;i64, alloc[c23e483dde3f7cfb]::collections::vec_deque::VecDeque&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order&gt;&gt;&gt;::insert_entry (10,101,010 samples, 0.38%)</title><rect x="313.9" y="325" width="4.5" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="316.94" y="335.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0} (111,111,110 samples, 4.17%)</title><rect x="59.2" y="261" width="49.1" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="62.17" y="271.5" >fxp_..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (10,101,010 samples, 0.38%)</title><rect x="1064.8" y="101" width="4.5" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1067.85" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::context::scoped::Scoped&lt;tokio[fb708733e28cbe28]::runtime::scheduler::Context&gt;&gt;::set::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}::{closure#0}, ()&gt; (20,202,020 samples, 0.76%)</title><rect x="14.5" y="293" width="8.9" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="17.47" y="303.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (40,404,040 samples, 1.52%)</title><rect x="868.2" y="101" width="17.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="871.18" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (60,606,060 samples, 2.27%)</title><rect x="711.7" y="213" width="26.9" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="714.74" y="223.5" >&lt;..</text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::message::encode::&lt;fxp_core[f40cc18480f81a90]::fxp::MarketOrderUpdate, alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="1051.4" y="117" width="4.5" height="15.0" fill="rgb(220,70,16)" rx="2" ry="2" />
+<text  x="1054.44" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::watch::state::AtomicState&gt;::load (10,101,010 samples, 0.38%)</title><rect x="707.3" y="421" width="4.4" height="15.0" fill="rgb(246,188,45)" rx="2" ry="2" />
+<text  x="710.27" y="431.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::NotifiedProject&gt;::poll_notified (20,202,020 samples, 0.76%)</title><rect x="604.5" y="309" width="8.9" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="607.47" y="319.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="541.9" y="341" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="544.89" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::hash::sip::Hasher&lt;core[efd5e57aef94d71e]::hash::sip::Sip13Rounds&gt; as core[efd5e57aef94d71e]::hash::Hasher&gt;::write (10,101,010 samples, 0.38%)</title><rect x="483.8" y="325" width="4.5" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="486.79" y="335.5" ></text>
+</g>
+<g >
+<title>cfree (20,202,020 samples, 0.76%)</title><rect x="50.2" y="165" width="9.0" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="53.23" y="175.5" ></text>
+</g>
+<g >
+<title>std[68c81ae915296b05]::sys::backtrace::__rust_begin_short_backtrace::&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt; (80,808,080 samples, 3.03%)</title><rect x="23.4" y="421" width="35.8" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="26.41" y="431.5" >std..</text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::message::encode::&lt;prost_types[230365fa92358bda]::protobuf::Timestamp, alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (30,303,030 samples, 1.14%)</title><rect x="1069.3" y="133" width="13.4" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="1072.32" y="143.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rdl_alloc (10,101,010 samples, 0.38%)</title><rect x="492.7" y="357" width="4.5" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="495.73" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::execute_into (363,636,360 samples, 13.64%)</title><rect x="300.5" y="357" width="160.9" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="303.53" y="367.5" >&lt;fxp_core[f40cc18480..</text>
+</g>
+<g >
+<title>realloc (50,505,050 samples, 1.89%)</title><rect x="1020.2" y="85" width="22.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1023.15" y="95.5" >r..</text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::raw::RawTable&lt;(alloc[c23e483dde3f7cfb]::string::String, (alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::fxp::ExecutionReport))&gt;&gt;::reserve_rehash::&lt;hashbrown[2a10179b492ebecc]::map::make_hasher&lt;alloc[c23e483dde3f7cfb]::string::String, (alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::fxp::ExecutionReport), std[68c81ae915296b05]::hash::random::RandomState&gt;::{closure#0}&gt; (10,101,010 samples, 0.38%)</title><rect x="792.2" y="117" width="4.5" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="795.20" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::context::scoped::Scoped&lt;tokio[fb708733e28cbe28]::runtime::scheduler::Context&gt;&gt;::set::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}::{closure#0}, ()&gt; (60,606,060 samples, 2.27%)</title><rect x="711.7" y="277" width="26.9" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="714.74" y="287.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::task::atomic_waker::AtomicWaker&gt;::register_by_ref (10,101,010 samples, 0.38%)</title><rect x="711.7" y="165" width="4.5" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="714.74" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (60,606,060 samples, 2.27%)</title><rect x="711.7" y="357" width="26.9" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="714.74" y="367.5" >&lt;..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0} (80,808,080 samples, 3.03%)</title><rect x="23.4" y="229" width="35.8" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="26.41" y="239.5" >fxp..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="153.0" y="341" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="156.03" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::ExecutionReport as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (111,111,110 samples, 4.17%)</title><rect x="59.2" y="213" width="49.1" height="15.0" fill="rgb(246,192,46)" rx="2" ry="2" />
+<text  x="62.17" y="223.5" >&lt;fxp..</text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order&gt; (10,101,010 samples, 0.38%)</title><rect x="448.0" y="309" width="4.5" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="451.03" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (10,101,010 samples, 0.38%)</title><rect x="41.3" y="181" width="4.5" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="44.29" y="191.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="305.0" y="309" width="4.5" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="308.00" y="319.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rust_dealloc (10,101,010 samples, 0.38%)</title><rect x="1172.1" y="421" width="4.5" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="1175.12" y="431.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (80,808,080 samples, 3.03%)</title><rect x="23.4" y="389" width="35.8" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="26.41" y="399.5" >&lt;to..</text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::varint::encode_varint::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="1042.5" y="101" width="4.5" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="1045.50" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::raw::RawTable&lt;(alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::order_book::order::Order)&gt;&gt;::remove_entry::&lt;hashbrown[2a10179b492ebecc]::map::equivalent_key&lt;str, alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::order_book::order::Order&gt;::{closure#0}&gt; (10,101,010 samples, 0.38%)</title><rect x="121.7" y="309" width="4.5" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="124.74" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (50,505,050 samples, 1.89%)</title><rect x="863.7" y="149" width="22.4" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="866.71" y="159.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::process_aggressive (10,101,010 samples, 0.38%)</title><rect x="452.5" y="341" width="4.5" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="455.50" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::maybe_move_runtime::{closure#0}::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (60,606,060 samples, 2.27%)</title><rect x="711.7" y="325" width="26.9" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="714.74" y="335.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::future::poll_fn::PollFn&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}::{closure#3}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (10,101,010 samples, 0.38%)</title><rect x="711.7" y="181" width="4.5" height="15.0" fill="rgb(205,4,0)" rx="2" ry="2" />
+<text  x="714.74" y="191.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::engine::report_execution::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt; (141,414,140 samples, 5.30%)</title><rect x="135.2" y="373" width="62.5" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="138.15" y="383.5" >fxp_co..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (10,101,010 samples, 0.38%)</title><rect x="403.3" y="309" width="4.5" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="406.33" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run (80,808,080 samples, 3.03%)</title><rect x="23.4" y="293" width="35.8" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="26.41" y="303.5" >&lt;to..</text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="1181.1" y="421" width="4.4" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="1184.06" y="431.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::engine::OrderState&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="157.5" y="341" width="4.5" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="160.50" y="351.5" ></text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="497.2" y="341" width="4.5" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="500.20" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::thread::lifecycle::spawn_unchecked&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt;::{closure#1} as core[efd5e57aef94d71e]::ops::function::FnOnce&lt;()&gt;&gt;::call_once::{shim:vtable#0} (60,606,060 samples, 2.27%)</title><rect x="711.7" y="405" width="26.9" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="714.74" y="415.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run_task (60,606,060 samples, 2.27%)</title><rect x="711.7" y="245" width="26.9" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="714.74" y="255.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::bind_status_owner (101,010,100 samples, 3.79%)</title><rect x="760.9" y="149" width="44.7" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="763.91" y="159.5" >&lt;fxp..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::engine::parse_order_enums (10,101,010 samples, 0.38%)</title><rect x="524.0" y="357" width="4.5" height="15.0" fill="rgb(214,42,10)" rx="2" ry="2" />
+<text  x="527.02" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::map::HashMap&lt;alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::engine::OrderState&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;, std[68c81ae915296b05]::hash::random::RandomState&gt;&gt;::get::&lt;alloc[c23e483dde3f7cfb]::string::String&gt; (10,101,010 samples, 0.38%)</title><rect x="465.9" y="357" width="4.5" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="468.91" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::FxpHeader as prost[cc3a2d452dcd771]::message::Message&gt;::encode_raw::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (30,303,030 samples, 1.14%)</title><rect x="957.6" y="117" width="13.4" height="15.0" fill="rgb(236,146,34)" rx="2" ry="2" />
+<text  x="960.58" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;fxp_core[f40cc18480f81a90]::engine::Output&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;&gt;&gt;::push_mut (111,111,110 samples, 4.17%)</title><rect x="229.0" y="357" width="49.2" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="232.02" y="367.5" >&lt;all..</text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::fmt::Formatter&gt;::pad_integral::write_prefix (10,101,010 samples, 0.38%)</title><rect x="184.3" y="261" width="4.5" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="187.32" y="271.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="533.0" y="277" width="8.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="535.95" y="287.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::Notified as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="595.5" y="357" width="9.0" height="15.0" fill="rgb(218,64,15)" rx="2" ry="2" />
+<text  x="598.53" y="367.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::handle_tcp_client_with_shutdown::{closure#0} (313,131,310 samples, 11.74%)</title><rect x="568.7" y="389" width="138.6" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="571.71" y="399.5" >fxp_core[f40cc184..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="318.4" y="309" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="321.41" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (60,606,060 samples, 2.27%)</title><rect x="711.7" y="341" width="26.9" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="714.74" y="351.5" >&lt;..</text>
+</g>
+<g >
+<title>malloc (40,404,040 samples, 1.52%)</title><rect x="322.9" y="309" width="17.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="325.88" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::thread::lifecycle::spawn_unchecked&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt;::{closure#1} as core[efd5e57aef94d71e]::ops::function::FnOnce&lt;()&gt;&gt;::call_once::{shim:vtable#0} (20,202,020 samples, 0.76%)</title><rect x="14.5" y="421" width="8.9" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="17.47" y="431.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (10,101,010 samples, 0.38%)</title><rect x="305.0" y="325" width="4.5" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="308.00" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (20,202,020 samples, 0.76%)</title><rect x="291.6" y="341" width="8.9" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="294.59" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::state::State&gt;::transition_to_idle (10,101,010 samples, 0.38%)</title><rect x="1096.1" y="197" width="4.5" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="1099.14" y="207.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rust_dealloc (10,101,010 samples, 0.38%)</title><rect x="452.5" y="325" width="4.5" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="455.50" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::context::scoped::Scoped&lt;tokio[fb708733e28cbe28]::runtime::scheduler::Context&gt;&gt;::set::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}::{closure#0}, ()&gt; (80,808,080 samples, 3.03%)</title><rect x="23.4" y="309" width="35.8" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="26.41" y="319.5" >&lt;to..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (80,808,080 samples, 3.03%)</title><rect x="23.4" y="261" width="35.8" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="26.41" y="271.5" >&lt;to..</text>
+</g>
+<g >
+<title>[libc.so.6] (40,404,040 samples, 1.52%)</title><rect x="939.7" y="53" width="17.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="942.70" y="63.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="287.1" y="325" width="4.5" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="290.12" y="335.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="296.1" y="325" width="4.4" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="299.06" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;usize as core[efd5e57aef94d71e]::fmt::Display&gt;::fmt (30,303,030 samples, 1.14%)</title><rect x="175.4" y="293" width="13.4" height="15.0" fill="rgb(216,50,12)" rx="2" ry="2" />
+<text  x="178.38" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (40,404,040 samples, 1.52%)</title><rect x="644.7" y="277" width="17.9" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="647.70" y="287.5" ></text>
+</g>
+<g >
+<title>realloc (50,505,050 samples, 1.89%)</title><rect x="863.7" y="117" width="22.4" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="866.71" y="127.5" >r..</text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run (20,202,020 samples, 0.76%)</title><rect x="14.5" y="325" width="8.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="17.47" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::io::poll_evented::PollEvented&lt;mio[ed99d235b2f9d2c5]::net::tcp::stream::TcpStream&gt;&gt;::poll_read (10,101,010 samples, 0.38%)</title><rect x="591.1" y="341" width="4.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="594.06" y="351.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="287.1" y="309" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="290.12" y="319.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="439.1" y="309" width="8.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="442.09" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;str&gt; (20,202,020 samples, 0.76%)</title><rect x="126.2" y="309" width="9.0" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="129.21" y="319.5" ></text>
+</g>
+<g >
+<title>pow (10,101,010 samples, 0.38%)</title><rect x="1167.7" y="229" width="4.4" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="1170.65" y="239.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (202,020,200 samples, 7.58%)</title><rect x="108.3" y="437" width="89.4" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="111.33" y="447.5" >&lt;tokio[fb7..</text>
+</g>
+<g >
+<title>malloc (90,909,090 samples, 3.41%)</title><rect x="233.5" y="309" width="40.2" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="236.48" y="319.5" >mal..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::process (838,383,830 samples, 31.44%)</title><rect x="197.7" y="373" width="371.0" height="15.0" fill="rgb(250,207,49)" rx="2" ry="2" />
+<text  x="200.73" y="383.5" >&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_co..</text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;alloc[c23e483dde3f7cfb]::string::String&gt; (20,202,020 samples, 0.76%)</title><rect x="376.5" y="309" width="9.0" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="379.52" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::hash::sip::Hasher&lt;core[efd5e57aef94d71e]::hash::sip::Sip13Rounds&gt; as core[efd5e57aef94d71e]::hash::Hasher&gt;::write (10,101,010 samples, 0.38%)</title><rect x="434.6" y="293" width="4.5" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="437.62" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;fxp_core[f40cc18480f81a90]::order_book::execution_report::ExecutionReport&gt; as alloc[c23e483dde3f7cfb]::vec::spec_extend::SpecExtend&lt;fxp_core[f40cc18480f81a90]::order_book::execution_report::ExecutionReport, alloc[c23e483dde3f7cfb]::vec::into_iter::IntoIter&lt;fxp_core[f40cc18480f81a90]::order_book::execution_report::ExecutionReport&gt;&gt;&gt;::spec_extend (10,101,010 samples, 0.38%)</title><rect x="394.4" y="325" width="4.5" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="397.39" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::remember_status (111,111,110 samples, 4.17%)</title><rect x="59.2" y="229" width="49.1" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="62.17" y="239.5" >&lt;fxp..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::new_order (101,010,100 samples, 3.79%)</title><rect x="760.9" y="165" width="44.7" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="763.91" y="175.5" >&lt;fxp..</text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rdl_alloc (10,101,010 samples, 0.38%)</title><rect x="41.3" y="165" width="4.5" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="44.29" y="175.5" ></text>
+</g>
+<g >
+<title>cfree (20,202,020 samples, 0.76%)</title><rect x="832.4" y="165" width="9.0" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="835.42" y="175.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order&gt; (10,101,010 samples, 0.38%)</title><rect x="1172.1" y="437" width="4.5" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="1175.12" y="447.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::handle_tcp_client_with_shutdown::{closure#0}::{closure#0} (10,101,010 samples, 0.38%)</title><rect x="1181.1" y="437" width="4.4" height="15.0" fill="rgb(225,92,22)" rx="2" ry="2" />
+<text  x="1184.06" y="447.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (10,101,010 samples, 0.38%)</title><rect x="394.4" y="309" width="4.5" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="397.39" y="319.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::varint::encode_varint::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="1047.0" y="101" width="4.4" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="1049.97" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::park_internal (20,202,020 samples, 0.76%)</title><rect x="738.6" y="229" width="8.9" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="741.56" y="239.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::fmt::Write&gt;::write_str (10,101,010 samples, 0.38%)</title><rect x="510.6" y="293" width="4.5" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="513.61" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run_task (949,494,940 samples, 35.61%)</title><rect x="747.5" y="229" width="420.2" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="750.50" y="239.5" >&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_threa..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (787,878,780 samples, 29.55%)</title><rect x="747.5" y="197" width="348.6" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="750.50" y="207.5" >&lt;tokio[fb708733e28cbe28]::runtime::task::core::..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::mpsc::chan::Rx&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;, tokio[fb708733e28cbe28]::sync::mpsc::bounded::Semaphore&gt;&gt;::recv (40,404,040 samples, 1.52%)</title><rect x="1114.0" y="149" width="17.9" height="15.0" fill="rgb(249,202,48)" rx="2" ry="2" />
+<text  x="1117.02" y="159.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (80,808,080 samples, 3.03%)</title><rect x="23.4" y="373" width="35.8" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="26.41" y="383.5" >&lt;to..</text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::context::runtime::enter_runtime::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}, ()&gt; (979,797,970 samples, 36.74%)</title><rect x="738.6" y="277" width="433.5" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="741.56" y="287.5" >tokio[fb708733e28cbe28]::runtime::context::runtime::enter_r..</text>
+</g>
+<g >
+<title>[libc.so.6] (90,909,090 samples, 3.41%)</title><rect x="233.5" y="293" width="40.2" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="236.48" y="303.5" >[li..</text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="309.5" y="309" width="4.4" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="312.47" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (101,010,100 samples, 3.79%)</title><rect x="912.9" y="117" width="44.7" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="915.88" y="127.5" >&lt;all..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (20,202,020 samples, 0.76%)</title><rect x="425.7" y="309" width="8.9" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="428.68" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run (111,111,110 samples, 4.17%)</title><rect x="59.2" y="325" width="49.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="62.17" y="335.5" >&lt;tok..</text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::varint::encode_varint::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="975.5" y="101" width="4.4" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="978.45" y="111.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run (111,111,110 samples, 4.17%)</title><rect x="59.2" y="373" width="49.1" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="62.17" y="383.5" >toki..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::context::scoped::Scoped&lt;tokio[fb708733e28cbe28]::runtime::scheduler::Context&gt;&gt;::set::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}::{closure#0}, ()&gt; (979,797,970 samples, 36.74%)</title><rect x="738.6" y="261" width="433.5" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="741.56" y="271.5" >&lt;tokio[fb708733e28cbe28]::runtime::context::scoped::Scoped&lt;..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="1158.7" y="133" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1161.71" y="143.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::engine::report_execution::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt; (90,909,090 samples, 3.41%)</title><rect x="528.5" y="357" width="40.2" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="531.48" y="367.5" >fxp..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::process (202,020,200 samples, 7.58%)</title><rect x="108.3" y="389" width="89.4" height="15.0" fill="rgb(250,207,49)" rx="2" ry="2" />
+<text  x="111.33" y="399.5" >&lt;fxp_core[..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (111,111,110 samples, 4.17%)</title><rect x="59.2" y="293" width="49.1" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="62.17" y="303.5" >&lt;tok..</text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt; (20,202,020 samples, 0.76%)</title><rect x="850.3" y="165" width="8.9" height="15.0" fill="rgb(225,96,22)" rx="2" ry="2" />
+<text  x="853.30" y="175.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::varint::encode_varint::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (80,808,080 samples, 3.03%)</title><rect x="979.9" y="117" width="35.8" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="982.92" y="127.5" >pro..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::time::sleep::Sleep as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="14.5" y="165" width="8.9" height="15.0" fill="rgb(208,14,3)" rx="2" ry="2" />
+<text  x="17.47" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;mio[ed99d235b2f9d2c5]::poll::Poll&gt;::poll (10,101,010 samples, 0.38%)</title><rect x="743.0" y="181" width="4.5" height="15.0" fill="rgb(228,108,25)" rx="2" ry="2" />
+<text  x="746.03" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (60,606,060 samples, 2.27%)</title><rect x="340.8" y="325" width="26.8" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="343.76" y="335.5" >&lt;..</text>
+</g>
+<g >
+<title>[libc.so.6] (979,797,970 samples, 36.74%)</title><rect x="738.6" y="421" width="433.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="741.56" y="431.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order&gt; (10,101,010 samples, 0.38%)</title><rect x="501.7" y="357" width="4.4" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="504.67" y="367.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0} (202,020,200 samples, 7.58%)</title><rect x="108.3" y="421" width="89.4" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="111.33" y="431.5" >fxp_core[f..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::run_server_with_router_and_auth::&lt;fxp_core[d155aad447da815d]::shutdown_signal::{closure#0}&gt;::{closure#0}::{closure#4} (313,131,310 samples, 11.74%)</title><rect x="568.7" y="405" width="138.6" height="15.0" fill="rgb(241,168,40)" rx="2" ry="2" />
+<text  x="571.71" y="415.5" >fxp_core[f40cc184..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run (979,797,970 samples, 36.74%)</title><rect x="738.6" y="245" width="433.5" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="741.56" y="255.5" >&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread:..</text>
+</g>
+<g >
+<title>malloc (30,303,030 samples, 1.14%)</title><rect x="649.2" y="245" width="13.4" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="652.17" y="255.5" ></text>
+</g>
+<g >
+<title>cfree (20,202,020 samples, 0.76%)</title><rect x="841.4" y="149" width="8.9" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="844.36" y="159.5" ></text>
+</g>
+<g >
+<title>std[68c81ae915296b05]::sys::backtrace::__rust_begin_short_backtrace::&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt; (979,797,970 samples, 36.74%)</title><rect x="738.6" y="373" width="433.5" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="741.56" y="383.5" >std[68c81ae915296b05]::sys::backtrace::__rust_begin_short_b..</text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="533.0" y="293" width="8.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="535.95" y="303.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="823.5" y="165" width="8.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="826.48" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::future::poll_fn::PollFn&lt;fxp_core[f40cc18480f81a90]::server::handle_tcp_client_with_shutdown::{closure#0}::{closure#2}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (80,808,080 samples, 3.03%)</title><rect x="591.1" y="373" width="35.7" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="594.06" y="383.5" >&lt;co..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::engine::apply_fill::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt; (141,414,140 samples, 5.30%)</title><rect x="135.2" y="357" width="62.5" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="138.15" y="367.5" >fxp_co..</text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::fmt::write (30,303,030 samples, 1.14%)</title><rect x="175.4" y="309" width="13.4" height="15.0" fill="rgb(220,73,17)" rx="2" ry="2" />
+<text  x="178.38" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::thread::local::LocalKey&lt;tokio[fb708733e28cbe28]::runtime::context::Context&gt;&gt;::with::&lt;tokio[fb708733e28cbe28]::runtime::context::thread_rng_n::{closure#0}, u32&gt; (10,101,010 samples, 0.38%)</title><rect x="613.4" y="309" width="4.5" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="616.41" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::mpsc::bounded::Sender&lt;fxp_core[f40cc18480f81a90]::server::SymbolMsg&gt;&gt;::send::{closure#0} (40,404,040 samples, 1.52%)</title><rect x="671.5" y="373" width="17.9" height="15.0" fill="rgb(233,130,31)" rx="2" ry="2" />
+<text  x="674.52" y="383.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::fmt::Formatter&gt;::pad_integral (20,202,020 samples, 0.76%)</title><rect x="179.8" y="277" width="9.0" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="182.85" y="287.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rust_alloc (20,202,020 samples, 0.76%)</title><rect x="86.0" y="181" width="8.9" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="88.98" y="191.5" ></text>
+</g>
+<g >
+<title>realloc (10,101,010 samples, 0.38%)</title><rect x="510.6" y="245" width="4.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="513.61" y="255.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::task::coop::Coop&lt;tokio[fb708733e28cbe28]::sync::watch::changed_impl&lt;bool&gt;::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (10,101,010 samples, 0.38%)</title><rect x="707.3" y="437" width="4.4" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="710.27" y="447.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::thread::lifecycle::spawn_unchecked&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt;::{closure#1} as core[efd5e57aef94d71e]::ops::function::FnOnce&lt;()&gt;&gt;::call_once::{shim:vtable#0} (80,808,080 samples, 3.03%)</title><rect x="23.4" y="437" width="35.8" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="26.41" y="447.5" >&lt;st..</text>
+</g>
+<g >
+<title>[libc.so.6] (1,040,404,030 samples, 39.02%)</title><rect x="711.7" y="437" width="460.4" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="714.74" y="447.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::sys::thread::unix::Thread&gt;::new::thread_start (60,606,060 samples, 2.27%)</title><rect x="711.7" y="421" width="26.9" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="714.74" y="431.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVec&lt;fxp_core[f40cc18480f81a90]::engine::Output&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;&gt;&gt;::grow_one (101,010,100 samples, 3.79%)</title><rect x="229.0" y="341" width="44.7" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="232.02" y="351.5" >&lt;all..</text>
+</g>
+<g >
+<title>all (2,666,666,640 samples, 100%)</title><rect x="10.0" y="469" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="479.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (10,101,010 samples, 0.38%)</title><rect x="510.6" y="261" width="4.5" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="513.61" y="271.5" ></text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="157.5" y="325" width="4.5" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="160.50" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (111,111,110 samples, 4.17%)</title><rect x="59.2" y="277" width="49.1" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="62.17" y="287.5" >&lt;tok..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="14.5" y="357" width="8.9" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="17.47" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::map::HashMap&lt;alloc[c23e483dde3f7cfb]::string::String, u64, std[68c81ae915296b05]::hash::random::RandomState&gt;&gt;::insert (30,303,030 samples, 1.14%)</title><rect x="372.0" y="325" width="13.5" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="375.05" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::stops::Execution&gt;::absorb_stp (10,101,010 samples, 0.38%)</title><rect x="457.0" y="341" width="4.4" height="15.0" fill="rgb(232,124,29)" rx="2" ry="2" />
+<text  x="459.97" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::FxpMessage as prost[cc3a2d452dcd771]::message::Message&gt;::decode::&lt;&amp;[u8]&gt; (90,909,090 samples, 3.41%)</title><rect x="626.8" y="373" width="40.2" height="15.0" fill="rgb(208,16,3)" rx="2" ry="2" />
+<text  x="629.82" y="383.5" >&lt;fx..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="45.8" y="181" width="4.4" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="48.76" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::run_server_with_router_and_auth&lt;fxp_core[d155aad447da815d]::shutdown_signal::{closure#0}&gt;::{closure#0}::{closure#4}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (313,131,310 samples, 11.74%)</title><rect x="568.7" y="437" width="138.6" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="571.71" y="447.5" >&lt;tokio[fb708733e2..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Inner&gt;::run (80,808,080 samples, 3.03%)</title><rect x="23.4" y="405" width="35.8" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="26.41" y="415.5" >&lt;to..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::execute_into (60,606,060 samples, 2.27%)</title><rect x="108.3" y="373" width="26.9" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="111.33" y="383.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::future::poll_fn::PollFn&lt;fxp_core[f40cc18480f81a90]::server::handle_tcp_client_with_shutdown::{closure#0}::{closure#0}::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (90,909,090 samples, 3.41%)</title><rect x="1109.5" y="165" width="40.3" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="1112.55" y="175.5" >&lt;co..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::io::driver::Driver&gt;::turn (10,101,010 samples, 0.38%)</title><rect x="743.0" y="197" width="4.5" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="746.03" y="207.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::new_order (111,111,110 samples, 4.17%)</title><rect x="59.2" y="245" width="49.1" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="62.17" y="255.5" >&lt;fxp..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::watch::Receiver&lt;bool&gt;&gt;::changed::{closure#0} (30,303,030 samples, 1.14%)</title><rect x="604.5" y="357" width="13.4" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="607.47" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (10,101,010 samples, 0.38%)</title><rect x="309.5" y="341" width="4.4" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="312.47" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (50,505,050 samples, 1.89%)</title><rect x="345.2" y="309" width="22.4" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="348.23" y="319.5" >&lt;..</text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt; (10,101,010 samples, 0.38%)</title><rect x="506.1" y="357" width="4.5" height="15.0" fill="rgb(225,96,22)" rx="2" ry="2" />
+<text  x="509.14" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::hash::sip::Hasher&lt;core[efd5e57aef94d71e]::hash::sip::Sip13Rounds&gt; as core[efd5e57aef94d71e]::hash::Hasher&gt;::write (20,202,020 samples, 0.76%)</title><rect x="796.7" y="101" width="8.9" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="799.67" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run_task (111,111,110 samples, 4.17%)</title><rect x="59.2" y="309" width="49.1" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="62.17" y="319.5" >&lt;tok..</text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="546.4" y="325" width="4.4" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="549.36" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::match_orders (101,010,100 samples, 3.79%)</title><rect x="407.8" y="325" width="44.7" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="410.80" y="335.5" >&lt;fxp..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVec&lt;fxp_core[f40cc18480f81a90]::order_book::market_data::MarketDataIncrementalUpdate&gt;&gt;::grow_one (20,202,020 samples, 0.76%)</title><rect x="300.5" y="341" width="9.0" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="303.53" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Inner&gt;::run (20,202,020 samples, 0.76%)</title><rect x="14.5" y="389" width="8.9" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="17.47" y="399.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run (80,808,080 samples, 3.03%)</title><rect x="23.4" y="341" width="35.8" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="26.41" y="351.5" >tok..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="112.8" y="309" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="115.80" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::hash::sip::Hasher&lt;core[efd5e57aef94d71e]::hash::sip::Sip13Rounds&gt; as core[efd5e57aef94d71e]::hash::Hasher&gt;::write (50,505,050 samples, 1.89%)</title><rect x="716.2" y="101" width="22.4" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="719.21" y="111.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::new_order (60,606,060 samples, 2.27%)</title><rect x="32.3" y="213" width="26.9" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="35.35" y="223.5" >&lt;..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::handle_tcp_client_with_shutdown::{closure#0}::{closure#0} (141,414,140 samples, 5.30%)</title><rect x="1100.6" y="181" width="62.6" height="15.0" fill="rgb(225,92,22)" rx="2" ry="2" />
+<text  x="1103.61" y="191.5" >fxp_co..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="626.8" y="341" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="629.82" y="351.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::frame_message (10,101,010 samples, 0.38%)</title><rect x="1176.6" y="437" width="4.5" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="1179.59" y="447.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::match_into (141,414,140 samples, 5.30%)</title><rect x="389.9" y="341" width="62.6" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="392.92" y="351.5" >&lt;fxp_c..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::task::atomic_waker::AtomicWaker&gt;::register_by_ref (10,101,010 samples, 0.38%)</title><rect x="1127.4" y="133" width="4.5" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="1130.42" y="143.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::fxp::ExecutionReport&gt; (20,202,020 samples, 0.76%)</title><rect x="50.2" y="181" width="9.0" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="53.23" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::Notified as core[efd5e57aef94d71e]::ops::drop::Drop&gt;::drop (20,202,020 samples, 0.76%)</title><rect x="1149.8" y="165" width="8.9" height="15.0" fill="rgb(228,108,26)" rx="2" ry="2" />
+<text  x="1152.77" y="175.5" ></text>
+</g>
+<g >
+<title>malloc (20,202,020 samples, 0.76%)</title><rect x="559.8" y="325" width="8.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="562.77" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (30,303,030 samples, 1.14%)</title><rect x="957.6" y="101" width="13.4" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="960.58" y="111.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0} (20,202,020 samples, 0.76%)</title><rect x="14.5" y="213" width="8.9" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="17.47" y="223.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (979,797,970 samples, 36.74%)</title><rect x="738.6" y="325" width="433.5" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="741.56" y="335.5" >&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;tokio[f..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="1158.7" y="117" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1161.71" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Inner&gt;::run (60,606,060 samples, 2.27%)</title><rect x="711.7" y="373" width="26.9" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="714.74" y="383.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::collections::btree::node::Handle&lt;alloc[c23e483dde3f7cfb]::collections::btree::node::NodeRef&lt;alloc[c23e483dde3f7cfb]::collections::btree::node::marker::Mut, i64, alloc[c23e483dde3f7cfb]::collections::vec_deque::VecDeque&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order&gt;, alloc[c23e483dde3f7cfb]::collections::btree::node::marker::Leaf&gt;, alloc[c23e483dde3f7cfb]::collections::btree::node::marker::Edge&gt;&gt;::insert_recursing::&lt;alloc[c23e483dde3f7cfb]::alloc::Global, &lt;alloc[c23e483dde3f7cfb]::collections::btree::map::entry::VacantEntry&lt;i64, alloc[c23e483dde3f7cfb]::collections::vec_deque::VecDeque&lt;fxp_core[f40cc18480f81a90]::order_book::order::Order&gt;&gt;&gt;::insert_entry::{closure#0}&gt; (10,101,010 samples, 0.38%)</title><rect x="313.9" y="309" width="4.5" height="15.0" fill="rgb(210,25,6)" rx="2" ry="2" />
+<text  x="316.94" y="319.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt; (10,101,010 samples, 0.38%)</title><rect x="162.0" y="341" width="4.4" height="15.0" fill="rgb(225,96,22)" rx="2" ry="2" />
+<text  x="164.97" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::maybe_move_runtime::{closure#0}::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (80,808,080 samples, 3.03%)</title><rect x="23.4" y="357" width="35.8" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="26.41" y="367.5" >&lt;to..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (80,808,080 samples, 3.03%)</title><rect x="23.4" y="245" width="35.8" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="26.41" y="255.5" >&lt;to..</text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::order_book::stops::Execution&gt; (10,101,010 samples, 0.38%)</title><rect x="546.4" y="341" width="4.4" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="549.36" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::hash::sip::Hasher&lt;core[efd5e57aef94d71e]::hash::sip::Sip13Rounds&gt; as core[efd5e57aef94d71e]::hash::Hasher&gt;::write (10,101,010 samples, 0.38%)</title><rect x="367.6" y="293" width="4.4" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="370.58" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::tick (10,101,010 samples, 0.38%)</title><rect x="278.2" y="357" width="4.5" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="281.18" y="367.5" ></text>
+</g>
+<g >
+<title>malloc (50,505,050 samples, 1.89%)</title><rect x="345.2" y="293" width="22.4" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="348.23" y="303.5" >m..</text>
+</g>
+<g >
+<title>std[68c81ae915296b05]::sys::backtrace::__rust_begin_short_backtrace::&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt; (20,202,020 samples, 0.76%)</title><rect x="14.5" y="405" width="8.9" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="17.47" y="415.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::time::interval::Interval&gt;::poll_tick (20,202,020 samples, 0.76%)</title><rect x="23.4" y="197" width="8.9" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="26.41" y="207.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (50,505,050 samples, 1.89%)</title><rect x="1020.2" y="101" width="22.3" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="1023.15" y="111.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::map::HashMap&lt;alloc[c23e483dde3f7cfb]::string::String, (alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::fxp::ExecutionReport), std[68c81ae915296b05]::hash::random::RandomState&gt;&gt;::rustc_entry (50,505,050 samples, 1.89%)</title><rect x="716.2" y="149" width="22.4" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="719.21" y="159.5" >&lt;..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="1158.7" y="149" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1161.71" y="159.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::merge_loop::&lt;fxp_core[f40cc18480f81a90]::fxp::NewOrderSingle, prost[cc3a2d452dcd771]::encoding::message::merge&lt;fxp_core[f40cc18480f81a90]::fxp::NewOrderSingle, &amp;mut &amp;[u8]&gt;::{closure#0}, &amp;mut &amp;[u8]&gt; (80,808,080 samples, 3.03%)</title><rect x="631.3" y="341" width="35.7" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="634.29" y="351.5" >pro..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::FxpMessage as prost[cc3a2d452dcd771]::message::Message&gt;::encode::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (444,444,440 samples, 16.67%)</title><rect x="886.1" y="149" width="196.6" height="15.0" fill="rgb(231,120,28)" rx="2" ry="2" />
+<text  x="889.06" y="159.5" >&lt;fxp_core[f40cc18480f81a9..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::NotifiedProject&gt;::poll_notified (30,303,030 samples, 1.14%)</title><rect x="1136.4" y="101" width="13.4" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="1139.36" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::raw::RawTable&lt;(alloc[c23e483dde3f7cfb]::string::String, (alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::fxp::ExecutionReport))&gt;&gt;::reserve_rehash::&lt;hashbrown[2a10179b492ebecc]::map::make_hasher&lt;alloc[c23e483dde3f7cfb]::string::String, (alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::fxp::ExecutionReport), std[68c81ae915296b05]::hash::random::RandomState&gt;::{closure#0}&gt; (50,505,050 samples, 1.89%)</title><rect x="716.2" y="133" width="22.4" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="719.21" y="143.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (50,505,050 samples, 1.89%)</title><rect x="318.4" y="325" width="22.4" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="321.41" y="335.5" >&lt;..</text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="1033.6" y="53" width="8.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1036.56" y="63.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::batch_semaphore::Semaphore&gt;::add_permits_locked (10,101,010 samples, 0.38%)</title><rect x="1123.0" y="133" width="4.4" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="1125.95" y="143.5" ></text>
+</g>
+<g >
+<title>realloc (20,202,020 samples, 0.76%)</title><rect x="1073.8" y="69" width="8.9" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1076.79" y="79.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::fxp_message::Payload&gt;::merge::&lt;&amp;mut &amp;[u8]&gt; (90,909,090 samples, 3.41%)</title><rect x="626.8" y="357" width="40.2" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="629.82" y="367.5" >&lt;fx..</text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="331.8" y="293" width="9.0" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="334.82" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (101,010,100 samples, 3.79%)</title><rect x="912.9" y="101" width="44.7" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="915.88" y="111.5" >&lt;all..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::NotifiedProject&gt;::drop_notified (10,101,010 samples, 0.38%)</title><rect x="693.9" y="341" width="4.4" height="15.0" fill="rgb(227,104,24)" rx="2" ry="2" />
+<text  x="696.86" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::task::coop::Coop&lt;tokio[fb708733e28cbe28]::sync::watch::changed_impl&lt;bool&gt;::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (40,404,040 samples, 1.52%)</title><rect x="1131.9" y="133" width="17.9" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="1134.89" y="143.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="877.1" y="85" width="9.0" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="880.12" y="95.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::MarketDataIncrementalUpdate as prost[cc3a2d452dcd771]::message::Message&gt;::encode_raw::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (90,909,090 samples, 3.41%)</title><rect x="1015.7" y="133" width="40.2" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="1018.68" y="143.5" >&lt;fx..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::batch_semaphore::Semaphore&gt;::try_acquire (10,101,010 samples, 0.38%)</title><rect x="810.1" y="149" width="4.4" height="15.0" fill="rgb(249,204,48)" rx="2" ry="2" />
+<text  x="813.08" y="159.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::new_order (838,383,830 samples, 31.44%)</title><rect x="197.7" y="389" width="371.0" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="200.73" y="399.5" >&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_co..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt; as prost[cc3a2d452dcd771]::encoding::sealed::BytesAdapter&gt;::replace_with::&lt;bytes[91ce6cd3e551af1f]::buf::take::Take&lt;&amp;mut &amp;mut &amp;[u8]&gt;&gt; (40,404,040 samples, 1.52%)</title><rect x="644.7" y="293" width="17.9" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="647.70" y="303.5" ></text>
+</g>
+<g >
+<title>tokio-rt-worker (2,666,666,640 samples, 100.00%)</title><rect x="10.0" y="453" width="1180.0" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="13.00" y="463.5" >tokio-rt-worker</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::new_order (202,020,200 samples, 7.58%)</title><rect x="108.3" y="405" width="89.4" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="111.33" y="415.5" >&lt;fxp_core[..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (20,202,020 samples, 0.76%)</title><rect x="220.1" y="357" width="8.9" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="223.08" y="367.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rust_no_alloc_shim_is_unstable_v2 (10,101,010 samples, 0.38%)</title><rect x="622.3" y="357" width="4.5" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="625.35" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc[c23e483dde3f7cfb]::alloc::Global&gt; (20,202,020 samples, 0.76%)</title><rect x="1073.8" y="101" width="8.9" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1076.79" y="111.5" ></text>
+</g>
+<g >
+<title>malloc (30,303,030 samples, 1.14%)</title><rect x="94.9" y="181" width="13.4" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="97.92" y="191.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::engine::build_report::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt; (30,303,030 samples, 1.14%)</title><rect x="510.6" y="357" width="13.4" height="15.0" fill="rgb(218,62,14)" rx="2" ry="2" />
+<text  x="513.61" y="367.5" ></text>
+</g>
+<g >
+<title>std[68c81ae915296b05]::sys::backtrace::__rust_begin_short_backtrace::&lt;&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Spawner&gt;::spawn_thread::{closure#0}, ()&gt; (60,606,060 samples, 2.27%)</title><rect x="711.7" y="389" width="26.9" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="714.74" y="399.5" >s..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (50,505,050 samples, 1.89%)</title><rect x="863.7" y="133" width="22.4" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="866.71" y="143.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;str&gt; (10,101,010 samples, 0.38%)</title><rect x="667.0" y="373" width="4.5" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="670.05" y="383.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::message::encode::&lt;fxp_core[f40cc18480f81a90]::fxp::ExecutionReport, alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (30,303,030 samples, 1.14%)</title><rect x="1055.9" y="133" width="13.4" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1058.91" y="143.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::str::converts::from_utf8 (10,101,010 samples, 0.38%)</title><rect x="662.6" y="293" width="4.4" height="15.0" fill="rgb(224,87,20)" rx="2" ry="2" />
+<text  x="665.58" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::sys::thread::unix::Thread&gt;::new::thread_start (979,797,970 samples, 36.74%)</title><rect x="738.6" y="405" width="433.5" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="741.56" y="415.5" >&lt;std[68c81ae915296b05]::sys::thread::unix::Thread&gt;::new::th..</text>
+</g>
+<g >
+<title>__libc_calloc (10,101,010 samples, 0.38%)</title><rect x="617.9" y="357" width="4.4" height="15.0" fill="rgb(205,4,0)" rx="2" ry="2" />
+<text  x="620.88" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;::try_send_frame (40,404,040 samples, 1.52%)</title><rect x="805.6" y="165" width="17.9" height="15.0" fill="rgb(212,36,8)" rx="2" ry="2" />
+<text  x="808.61" y="175.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::context::runtime::enter_runtime::&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run::{closure#0}, ()&gt; (111,111,110 samples, 4.17%)</title><rect x="59.2" y="357" width="49.1" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="62.17" y="367.5" >toki..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::maybe_move_runtime::{closure#0}::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (111,111,110 samples, 4.17%)</title><rect x="59.2" y="389" width="49.1" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="62.17" y="399.5" >&lt;tok..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="14.5" y="229" width="8.9" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="17.47" y="239.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVec&lt;fxp_core[f40cc18480f81a90]::engine::Output&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;&gt;&gt;::grow_one (20,202,020 samples, 0.76%)</title><rect x="533.0" y="341" width="8.9" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="535.95" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::hash::sip::Hasher&lt;core[efd5e57aef94d71e]::hash::sip::Sip13Rounds&gt; as core[efd5e57aef94d71e]::hash::Hasher&gt;::write (10,101,010 samples, 0.38%)</title><rect x="130.7" y="293" width="4.5" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="133.68" y="303.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::run (979,797,970 samples, 36.74%)</title><rect x="738.6" y="293" width="433.5" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="741.56" y="303.5" >tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::task::coop::Coop&lt;tokio[fb708733e28cbe28]::sync::watch::changed_impl&lt;bool&gt;::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (30,303,030 samples, 1.14%)</title><rect x="604.5" y="341" width="13.4" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="607.47" y="351.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (20,202,020 samples, 0.76%)</title><rect x="1087.2" y="133" width="8.9" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1090.20" y="143.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::string::merge::&lt;&amp;mut &amp;[u8]&gt; (60,606,060 samples, 2.27%)</title><rect x="640.2" y="309" width="26.8" height="15.0" fill="rgb(229,112,26)" rx="2" ry="2" />
+<text  x="643.23" y="319.5" >p..</text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="1158.7" y="165" width="4.5" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="1161.71" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::server::ClientTx as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (10,101,010 samples, 0.38%)</title><rect x="461.4" y="357" width="4.5" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="464.44" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (101,010,100 samples, 3.79%)</title><rect x="229.0" y="325" width="44.7" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="232.02" y="335.5" >&lt;all..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::engine::build_md_update (20,202,020 samples, 0.76%)</title><rect x="559.8" y="341" width="8.9" height="15.0" fill="rgb(235,141,33)" rx="2" ry="2" />
+<text  x="562.77" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::Notified as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="604.5" y="325" width="8.9" height="15.0" fill="rgb(218,64,15)" rx="2" ry="2" />
+<text  x="607.47" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::maybe_move_runtime::{closure#0}::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="14.5" y="341" width="8.9" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="17.47" y="351.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="689.4" y="373" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="692.39" y="383.5" ></text>
+</g>
+<g >
+<title>__rustc[3d2f79520d6fa809]::__rdl_alloc (30,303,030 samples, 1.14%)</title><rect x="72.6" y="181" width="13.4" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="75.58" y="191.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="282.7" y="325" width="4.4" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="285.65" y="335.5" ></text>
+</g>
+<g >
+<title>realloc (10,101,010 samples, 0.38%)</title><rect x="966.5" y="69" width="4.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="969.52" y="79.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;alloc[c23e483dde3f7cfb]::string::String&gt; (10,101,010 samples, 0.38%)</title><rect x="434.6" y="309" width="4.5" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="437.62" y="319.5" ></text>
+</g>
+<g >
+<title>realloc (90,909,090 samples, 3.41%)</title><rect x="917.3" y="85" width="40.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="920.35" y="95.5" >rea..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (20,202,020 samples, 0.76%)</title><rect x="533.0" y="325" width="8.9" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="535.95" y="335.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::fmt::write (10,101,010 samples, 0.38%)</title><rect x="510.6" y="325" width="4.5" height="15.0" fill="rgb(220,73,17)" rx="2" ry="2" />
+<text  x="513.61" y="335.5" ></text>
+</g>
+<g >
+<title>cfree (30,303,030 samples, 1.14%)</title><rect x="1082.7" y="149" width="13.4" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="1085.73" y="159.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::core::Core&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (111,111,110 samples, 4.17%)</title><rect x="59.2" y="405" width="49.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="62.17" y="415.5" >&lt;tok..</text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;alloc[c23e483dde3f7cfb]::string::String&gt; (50,505,050 samples, 1.89%)</title><rect x="716.2" y="117" width="22.4" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="719.21" y="127.5" >&lt;..</text>
+</g>
+<g >
+<title>alloc[c23e483dde3f7cfb]::fmt::format::format_inner (40,404,040 samples, 1.52%)</title><rect x="175.4" y="325" width="17.9" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="178.38" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::map::HashMap&lt;alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::order_book::order::Order, std[68c81ae915296b05]::hash::random::RandomState&gt;&gt;::insert (10,101,010 samples, 0.38%)</title><rect x="367.6" y="325" width="4.4" height="15.0" fill="rgb(219,65,15)" rx="2" ry="2" />
+<text  x="370.58" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::time::interval::Interval&gt;::poll_tick (20,202,020 samples, 0.76%)</title><rect x="14.5" y="181" width="8.9" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="17.47" y="191.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::engine::build_report::&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt; (70,707,070 samples, 2.65%)</title><rect x="166.4" y="341" width="31.3" height="15.0" fill="rgb(218,62,14)" rx="2" ry="2" />
+<text  x="169.44" y="351.5" >fx..</text>
+</g>
+<g >
+<title>malloc (20,202,020 samples, 0.76%)</title><rect x="425.7" y="293" width="8.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="428.68" y="303.5" ></text>
+</g>
+<g >
+<title>core[efd5e57aef94d71e]::ptr::drop_glue::&lt;fxp_core[f40cc18480f81a90]::fxp::NewOrderSingle&gt; (10,101,010 samples, 0.38%)</title><rect x="497.2" y="357" width="4.5" height="15.0" fill="rgb(242,174,41)" rx="2" ry="2" />
+<text  x="500.20" y="367.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0} (777,777,770 samples, 29.17%)</title><rect x="752.0" y="181" width="344.1" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="754.97" y="191.5" >fxp_core[f40cc18480f81a90]::server::configured..</text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::ExecutionReport as prost[cc3a2d452dcd771]::message::Message&gt;::encode_raw::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (242,424,240 samples, 9.09%)</title><rect x="908.4" y="133" width="107.3" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="911.41" y="143.5" >&lt;fxp_core[f40..</text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;alloc[c23e483dde3f7cfb]::string::String&gt; (10,101,010 samples, 0.38%)</title><rect x="465.9" y="341" width="4.5" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="468.91" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::run_server_with_router_and_auth&lt;fxp_core[d155aad447da815d]::shutdown_signal::{closure#0}&gt;::{closure#0}::{closure#4}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (10,101,010 samples, 0.38%)</title><rect x="1163.2" y="213" width="4.5" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="1166.18" y="223.5" ></text>
+</g>
+<g >
+<title>epoll_wait (10,101,010 samples, 0.38%)</title><rect x="743.0" y="165" width="4.5" height="15.0" fill="rgb(238,154,36)" rx="2" ry="2" />
+<text  x="746.03" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;hashbrown[2a10179b492ebecc]::map::HashMap&lt;alloc[c23e483dde3f7cfb]::string::String, fxp_core[f40cc18480f81a90]::engine::OrderState&lt;fxp_core[f40cc18480f81a90]::server::ClientTx&gt;, std[68c81ae915296b05]::hash::random::RandomState&gt;&gt;::insert (40,404,040 samples, 1.52%)</title><rect x="470.4" y="357" width="17.9" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="473.38" y="367.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="10.0" y="421" width="4.5" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="13.00" y="431.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::engine::Engine&lt;fxp_core[f40cc18480f81a90]::server::ClientTx, fxp_core[f40cc18480f81a90]::server::WallClock, fxp_core[f40cc18480f81a90]::server::GlobalExecIds&gt;&gt;::bind_status_owner (50,505,050 samples, 1.89%)</title><rect x="716.2" y="165" width="22.4" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="719.21" y="175.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::string::String as core[efd5e57aef94d71e]::clone::Clone&gt;::clone (10,101,010 samples, 0.38%)</title><rect x="309.5" y="325" width="4.4" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="312.47" y="335.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::varint::encode_varint::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="1185.5" y="421" width="4.5" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="1188.53" y="431.5" ></text>
+</g>
+<g >
+<title>&lt;std[68c81ae915296b05]::hash::random::RandomState as core[efd5e57aef94d71e]::hash::BuildHasher&gt;::hash_one::&lt;&amp;alloc[c23e483dde3f7cfb]::string::String&gt; (20,202,020 samples, 0.76%)</title><rect x="796.7" y="117" width="8.9" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="799.67" y="127.5" ></text>
+</g>
+<g >
+<title>malloc (20,202,020 samples, 0.76%)</title><rect x="515.1" y="341" width="8.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="518.08" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Context&gt;::run (60,606,060 samples, 2.27%)</title><rect x="711.7" y="261" width="26.9" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="714.74" y="271.5" >&lt;..</text>
+</g>
+<g >
+<title>&lt;core[efd5e57aef94d71e]::future::poll_fn::PollFn&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}::{closure#3}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (20,202,020 samples, 0.76%)</title><rect x="14.5" y="197" width="8.9" height="15.0" fill="rgb(205,4,0)" rx="2" ry="2" />
+<text  x="17.47" y="207.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::message::encode::&lt;prost_types[230365fa92358bda]::protobuf::Timestamp, alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="975.5" y="117" width="4.4" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="978.45" y="127.5" ></text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::diagnostics::event (10,101,010 samples, 0.38%)</title><rect x="702.8" y="373" width="4.5" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="705.80" y="383.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="845.8" y="133" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="848.83" y="143.5" ></text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (30,303,030 samples, 1.14%)</title><rect x="649.2" y="261" width="13.4" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="652.17" y="271.5" ></text>
+</g>
+<g >
+<title>malloc (10,101,010 samples, 0.38%)</title><rect x="403.3" y="277" width="4.5" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="406.33" y="287.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::fxp::FxpHeader as prost[cc3a2d452dcd771]::message::Message&gt;::encode_raw::&lt;alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="1042.5" y="117" width="4.5" height="15.0" fill="rgb(236,146,34)" rx="2" ry="2" />
+<text  x="1045.50" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::maybe_move_runtime::{closure#0}::{closure#0}&gt; as core[efd5e57aef94d71e]::future::future::Future&gt;::poll (979,797,970 samples, 36.74%)</title><rect x="738.6" y="309" width="433.5" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="741.56" y="319.5" >&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::Blocking..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="193.3" y="309" width="4.4" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="196.26" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;tokio[fb708733e28cbe28]::runtime::blocking::task::BlockingTask&lt;&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::worker::Launch&gt;::launch::{closure#0}&gt;, tokio[fb708733e28cbe28]::runtime::blocking::schedule::BlockingSchedule&gt;&gt;::poll (111,111,110 samples, 4.17%)</title><rect x="59.2" y="421" width="49.1" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="62.17" y="431.5" >&lt;tok..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::NotifiedProject&gt;::poll_notified (20,202,020 samples, 0.76%)</title><rect x="595.5" y="341" width="9.0" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="598.53" y="351.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::time::Driver&gt;::park_internal (10,101,010 samples, 0.38%)</title><rect x="743.0" y="213" width="4.5" height="15.0" fill="rgb(226,98,23)" rx="2" ry="2" />
+<text  x="746.03" y="223.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::watch::Receiver&lt;bool&gt;&gt;::changed::{closure#0} (40,404,040 samples, 1.52%)</title><rect x="1131.9" y="149" width="17.9" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="1134.89" y="159.5" ></text>
+</g>
+<g >
+<title>prost[cc3a2d452dcd771]::encoding::message::encode::&lt;prost_types[230365fa92358bda]::protobuf::Timestamp, alloc[c23e483dde3f7cfb]::vec::Vec&lt;u8&gt;&gt; (10,101,010 samples, 0.38%)</title><rect x="1185.5" y="437" width="4.5" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="1188.53" y="447.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (797,979,790 samples, 29.92%)</title><rect x="747.5" y="213" width="353.1" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="750.50" y="223.5" >&lt;tokio[fb708733e28cbe28]::runtime::task::harnes..</text>
+</g>
+<g >
+<title>fxp_core[f40cc18480f81a90]::server::configured_order_book_task::{closure#0} (60,606,060 samples, 2.27%)</title><rect x="711.7" y="197" width="26.9" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="714.74" y="207.5" >f..</text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::task::harness::Harness&lt;fxp_core[f40cc18480f81a90]::server::handle_tcp_client_with_shutdown::{closure#0}::{closure#0}, alloc[c23e483dde3f7cfb]::sync::Arc&lt;tokio[fb708733e28cbe28]::runtime::scheduler::multi_thread::handle::Handle&gt;&gt;&gt;::poll (141,414,140 samples, 5.30%)</title><rect x="1100.6" y="213" width="62.6" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="1103.61" y="223.5" >&lt;tokio..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="971.0" y="117" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="973.98" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::sync::notify::Notified as core[efd5e57aef94d71e]::ops::drop::Drop&gt;::drop (10,101,010 samples, 0.38%)</title><rect x="693.9" y="357" width="4.4" height="15.0" fill="rgb(228,108,26)" rx="2" ry="2" />
+<text  x="696.86" y="367.5" ></text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="385.5" y="325" width="4.4" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="388.45" y="335.5" ></text>
+</g>
+<g >
+<title>cfree (10,101,010 samples, 0.38%)</title><rect x="501.7" y="341" width="4.4" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="504.67" y="351.5" ></text>
+</g>
+<g >
+<title>tokio[fb708733e28cbe28]::runtime::task::waker::drop_waker (10,101,010 samples, 0.38%)</title><rect x="698.3" y="357" width="4.5" height="15.0" fill="rgb(209,21,5)" rx="2" ry="2" />
+<text  x="701.33" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;fxp_core[f40cc18480f81a90]::order_book::order_book::OrderBook&gt;::match_orders (60,606,060 samples, 2.27%)</title><rect x="108.3" y="341" width="26.9" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="111.33" y="351.5" >&lt;..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="792.2" y="101" width="4.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="795.20" y="111.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (10,101,010 samples, 0.38%)</title><rect x="488.3" y="357" width="4.4" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="491.26" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;tokio[fb708733e28cbe28]::runtime::blocking::pool::Inner&gt;::run (111,111,110 samples, 4.17%)</title><rect x="59.2" y="437" width="49.1" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="62.17" y="447.5" >&lt;tok..</text>
+</g>
+<g >
+<title>&lt;alloc[c23e483dde3f7cfb]::raw_vec::RawVecInner&gt;::finish_grow (10,101,010 samples, 0.38%)</title><rect x="394.4" y="293" width="4.5" height="15.0" fill="rgb(223,83,20)" rx="2" ry="2" />
+<text  x="397.39" y="303.5" ></text>
+</g>
+</g>
+</svg>

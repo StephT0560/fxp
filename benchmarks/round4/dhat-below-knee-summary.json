@@ -1,0 +1,79 @@
+{
+  "allocated_bytes": 440892197,
+  "allocation_blocks": 4771598,
+  "string_clone_bytes_nonexclusive": 74407359,
+  "top_leaf_application_sites": [
+    {
+      "site": "<alloc::raw_vec::RawVec<fxp_core::engine::Output<fxp_core::server::ClientTx>>>::grow_one",
+      "bytes": 140800000,
+      "percent": 31.935244252009294,
+      "blocks": 82500
+    },
+    {
+      "site": "<hashbrown::raw::RawTable<(alloc::string::String,",
+      "bytes": 53897820,
+      "percent": 12.224716238287156,
+      "blocks": 65
+    },
+    {
+      "site": "<alloc::raw_vec::RawVec<fxp_core::order_book::order::Order>>::grow_one",
+      "bytes": 35782560,
+      "percent": 8.115943136095012,
+      "blocks": 41415
+    },
+    {
+      "site": "prost::encoding::message::encode::<fxp_core::fxp::ExecutionReport, alloc::vec::Vec<u8>>",
+      "bytes": 34507615,
+      "percent": 7.826769272580254,
+      "blocks": 549901
+    },
+    {
+      "site": "<alloc::raw_vec::RawVec<fxp_core::engine::auction::AuctionFill>>::grow_one",
+      "bytes": 23703360,
+      "percent": 5.376225789725193,
+      "blocks": 82565
+    },
+    {
+      "site": "<fxp_core::order_book::order::Order as core::clone::Clone>::clone",
+      "bytes": 22356000,
+      "percent": 5.070627276263635,
+      "blocks": 660000
+    },
+    {
+      "site": "fxp_core::server::frame_message",
+      "bytes": 18831900,
+      "percent": 4.271316237424815,
+      "blocks": 385000
+    },
+    {
+      "site": "<fxp_core::order_book::order_book::OrderBook>::add_order",
+      "bytes": 15867480,
+      "percent": 3.5989477944877306,
+      "blocks": 330010
+    },
+    {
+      "site": "prost::encoding::message::encode::<fxp_core::fxp::MarketDataIncrementalUpdate, alloc::vec::Vec<u8>>",
+      "bytes": 9900000,
+      "percent": 2.2454468614694036,
+      "blocks": 330000
+    },
+    {
+      "site": "fxp_core::engine::build_report::<fxp_core::server::ClientTx, fxp_core::server::GlobalExecIds>",
+      "bytes": 9417928,
+      "percent": 2.1361067544590724,
+      "blocks": 549991
+    },
+    {
+      "site": "<fxp_core::engine::Engine<fxp_core::server::ClientTx, fxp_core::server::WallClock, fxp_core::server::GlobalExecIds>>::process",
+      "bytes": 9253000,
+      "percent": 2.098698970623878,
+      "blocks": 220000
+    },
+    {
+      "site": "<fxp_core::fxp::ExecutionReport as core::clone::Clone>::clone",
+      "bytes": 8976895,
+      "percent": 2.036074818534382,
+      "blocks": 440000
+    }
+  ]
+}

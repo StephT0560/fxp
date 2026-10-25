@@ -1,0 +1,26 @@
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 1.28s, 1.97% of 65.14s total
+Dropped 21 nodes (cum <= 0.33s)
+Showing top 20 nodes out of 56
+      flat  flat%   sum%        cum   cum%
+     1.21s  1.86%  1.86%      1.21s  1.86%  runtime.systemstack_switch
+     0.07s  0.11%  1.97%      0.07s  0.11%  runtime.goschedIfBusy
+         0     0%  1.97%      0.02s 0.034%  encoding/json.MarshalIndent
+         0     0%  1.97%      0.02s 0.034%  encoding/json.appendIndent
+         0     0%  1.97%      0.02s 0.032%  encoding/json.appendNewline
+         0     0%  1.97%      0.03s 0.049%  github.com/HdrHistogram/hdrhistogram-go.New
+         0     0%  1.97%      0.04s 0.061%  google.golang.org/protobuf/internal/impl.(*MessageInfo).initOneofFieldCoders.func1
+         0     0%  1.97%      0.04s 0.061%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshal
+         0     0%  1.97%      0.04s 0.061%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointer
+         0     0%  1.97%      0.04s 0.061%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointerEager
+         0     0%  1.97%      0.04s 0.061%  google.golang.org/protobuf/internal/impl.consumeMessageInfo
+         0     0%  1.97%      0.04s 0.061%  google.golang.org/protobuf/proto.Unmarshal
+         0     0%  1.97%      0.04s 0.061%  google.golang.org/protobuf/proto.UnmarshalOptions.unmarshal
+         0     0%  1.97%      0.01s 0.017%  internal/runtime/maps.(*table).rehash
+         0     0%  1.97%      0.01s 0.017%  internal/runtime/maps.(*table).reset
+         0     0%  1.97%      0.01s 0.017%  internal/runtime/maps.(*table).split
+         0     0%  1.97%      0.01s 0.017%  internal/runtime/maps.newGroups
+         0     0%  1.97%      0.01s 0.017%  internal/runtime/maps.newTable
+         0     0%  1.97%      0.01s 0.017%  internal/runtime/maps.newarray
+         0     0%  1.97%      0.04s 0.058%  internal/sync.(*HashTrieMap[...]).Store

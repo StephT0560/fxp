@@ -1,0 +1,14 @@
+event syntax error: 'sched:sched_switch'
+                     \___ unknown tracepoint
+
+Error:	Unable to find debugfs/tracefs
+Hint:	Was your kernel compiled with debugfs/tracefs support?
+Hint:	Is the debugfs/tracefs filesystem mounted?
+Hint:	Try 'sudo mount -t debugfs nodev /sys/kernel/debug'
+Run 'perf list' for a list of valid events
+
+ Usage: perf record [<options>] [<command>]
+    or: perf record [<options>] -- <command> [<options>]
+
+    -e, --event <event>   event selector. use 'perf list' to list available events
+failed to open work/r4-profile/sched.perf: No such file or directory

@@ -1,0 +1,33 @@
+File: bridge
+Build ID: 310b44b69fade54dd3ed45b8d90201399cc4fe7e
+Type: alloc_space
+Time: 2026-10-25 19:22:49 UTC
+Showing nodes accounting for 1946.19MB, 96.97% of 2007.07MB total
+Dropped 101 nodes (cum <= 10.04MB)
+Showing top 25 nodes out of 73
+      flat  flat%   sum%        cum   cum%
+  547.12MB 27.26% 27.26%   710.31MB 35.39%  fix_bridge/codec.(*Dictionary).scope
+  521.21MB 25.97% 53.23%   724.41MB 36.09%  fix_bridge/codec.(*Dictionary).Validate.func1
+  381.90MB 19.03% 72.26%   381.90MB 19.03%  fix_bridge/codec.flatten
+  102.06MB  5.08% 77.34%   102.06MB  5.08%  fix_bridge/codec.(*Builder).Set (inline)
+   66.54MB  3.32% 80.66%    82.05MB  4.09%  fix_bridge/codec.(*Dictionary).Validate.func2
+   41.52MB  2.07% 82.73%    65.53MB  3.26%  fix_bridge/codec.(*Parser).readMessage
+   37.01MB  1.84% 84.57%    37.01MB  1.84%  strings.(*Builder).WriteString (inline)
+   36.02MB  1.79% 86.36%  1552.80MB 77.37%  fix_bridge/codec.(*Dictionary).Validate
+   30.50MB  1.52% 87.88%    30.50MB  1.52%  syscall.ByteSliceFromString
+   25.51MB  1.27% 89.16%    82.02MB  4.09%  fix_bridge/codec.(*Builder).Build
+      23MB  1.15% 90.30%       23MB  1.15%  fix_bridge/codec.parseFields
+   22.50MB  1.12% 91.42%    22.50MB  1.12%  internal/bytealg.MakeNoZero
+      18MB   0.9% 92.32%       18MB   0.9%  reflect.unsafe_New
+   15.50MB  0.77% 93.09%    15.50MB  0.77%  fix_bridge/session.(*FileStore).appendLocked
+   15.50MB  0.77% 93.86%    21.50MB  1.07%  os.lstatNolog
+      14MB   0.7% 94.56%       14MB   0.7%  fmt.Sprintf
+   11.50MB  0.57% 95.14%       17MB  0.85%  fix_bridge/translator.translateNewOrder
+   10.50MB  0.52% 95.66%       17MB  0.85%  time.NewTimer
+   10.11MB   0.5% 96.16%    10.11MB   0.5%  bufio.NewReaderSize (inline)
+       7MB  0.35% 96.51%       29MB  1.45%  fix_bridge/gateway.readFramed
+    6.66MB  0.33% 96.84%    73.17MB  3.65%  fix_bridge/session.(*FileStore).Save
+    1.50MB 0.075% 96.92%    24.50MB  1.22%  fix_bridge/codec.NewBuilder
+       1MB  0.05% 96.97%    76.51MB  3.81%  fix_bridge/session.(*FileStore).writeSeqNumsLocked
+         0     0% 96.97%    65.53MB  3.26%  fix_bridge/codec.(*Parser).ReadMessage
+         0     0% 96.97%    10.11MB   0.5%  fix_bridge/codec.NewParser

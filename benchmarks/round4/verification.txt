@@ -1,0 +1,18 @@
+Final local verification (2026-10-25 UTC)
+make fmt-check lint test: formatting/clippy/vets pass; stops at baseline 39 golangci-lint findings (35 errcheck, 1 staticcheck, 3 unconvert).
+make test separately: PASS.
+cargo test and cargo test --all-features: PASS, 193 unit + 2 integration tests each.
+cargo clippy --all-targets --all-features -- -D warnings: PASS.
+cargo audit 0.22.2: PASS, 131 dependencies scanned.
+cargo deny 0.20.2 (all-features graph): advisories ok, bans ok, licenses ok, sources ok.
+go vet ./... && go test -race -count=1 ./..., both modules: PASS.
+Tagged FIX race suite: PASS.
+Heartbeat fixture-focused race tests, count=10: PASS after first-failing regression; original global cleanup race was observed in the full suite.
+Staticcheck (same go run command as CI), both modules: PASS.
+Local govulncheck: cannot fetch https://vuln.go.dev/index/modules.json.gz (HTTP 403 environment network policy). Hosted CI performs this required scan; see PR.
+bash scripts/gen_proto.sh && bash scripts/e2e.sh: PASS unchanged; 75/75 FIX, 29/29 order types, COD, persistence and core boundary checks.
+bash scripts/e2e_tls.sh: PASS unchanged, including after heartbeat fixture repair; mTLS, certificate reload and benchmark smoke.
+Python fixture/collector regressions: 7 PASS, added to CI.
+Hop integrity: 5 reps each; 5,000 + 50,000 + 5,000 complete measured orders; 0 incomplete.
+All requested failed workloads remain errors with no success summaries. No executable or perf.data is committed.
+Hosted CI: consult the PR's linked run and stable ci-success check.

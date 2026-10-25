@@ -1,0 +1,36 @@
+{
+  "../benchmarks/round4/closed-c1.json.gz": {
+    "ack_mean_ns": {
+      "max": 214331.61600000007,
+      "median": 159145.44000000006,
+      "min": 157569.66400000014
+    },
+    "post_send_ack_mean_ns": {
+      "max": 213475.84000000005,
+      "median": 158686.97599999994,
+      "min": 157019.96799999996
+    },
+    "sender_lag_mean_ns": {
+      "max": 864.883,
+      "median": 544.381,
+      "min": 459.34199999999987
+    }
+  },
+  "../benchmarks/round4/open-c1-sleep.json.gz": {
+    "ack_mean_ns": {
+      "max": 8068582.912000004,
+      "median": 771339.552,
+      "min": 721538.0480000003
+    },
+    "post_send_ack_mean_ns": {
+      "max": 1192622.7839999998,
+      "median": 264771.26399999997,
+      "min": 228869.56800000012
+    },
+    "sender_lag_mean_ns": {
+      "max": 6875889.647999998,
+      "median": 505661.0150000001,
+      "min": 492664.0279999998
+    }
+  }
+}

@@ -644,6 +644,22 @@ are checked every second and new connections use the last valid snapshot.
 rotation, authenticated core forwarding, the full FIX/order/restart checks and the
 benchmark smoke scenarios. Test certificates are temporary and deleted on exit.
 
+### Optional local profiling
+
+Diagnostics are off by default and add no wire fields.
+
+| Process | Variable | Default | Purpose |
+|---|---|---|---|
+| Core, gateway, benchmark | `FXP_HOP_TRACE` | unset | Local Linux CLOCK_MONOTONIC hop-event file |
+| Gateway, bridge, Go benchmark | `FXP_PROFILE_DIR` / `FXP_TRACE_FILE` | unset | Go CPU/alloc/block/mutex profiles / runtime trace |
+| Compose | `FXP_CORE_HOP_TRACE`, `FXP_GW_HOP_TRACE` | unset | Per-container hop file paths; mount an output directory explicitly |
+| Compose | `FXP_GW_PROFILE_DIR`, `FXP_FIX_PROFILE_DIR`, `FXP_GW_TRACE_FILE`, `FXP_FIX_TRACE_FILE` | unset | Per-container Go profile/trace paths |
+| Core built with optional `dhat` feature | `FXP_DHAT_FILE` | `dhat-heap.json` | Tracking-allocator output; ignored by normal builds |
+
+See [profiling instrumentation](docs/performance-r4-instrumentation.md) for
+measurement boundaries, file handling, CPU pinning and the runner, and the
+[round-4 profile report](docs/performance/profile-r4.md) for measured limits.
+
 ### Required CI check
 
 PRs (including Dependabot) run CI with read-only repository permissions and no

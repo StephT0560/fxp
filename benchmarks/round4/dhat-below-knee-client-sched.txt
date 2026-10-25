@@ -1,0 +1,26 @@
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 222.97ms, 6.97% of 3199.71ms total
+Dropped 22 nodes (cum <= 16ms)
+Showing top 20 nodes out of 38
+      flat  flat%   sum%        cum   cum%
+  112.12ms  3.50%  3.50%   112.12ms  3.50%  runtime.goschedIfBusy
+  107.84ms  3.37%  6.87%   107.84ms  3.37%  runtime.systemstack_switch
+    3.01ms 0.094%  6.97%     3.01ms 0.094%  encoding/json.stateBeginValue
+         0     0%  6.97%    64.28ms  2.01%  encoding/json.MarshalIndent
+         0     0%  6.97%    41.64ms  1.30%  encoding/json.appendIndent
+         0     0%  6.97%    38.61ms  1.21%  encoding/json.appendNewline
+         0     0%  6.97%    29.59ms  0.92%  github.com/HdrHistogram/hdrhistogram-go.New
+         0     0%  6.97%     1.36ms 0.042%  google.golang.org/protobuf/internal/impl.(*MessageInfo).initOneofFieldCoders.func1
+         0     0%  6.97%     1.36ms 0.042%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshal
+         0     0%  6.97%     1.36ms 0.042%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointer
+         0     0%  6.97%     1.36ms 0.042%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointerEager
+         0     0%  6.97%     1.36ms 0.042%  google.golang.org/protobuf/internal/impl.consumeMessageInfo
+         0     0%  6.97%     1.36ms 0.042%  google.golang.org/protobuf/proto.Unmarshal
+         0     0%  6.97%     1.36ms 0.042%  google.golang.org/protobuf/proto.UnmarshalOptions.unmarshal
+         0     0%  6.97%    29.59ms  0.92%  main.histogram
+         0     0%  6.97%    68.48ms  2.14%  main.main
+         0     0%  6.97%     5.37ms  0.17%  main.readFramed
+         0     0%  6.97%    68.48ms  2.14%  main.run
+         0     0%  6.97%    30.64ms  0.96%  main.runClientPhase
+         0     0%  6.97%     5.74ms  0.18%  main.runClientPhase.func1

@@ -1,0 +1,2 @@
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.001 MB work/r4-profile/probe.perf (2 samples) ]

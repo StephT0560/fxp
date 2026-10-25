@@ -1,0 +1,20 @@
+{
+  "note": "Executables present at collection end; not all were built from report HEAD. Per-run SHA/build IDs identify actual captures; fixture-only repair followed the bridge measurements. No executables committed.",
+  "executables": {
+    "work/r4-profile/gateway": {
+      "sha256": "9aeb3d28b44044192b9f65a50e8e8058102e3d9163a74115f9e5f276fdafa444",
+      "go_build_info": "work/r4-profile/gateway: go1.26.10\n\tpath\tgo_gateway\n\tmod\tgo_gateway\t(devel)\t\n\tdep\tgithub.com/gorilla/websocket\tv1.5.3\th1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=\n\tdep\tgoogle.golang.org/protobuf\tv1.36.12\th1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tDefaultGODEBUG=cryptocustomrand=1,httpservecontentmaxranges=1,tlssecpmlkem=0,urlstrictcolons=0\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=9a8d72546c7b3feb2e8a1367a829e6a1077b1bf2\n\tbuild\tvcs.time=2026-10-25T19:42:35Z\n\tbuild\tvcs.modified=true\n"
+    },
+    "work/r4-profile/bench": {
+      "sha256": "632a3a08dfe5bd4320204ae91b1a451fd0e2c5bca77c25da6f4fcf9b1d180e94",
+      "go_build_info": "work/r4-profile/bench: go1.26.10\n\tpath\tgo_gateway/benchmark\n\tmod\tgo_gateway\t(devel)\t\n\tdep\tgithub.com/HdrHistogram/hdrhistogram-go\tv1.4.0\th1:JdU0squ73hT0G45GVKzZ8KXS8ImiFuPHAA36aWaCfMM=\n\tdep\tgoogle.golang.org/protobuf\tv1.36.12\th1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tDefaultGODEBUG=cryptocustomrand=1,httpservecontentmaxranges=1,tlssecpmlkem=0,urlstrictcolons=0\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=9a8d72546c7b3feb2e8a1367a829e6a1077b1bf2\n\tbuild\tvcs.time=2026-10-25T19:42:35Z\n\tbuild\tvcs.modified=true\n"
+    },
+    "work/r4-profile/bridge": {
+      "sha256": "a9055ce749e9ceee5b9ffec198db002d823a33b9098373d2b0c2e25400de9258",
+      "go_build_info": "work/r4-profile/bridge: go1.26.10\n\tpath\tfix_bridge\n\tmod\tfix_bridge\t(devel)\t\n\tdep\tgo_gateway\t(devel)\t\n\tdep\tgoogle.golang.org/protobuf\tv1.36.12\th1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tDefaultGODEBUG=cryptocustomrand=1,httpservecontentmaxranges=1,tlssecpmlkem=0,urlstrictcolons=0\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=f6148617d493b9aab2df2181130e6714b8ebe89b\n\tbuild\tvcs.time=2026-10-25T19:00:06Z\n\tbuild\tvcs.modified=true\n"
+    },
+    "fxp_core/target/release/fxp_core": {
+      "sha256": "3566e979bee2f7a4da2b1ac948956e5e21e3f2cb88ee99fb6740b6d9083f6b89"
+    }
+  }
+}

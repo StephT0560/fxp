@@ -1,0 +1,32 @@
+File: gateway
+Build ID: 6bddd6b2487e9fb327fa94f9c84ae58c776b8b57
+Type: delay
+Time: 2026-10-25 19:23:03 UTC
+Showing nodes accounting for 115.64us, 100% of 115.64us total
+Showing top 25 nodes out of 91
+      flat  flat%   sum%        cum   cum%
+  103.05us 89.12% 89.12%   103.05us 89.12%  runtime.unlock (inline)
+   11.08us  9.58% 98.69%    11.08us  9.58%  sync.(*Mutex).Unlock (partial-inline)
+    1.51us  1.31%   100%     1.51us  1.31%  runtime._LostContendedRuntimeLock
+         0     0%   100%    20.43us 17.67%  go_gateway/transport.(*clientWriter).enqueue
+         0     0%   100%     1.58us  1.37%  go_gateway/transport.(*clientWriter).run
+         0     0%   100%     1.58us  1.37%  go_gateway/transport.(*clientWriter).write
+         0     0%   100%     3.63us  3.14%  go_gateway/transport.(*pooledConn).shutdown
+         0     0%   100%     9.83us  8.50%  go_gateway/transport.(*pooledConn).write
+         0     0%   100%     9.83us  8.50%  go_gateway/transport.HandleFXPMessage
+         0     0%   100%     9.83us  8.50%  go_gateway/transport.HandleFXPMessageAuthenticated
+         0     0%   100%     2.81us  2.43%  go_gateway/transport.RunTCPServerWithTLS
+         0     0%   100%     7.45us  6.44%  go_gateway/transport.RunWebSocketServerWithTLS
+         0     0%   100%     9.83us  8.50%  go_gateway/transport.SendFramedToCore
+         0     0%   100%     9.83us  8.50%  go_gateway/transport.SendOrderToRust
+         0     0%   100%     3.63us  3.14%  go_gateway/transport.ShutdownPool
+         0     0%   100%    20.43us 17.67%  go_gateway/transport.deliverReport
+         0     0%   100%    20.43us 17.67%  go_gateway/transport.enqueueClientData
+         0     0%   100%    35.31us 30.53%  go_gateway/transport.handleTCPClientWithWriter
+         0     0%   100%    24.81us 21.45%  go_gateway/transport.poolReader
+         0     0%   100%    24.81us 21.45%  go_gateway/transport.readCoreFrames
+         0     0%   100%    25.47us 22.03%  go_gateway/transport.readFrame
+         0     0%   100%    20.43us 17.67%  go_gateway/transport.routeFromCore
+         0     0%   100%     7.45us  6.44%  go_gateway/transport.runWebSocketServer
+         0     0%   100%     2.81us  2.43%  go_gateway/transport.serveTCPContext
+         0     0%   100%    35.31us 30.53%  go_gateway/transport.serveTCPContext.func2

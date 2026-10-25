@@ -1,0 +1,33 @@
+File: gateway
+Build ID: 6bddd6b2487e9fb327fa94f9c84ae58c776b8b57
+Type: alloc_space
+Time: 2026-10-25 19:10:42 UTC
+Showing nodes accounting for 1027.46MB, 99.79% of 1029.62MB total
+Dropped 10 nodes (cum <= 5.15MB)
+Showing top 25 nodes out of 42
+      flat  flat%   sum%        cum   cum%
+  333.06MB 32.35% 32.35%   333.06MB 32.35%  reflect.unsafe_New
+  103.01MB 10.00% 42.35%   496.06MB 48.18%  go_gateway/transport.readCoreFrames
+   95.01MB  9.23% 51.58%    95.01MB  9.23%  google.golang.org/protobuf/internal/impl.consumeStringValidateUTF8
+   79.01MB  7.67% 59.25%    79.01MB  7.67%  google.golang.org/protobuf/proto.MarshalOptions.marshal
+   68.84MB  6.69% 65.94%    68.84MB  6.69%  go_gateway/transport.registerClientWriter
+   63.51MB  6.17% 72.11%    63.51MB  6.17%  go_gateway/transport.(*clientWriter).enqueue
+   47.50MB  4.61% 76.72%    47.50MB  4.61%  go_gateway/transport.(*clientWriter).write
+   40.51MB  3.93% 80.66%    40.51MB  3.93%  go_gateway/transport.marshalOrderFrame
+   40.50MB  3.93% 84.59%   271.53MB 26.37%  go_gateway/transport.HandleFXPMessage
+   26.50MB  2.57% 87.16%    26.50MB  2.57%  go_gateway/transport.readFrame
+   22.50MB  2.19% 89.35%    22.50MB  2.19%  go_gateway/transport.namespacedOrderID (inline)
+   20.50MB  1.99% 91.34%   416.05MB 40.41%  go_gateway/transport.handleTCPClientWithWriter
+   20.50MB  1.99% 93.33%   191.52MB 18.60%  go_gateway/transport.SendOrderToRust
+   15.50MB  1.51% 94.84%   135.01MB 13.11%  go_gateway/transport.routeFromCore
+      13MB  1.26% 96.10%       13MB  1.26%  internal/sync.newEntryNode[go.shape.interface {},go.shape.interface {}] (inline)
+      12MB  1.17% 97.27%    31.50MB  3.06%  go_gateway/transport.registerRoute
+    8.50MB  0.83% 98.09%     8.50MB  0.83%  fmt.Sprintf
+       8MB  0.78% 98.87%    71.51MB  6.94%  go_gateway/transport.deliverReport
+    6.50MB  0.63% 99.50%     6.50MB  0.63%  internal/sync.newIndirectNode[go.shape.interface {},go.shape.interface {}] (inline)
+       3MB  0.29% 99.79%    34.50MB  3.35%  go_gateway/transport.SendFramedToCore
+         0     0% 99.79%    47.50MB  4.61%  go_gateway/transport.(*clientWriter).run
+         0     0% 99.79%   294.54MB 28.61%  go_gateway/transport.HandleFXPMessageAuthenticated
+         0     0% 99.79%    68.84MB  6.69%  go_gateway/transport.RunTCPServerWithTLS
+         0     0% 99.79%    22.50MB  2.19%  go_gateway/transport.bindOwner
+         0     0% 99.79%    63.51MB  6.17%  go_gateway/transport.enqueueClientData

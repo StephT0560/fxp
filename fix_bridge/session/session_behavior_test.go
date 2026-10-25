@@ -65,6 +65,7 @@ func newPeerConfigured(t *testing.T, configure func(*Session)) *peer {
 	srv, cli := net.Pipe()
 	h := &recHandler{}
 	s := NewSession(srv, "FXPBRIDGE", h)
+	s.heartbeatUnit = heartbeatUnit
 	s.Auth = NewCredentialAuth(map[string]string{"CLIENT": testPassword})
 	if configure != nil {
 		configure(s)
@@ -86,6 +87,9 @@ func newPeerConfigured(t *testing.T, configure func(*Session)) *peer {
 	t.Cleanup(func() { cli.Close(); s.close() })
 	return p
 }
+
+// Test-only fixture state is read synchronously before launching each peer.
+var heartbeatUnit = time.Second
 
 func fastHeartbeats(t *testing.T) {
 	old := heartbeatUnit

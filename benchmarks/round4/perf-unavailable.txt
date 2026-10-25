@@ -1,0 +1,5 @@
+Reading package lists...
+W: Unable to read /etc/apt/apt.conf.d/80-applied-apt-retries - open (13: Permission denied)
+E: List directory /var/lib/apt/lists/partial is missing. - Acquire (30: Read-only file system)
+perf_event_open: 3 Success
+tracefs mounted: False

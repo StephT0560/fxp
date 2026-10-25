@@ -23,6 +23,7 @@ services:
     init: true
     stop_grace_period: 15s
     environment:
+      - FXP_HOP_TRACE=${FXP_CORE_HOP_TRACE:-}
       - RUST_LOG=${RUST_LOG:-info}
       - FXP_SYMBOL_CONFIG
       - FXP_SESSION_SCHEDULE
@@ -56,6 +57,9 @@ services:
       core:
         condition: service_healthy
     environment:
+      FXP_HOP_TRACE: ${FXP_GW_HOP_TRACE:-}
+      FXP_PROFILE_DIR: ${FXP_GW_PROFILE_DIR:-}
+      FXP_TRACE_FILE: ${FXP_GW_TRACE_FILE:-}
       FXP_TLS_CERT_FILE: ${FXP_TLS_CERT_FILE:-/etc/fxp/certs/server.crt}
       FXP_TLS_KEY_FILE: ${FXP_TLS_KEY_FILE:-/etc/fxp/certs/server.key}
       FXP_TLS_CLIENT_CA_FILE: ${FXP_TLS_CLIENT_CA_FILE:-/etc/fxp/certs/ca.crt}
@@ -93,6 +97,8 @@ services:
       gateway:
         condition: service_started
     environment:
+      FXP_PROFILE_DIR: ${FXP_FIX_PROFILE_DIR:-}
+      FXP_TRACE_FILE: ${FXP_FIX_TRACE_FILE:-}
       FXP_TLS_CERT_FILE: ${FXP_TLS_CERT_FILE:-/etc/fxp/certs/server.crt}
       FXP_TLS_KEY_FILE: ${FXP_TLS_KEY_FILE:-/etc/fxp/certs/server.key}
       FXP_TLS_CLIENT_CA_FILE: ${FXP_TLS_CLIENT_CA_FILE:-/etc/fxp/certs/ca.crt}

@@ -1,0 +1,18 @@
+File: gateway
+Build ID: 554e9780a58f6e9cb267eab8149571d934ccbf69
+Type: delay
+Time: 2026-10-25 18:49:22 UTC
+Showing nodes accounting for 567.26s, 100% of 567.41s total
+Dropped 56 nodes (cum <= 2.84s)
+      flat  flat%   sum%        cum   cum%
+   567.26s   100%   100%    567.26s   100%  runtime.selectgo
+         0     0%   100%       505s 89.00%  go_gateway/transport.(*clientWriter).run
+         0     0%   100%     12.45s  2.19%  go_gateway/transport.RunWebSocketServerWithTLS
+         0     0%   100%       505s 89.00%  go_gateway/transport.registerClientWriter.gowrap1
+         0     0%   100%     12.45s  2.19%  go_gateway/transport.runWebSocketServer
+         0     0%   100%     12.45s  2.19%  go_gateway/transport.serveTCPContext.func1
+         0     0%   100%     12.46s  2.20%  main.main
+         0     0%   100%     12.45s  2.19%  main.main.func1
+         0     0%   100%     12.45s  2.19%  os/signal.NotifyContext.func1
+         0     0%   100%     12.45s  2.19%  runtime.ensureSigM.func1
+         0     0%   100%     12.46s  2.20%  runtime.main

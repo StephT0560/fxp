@@ -1,0 +1,4 @@
+dhat: Total:     440,892,197 bytes in 4,771,598 blocks
+dhat: At t-gmax: 44,813,311 bytes in 440,177 blocks
+dhat: At t-end:  38,375 bytes in 19 blocks
+dhat: The data has been saved to /workspace/fxp/benchmarks/round4/dhat-below-knee-dhat.json, and is viewable with dhat/dh_view.html

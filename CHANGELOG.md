@@ -7,6 +7,16 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Performance investigation (round 4)
+- Isolate the FIX test heartbeat clock per session after race validation caught
+  a global fixture-cleanup race; production heartbeat units remain seconds.
+- Add sleep/busy-spin/hybrid benchmark pacers, paired sender-delay attribution,
+  optional local hop tracing and Go CPU/allocation/block/mutex profiles. All
+  diagnostics are off by default; no wire-format or matching behavior changes.
+- Add pinned capacity, real FIX/FileStore, core persistence and market-data
+  fan-out fixtures; optional dhat allocator and 10k-order Engine/cancel benchmark.
+  Record raw evidence and limitations in `docs/performance/profile-r4.md`.
+
 ### Round 4 low findings
 - Refresh implemented roadmap items, event-log persistence wording and repository
   layout; replace stale test totals with CI links. Reconcile native/Compose

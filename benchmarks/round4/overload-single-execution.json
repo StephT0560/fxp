@@ -1,0 +1,55 @@
+{
+  "source_commit": "16c051471f09ac5c685be9c96ae2cb617a1b1495",
+  "binaries": {
+    "core": {
+      "path": "/workspace/fxp/fxp_core/target/release/fxp_core",
+      "sha256": "5fde210dc69ae65c61987d67ecaa5e3e55ead8e0ea4c82c17155e5873e9d4aed"
+    },
+    "gateway": {
+      "path": "/workspace/fxp/work/r4-profile/gateway",
+      "sha256": "a7d5cebf36a002c10bb13954e73be03564b74bdcc46cf7666f1acd5234b9947f"
+    }
+  },
+  "working_tree_dirty": true,
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "/workspace/fxp/work/r4-profile/bench",
+    "--mode",
+    "open",
+    "--pacer",
+    "sleep",
+    "--concurrency",
+    "10",
+    "--rate",
+    "8000",
+    "--symbols",
+    "single",
+    "--orders",
+    "40000",
+    "--warmup",
+    "100",
+    "--repetitions",
+    "5",
+    "--pinning",
+    "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+    "--json",
+    "/workspace/fxp/benchmarks/round4/overload-single.json",
+    "--markdown",
+    "/workspace/fxp/benchmarks/round4/overload-single.md",
+    "--subscribers",
+    "0"
+  ],
+  "returncode": 1,
+  "stdout": "",
+  "stderr": "benchmark failed: repetition 1: read with ack=15473/40000 fill=15470/40000: read tcp 127.0.0.1:54928->127.0.0.1:8082: i/o timeout\n",
+  "elapsed_seconds": 35.12266437799917,
+  "generator_cpu_seconds": 3.979577,
+  "process_cpu_seconds": {
+    "core": 4.18,
+    "gateway": 7.31
+  },
+  "cgroup_before": "usage_usec 4375054034\nuser_usec 2850884005\nsystem_usec 1524170029\nnice_usec 0\nnr_periods 53566\nnr_throttled 9540\nthrottled_usec 623144922\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 4390562141\nuser_usec 2861628305\nsystem_usec 1528933835\nnice_usec 0\nnr_periods 53683\nnr_throttled 9591\nthrottled_usec 624638658\nnr_bursts 0\nburst_usec 0\n"
+}

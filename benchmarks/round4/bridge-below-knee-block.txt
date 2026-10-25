@@ -1,0 +1,21 @@
+File: bridge
+Build ID: 310b44b69fade54dd3ed45b8d90201399cc4fe7e
+Type: delay
+Time: 2026-10-25 19:22:49 UTC
+Showing nodes accounting for 1317.77s, 99.86% of 1319.66s total
+Dropped 54 nodes (cum <= 6.60s)
+      flat  flat%   sum%        cum   cum%
+  1317.77s 99.86% 99.86%   1317.77s 99.86%  runtime.selectgo
+         0     0% 99.86%    296.81s 22.49%  fix_bridge/gateway.(*Client).Connect.func1
+         0     0% 99.86%    296.81s 22.49%  fix_bridge/gateway.(*Client).writeLoop
+         0     0% 99.86%    291.55s 22.09%  fix_bridge/session.(*Session).Run.gowrap1
+         0     0% 99.86%    303.60s 23.01%  fix_bridge/session.(*Session).Run.gowrap3
+         0     0% 99.86%    303.45s 22.99%  fix_bridge/session.(*Session).handleLogon.func3.gowrap1
+         0     0% 99.86%    303.45s 22.99%  fix_bridge/session.(*Session).heartbeatLoop
+         0     0% 99.86%    303.60s 23.01%  fix_bridge/session.(*Session).logonTimeoutLoop
+         0     0% 99.86%    291.55s 22.09%  fix_bridge/session.(*Session).writeLoop
+         0     0% 99.86%     30.55s  2.32%  main.acceptFIXClientsContext.func1
+         0     0% 99.86%     30.56s  2.32%  main.main
+         0     0% 99.86%     30.55s  2.32%  os/signal.NotifyContext.func1
+         0     0% 99.86%     30.62s  2.32%  runtime.ensureSigM.func1
+         0     0% 99.86%     30.56s  2.32%  runtime.main

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"go_gateway/diagnostics"
 	"io"
 	"log"
 	"log/slog"
@@ -220,6 +221,7 @@ func (w *clientWriter) run() {
 }
 
 func (w *clientWriter) write(raw []byte) error {
+	diagnostics.Raw("gateway_client_write", raw)
 	switch conn := w.conn.(type) {
 	case net.Conn:
 		frame := make([]byte, 4+len(raw))

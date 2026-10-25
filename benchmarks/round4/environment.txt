@@ -1,0 +1,63 @@
+Collection environment; source chronology and per-run source IDs/build IDs are described in README.md.
+Layout: core CPU0, gateway CPU1, generator CPU2; bridge shares CPU1. GOMAXPROCS=1, TOKIO_WORKER_THREADS=1.
+Cgroup cpu.max: 200000 100000
+
+$ git rev-parse HEAD
+9a8d72546c7b3feb2e8a1367a829e6a1077b1bf2
+
+$ rustc --version
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+
+$ go version
+go version go1.26.10 linux/amd64
+
+$ python3 --version
+Python 3.12.14
+
+$ uname -a
+Linux 7ca33a7e17d0 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux
+
+$ lscpu
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           46 bits physical, 57 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  3
+On-line CPU(s) list:                     0-2
+Vendor ID:                               GenuineIntel
+Model name:                              INTEL(R) XEON(R) PLATINUM 8573C
+CPU family:                              6
+Model:                                   207
+Thread(s) per core:                      1
+Core(s) per socket:                      3
+Socket(s):                               1
+Stepping:                                2
+BogoMIPS:                                4600.00
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 arat avx512vbmi umip waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid cldemote movdiri movdir64b fsrm serialize tsxldtrk avx512_fp16 arch_capabilities
+Hypervisor vendor:                       KVM
+Virtualization type:                     full
+L1d cache:                               96 KiB (2 instances)
+L1i cache:                               64 KiB (2 instances)
+L2 cache:                                4 MiB (2 instances)
+L3 cache:                                260 MiB (1 instance)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0-2
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Ghostwrite:                Not affected
+Vulnerability Indirect target selection: Vulnerable
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Old microcode:             Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Vulnerable
+Vulnerability Spec rstack overflow:      Not affected
+Vulnerability Spec store bypass:         Vulnerable
+Vulnerability Spectre v1:                Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers
+Vulnerability Spectre v2:                Vulnerable; STIBP: disabled; PBRSB-eIBRS: Not affected; BHI: Vulnerable
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Not affected
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Not affected

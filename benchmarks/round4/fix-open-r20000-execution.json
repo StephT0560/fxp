@@ -1,0 +1,47 @@
+{
+  "source_commit": "16c051471f09ac5c685be9c96ae2cb617a1b1495",
+  "binaries": {
+    "core": {
+      "path": "/workspace/fxp/fxp_core/target/release/fxp_core",
+      "sha256": "5fde210dc69ae65c61987d67ecaa5e3e55ead8e0ea4c82c17155e5873e9d4aed"
+    },
+    "gateway": {
+      "path": "/workspace/fxp/work/r4-profile/gateway",
+      "sha256": "a7d5cebf36a002c10bb13954e73be03564b74bdcc46cf7666f1acd5234b9947f"
+    },
+    "bridge": {
+      "path": "/workspace/fxp/work/r4-profile/bridge",
+      "sha256": "a9055ce749e9ceee5b9ffec198db002d823a33b9098373d2b0c2e25400de9258"
+    }
+  },
+  "working_tree_dirty": true,
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "python3",
+    "/workspace/fxp/scripts/bench_fix.py",
+    "--concurrency",
+    "10",
+    "--output",
+    "/workspace/fxp/benchmarks/round4/fix-open-r20000.json",
+    "--mode",
+    "open",
+    "--rate",
+    "2000",
+    "--orders",
+    "10000"
+  ],
+  "returncode": 1,
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"/workspace/fxp/scripts/bench_fix.py\", line 74, in <module>\n    runs=list(pool.map(lambda i:worker(rep,i,a.orders,a.warmup,a.mode,a.rate,barrier,common),range(a.concurrency)))\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/concurrent/futures/_base.py\", line 619, in result_iterator\n    yield _result_or_cancel(fs.pop())\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/concurrent/futures/_base.py\", line 317, in _result_or_cancel\n    return fut.result(timeout)\n           ^^^^^^^^^^^^^^^^^^^\n  File \"/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/concurrent/futures/_base.py\", line 456, in result\n    return self.__get_result()\n           ^^^^^^^^^^^^^^^^^^^\n  File \"/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/concurrent/futures/_base.py\", line 401, in __get_result\n    raise self._exception\n  File \"/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/fxp/scripts/bench_fix.py\", line 74, in <lambda>\n    runs=list(pool.map(lambda i:worker(rep,i,a.orders,a.warmup,a.mode,a.rate,barrier,common),range(a.concurrency)))\n                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/fxp/scripts/bench_fix.py\", line 61, in worker\n    result=phase('measured',orders)\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/fxp/scripts/bench_fix.py\", line 57, in phase\n    if thread.is_alive():sock.shutdown(socket.SHUT_RDWR);thread.join();raise RuntimeError('drain timeout')\n                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: drain timeout\n",
+  "elapsed_seconds": 66.01198097799897,
+  "generator_cpu_seconds": 15.183814999999981,
+  "process_cpu_seconds": {
+    "core": 1.86,
+    "gateway": 3.96,
+    "bridge": 57.739999999999995
+  },
+  "cgroup_before": "usage_usec 4228819038\nuser_usec 2779837333\nsystem_usec 1448981705\nnice_usec 0\nnr_periods 52428\nnr_throttled 9434\nthrottled_usec 622078557\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 4309160030\nuser_usec 2817140810\nsystem_usec 1492019219\nnice_usec 0\nnr_periods 53088\nnr_throttled 9441\nthrottled_usec 622093727\nnr_bursts 0\nburst_usec 0\n"
+}

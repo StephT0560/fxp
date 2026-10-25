@@ -1,0 +1,11 @@
+2026-10-25T19:23:42.478146Z  WARN fxp_core::server: core connection authentication is disabled; any process with loopback access can claim a sender
+2026-10-25T19:23:44.002489Z  WARN fxp_core::server: critical output queue full; disconnecting slow consumer
+2026-10-25T19:23:44.002661Z  WARN fxp_core::server: disconnecting slow consumer after critical output overflow
+2026-10-25T19:23:44.523752Z  WARN fxp_core::server: critical output queue full; disconnecting slow consumer
+2026-10-25T19:23:44.523778Z  WARN fxp_core::server: disconnecting slow consumer after critical output overflow
+2026-10-25T19:23:48.228330Z  WARN fxp_core::server: critical output queue full; disconnecting slow consumer
+2026-10-25T19:23:48.228354Z  WARN fxp_core::server: disconnecting slow consumer after critical output overflow
+2026-10-25T19:23:49.532649Z  WARN fxp_core::server: critical output queue full; disconnecting slow consumer
+2026-10-25T19:23:49.532774Z  WARN fxp_core::server: disconnecting slow consumer after critical output overflow
+2026-10-25T19:23:49.941671Z  WARN fxp_core::server: critical output queue full; disconnecting slow consumer
+2026-10-25T19:23:49.941740Z  WARN fxp_core::server: disconnecting slow consumer after critical output overflow

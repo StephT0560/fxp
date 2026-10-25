@@ -1,0 +1,34 @@
+File: bridge
+Build ID: 87838ca0cbab53a6dfc49ee559883df28c7b14dd
+Type: cpu
+Time: 2026-10-25 18:54:15 UTC
+Duration: 287.63s, Total samples = 226.13s (78.62%)
+Showing nodes accounting for 170.46s, 75.38% of 226.13s total
+Dropped 855 nodes (cum <= 1.13s)
+Showing top 25 nodes out of 163
+      flat  flat%   sum%        cum   cum%
+   137.92s 60.99% 60.99%    137.92s 60.99%  internal/runtime/syscall/linux.Syscall6
+     3.58s  1.58% 62.57%      3.58s  1.58%  runtime.memmove
+     3.36s  1.49% 64.06%      3.36s  1.49%  runtime.memclrNoHeapPointers
+     2.87s  1.27% 65.33%      2.87s  1.27%  runtime.nextFreeFast (inline)
+     2.51s  1.11% 66.44%      2.51s  1.11%  runtime.memhash64
+     2.42s  1.07% 67.51%      8.70s  3.85%  fix_bridge/codec.flatten
+     2.29s  1.01% 68.52%     21.86s  9.67%  runtime.mapassign_fast64
+     1.91s  0.84% 69.37%      6.36s  2.81%  internal/runtime/maps.(*table).uncheckedPutSlot
+     1.79s  0.79% 70.16%      1.79s  0.79%  internal/runtime/maps.ctrlGroup.matchH2 (inline)
+     1.20s  0.53% 70.69%     13.58s  6.01%  internal/runtime/maps.(*table).grow
+     1.15s  0.51% 71.20%      4.55s  2.01%  runtime.selectgo
+     1.02s  0.45% 71.65%      1.15s  0.51%  runtime.(*mspan).writeHeapBitsSmall
+     0.83s  0.37% 72.02%      3.65s  1.61%  google.golang.org/protobuf/internal/impl.(*MessageInfo).unmarshalPointerEager
+     0.81s  0.36% 72.37%      2.99s  1.32%  fmt.(*pp).doPrintf
+     0.76s  0.34% 72.71%      2.39s  1.06%  fix_bridge/codec.(*Builder).Set
+     0.76s  0.34% 73.05%      1.77s  0.78%  runtime.typedmemmove
+     0.74s  0.33% 73.37%     18.74s  8.29%  fix_bridge/codec.(*Dictionary).Validate.func1
+     0.74s  0.33% 73.70%     17.68s  7.82%  runtime.mallocgc
+     0.67s   0.3% 74.00%      7.82s  3.46%  runtime.mallocgcSmallScanNoHeader
+     0.57s  0.25% 74.25%      2.26s     1%  internal/runtime/maps.typedmemmove
+     0.56s  0.25% 74.50%     35.47s 15.69%  fix_bridge/codec.(*Dictionary).Validate
+     0.54s  0.24% 74.74%      2.78s  1.23%  runtime.newobject
+     0.51s  0.23% 74.96%      2.67s  1.18%  time.parse
+     0.49s  0.22% 75.18%      1.91s  0.84%  fmt.(*pp).printArg
+     0.46s   0.2% 75.38%      3.54s  1.57%  runtime.mallocgcSmallNoscan

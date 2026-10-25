@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"go_gateway/diagnostics"
 	"io"
 	"log"
 	"log/slog"
@@ -100,6 +101,7 @@ func (p *pooledConn) write(frame []byte) error {
 	if p.conn == nil {
 		return errConnDown
 	}
+	diagnostics.Raw("gateway_core_write", frame[4:])
 	_, err := p.conn.Write(frame)
 	return err
 }
@@ -306,6 +308,7 @@ func readCoreFrames(c net.Conn) error {
 			log.Printf("⚠️ Pool reader: decode error: %v", err)
 			continue
 		}
+		diagnostics.Message("gateway_core_receive", msg)
 		onCoreMessage(msg)
 	}
 }

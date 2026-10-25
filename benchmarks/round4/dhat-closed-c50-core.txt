@@ -1,0 +1,4 @@
+dhat: Total:     417,591,851 bytes in 4,337,963 blocks
+dhat: At t-gmax: 49,403,575 bytes in 400,517 blocks
+dhat: At t-end:  36,792 bytes in 15 blocks
+dhat: The data has been saved to /workspace/fxp/benchmarks/round4/dhat-closed-c50-dhat.json, and is viewable with dhat/dh_view.html

@@ -116,9 +116,10 @@ type Session struct {
 	regKey   *SessionKey // registry entry held since Logon (guarded by sendMu)
 	released bool        // registry entry released; Store must not be written (guarded by sendMu)
 
-	heartBtInt   int          // guarded by stateMu
-	lastSent     time.Time    // guarded by sendMu
-	lastReceived atomic.Int64 // unix nanos
+	heartbeatUnit time.Duration // fixed before Run; tests may shorten it
+	heartBtInt    int           // guarded by stateMu
+	lastSent      time.Time     // guarded by sendMu
+	lastReceived  atomic.Int64  // unix nanos
 
 	hbMu          sync.Mutex // guards the outstanding TestRequest
 	testReqID     string
@@ -148,6 +149,7 @@ func NewSession(conn net.Conn, senderCompID string, handler Handler) *Session {
 		SenderCompID:  senderCompID,
 		outSeqNum:     1,
 		inSeqNum:      1,
+		heartbeatUnit: time.Second,
 		heartBtInt:    30, // default; overridden by client's Logon HeartBtInt
 		lastSent:      time.Now(),
 		state:         StateConnected,
@@ -161,9 +163,6 @@ func NewSession(conn net.Conn, senderCompID string, handler Handler) *Session {
 	s.lastReceived.Store(time.Now().UnixNano())
 	return s
 }
-
-// heartbeatUnit is the unit of HeartBtInt (tests shorten it).
-var heartbeatUnit = time.Second
 
 // sendEnqueueTimeout bounds how long a send waits for space in sendCh.
 var sendEnqueueTimeout = 5 * time.Second
@@ -284,7 +283,7 @@ func (s *Session) sinceLastReceived() time.Duration {
 func (s *Session) heartbeatInterval() time.Duration {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
-	return time.Duration(s.heartBtInt) * heartbeatUnit
+	return time.Duration(s.heartBtInt) * s.heartbeatUnit
 }
 
 // State returns the current session state.
@@ -725,7 +724,7 @@ func (s *Session) handleInSessionReset(seq int) {
 		return
 	}
 	s.resendTo = 0
-	hbi := int(s.heartbeatInterval() / heartbeatUnit)
+	hbi := int(s.heartbeatInterval() / s.heartbeatUnit)
 	s.SendWithSeq(func(n int) []byte {
 		return codec.NewLogonAck(s.SenderCompID, s.target(), n, hbi, true)
 	})

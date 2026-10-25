@@ -1,0 +1,40 @@
+{
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "/workspace/fxp/work/r4-profile/bench",
+    "--mode",
+    "open",
+    "--pacer",
+    "sleep",
+    "--concurrency",
+    "10",
+    "--rate",
+    "1000",
+    "--symbols",
+    "single",
+    "--orders",
+    "1000",
+    "--warmup",
+    "100",
+    "--repetitions",
+    "5",
+    "--pinning",
+    "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+    "--json",
+    "/workspace/fxp/benchmarks/round4/open-single-r10000.json",
+    "--markdown",
+    "/workspace/fxp/benchmarks/round4/open-single-r10000.md"
+  ],
+  "returncode": 0,
+  "stdout": "# Live FXP benchmark\n\nMode: **open**; 10 connections; 1000 measured + 100 warmup orders/connection; 5 repetitions; open-loop rate 1000 orders/s/connection (ignored in closed mode).\n\nTransport: TLS=false; client certificate=false.\n\n- arch: amd64\n- client_cpu_affinity: 2\n- cpu: INTEL(R) XEON(R) PLATINUM 8573C\n- go: go1.26.10\n- gomaxprocs: 1\n- launch_env_FXP_GW_RATE: 1000000\n- launch_env_FXP_GW_RATE_BURST: 1000000\n- launch_env_FXP_SYMBOL_CONFIG: \n- launch_env_RUST_LOG: error\n- launch_env_TOKIO_WORKER_THREADS: 1\n- logical_cpus: 1\n- os: linux\n- pinning_notes: core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs\n- revision: 3b606a32f2795276523e6c6f8c6e1fb7316c0c63\n- rustc_local: rustc 1.99.1 (58cf8f9c3 2026-10-13)\n\n| Metric | Median of runs | Min | Max |\n|---|---:|---:|---:|\n| orders_per_second | 9949.1 | 9895.9 | 9954.4 |\n| max_send_lag_ns | 2644836.0 | 2484335.0 | 11637551.0 |\n| ack_p50_ns | 942591.0 | 937983.0 | 1229823.0 |\n| ack_p90_ns | 1723391.0 | 1671167.0 | 4345855.0 |\n| ack_p99_ns | 5722111.0 | 3293183.0 | 22577151.0 |\n| ack_p99_9_ns | 9355263.0 | 5320703.0 | 26509311.0 |\n| ack_max_ns | 10387455.0 | 5996543.0 | 27475967.0 |\n| fill_p50_ns | 1583103.0 | 1556479.0 | 1867775.0 |\n| fill_p90_ns | 2574335.0 | 2490367.0 | 4825087.0 |\n| fill_p99_ns | 6193151.0 | 3921919.0 | 22872063.0 |\n| fill_p99_9_ns | 10354687.0 | 6213631.0 | 26542079.0 |\n| fill_max_ns | 11345919.0 | 6717439.0 | 27525119.0 |\n\nLatency units: ns, HDR 3 significant digits. Both endpoints include sender backlog in open mode. ACK = EXEC_NEW; fill = terminal ORDER_FILLED, not every report. Throughput counts orders once and includes final fill drain. Warmup is a separate completed phase. Runs with rejects, missing responses or dropped samples fail.\n",
+  "stderr": "",
+  "elapsed_seconds": 5.892818356000134,
+  "process_cpu_seconds": {
+    "core": 0.92,
+    "gateway": 2.46
+  },
+  "cgroup_before": "usage_usec 1789453749\nuser_usec 1314586083\nsystem_usec 474867666\nnice_usec 0\nnr_periods 33391\nnr_throttled 6185\nthrottled_usec 485389359\nnr_bursts 0\nburst_usec 0\n",
+  "cgroup_after": "usage_usec 1795127930\nuser_usec 1318027125\nsystem_usec 477100804\nnice_usec 0\nnr_periods 33450\nnr_throttled 6185\nthrottled_usec 485389359\nnr_bursts 0\nburst_usec 0\n"
+}
