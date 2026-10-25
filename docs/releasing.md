@@ -43,10 +43,9 @@ verification; an amd64-hosted build alone is not that verification.
 1. Enable GitHub Actions and allow the actions used by CI, benchmark and release
    workflows, including the Anchore Syft downloader. Permit the release job's
    `contents: write` under any organization token policy; no PAT is required.
-2. Protect `main` with PR review, no force pushes and required checks **rust**,
-   **cargo-deny**, **go (go_gateway)**, **go (fix_bridge)**, **proto**, **e2e** and
-   **quickfix-acceptance**. Match exact check names after the first successful run.
-   The benchmark smoke is functional coverage in e2e, not a performance threshold.
+2. Configure the `main` ruleset requiring only **ci-success**, with up-to-date
+   branches, PRs, no force pushes and no deletions, following
+   [the settings checklist](repo-settings.md).
 3. Restrict creation/update/deletion of `v*` tags to release maintainers with a tag
    ruleset. Push a tag pointing at a reviewed main commit only when ready to
    create a draft. Review draft notes and inventories before manual publication.
