@@ -182,13 +182,13 @@ func TestMassCancelIsBoundToTheCallerAndReportRoutedBack(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("mass cancel not forwarded")
 	}
-	if req == nil || req.Sender != "MC-OWNER" || req.Symbol != "AAPL" {
+	if req == nil || req.Sender != "MC-OWNER" || req.Symbol != "AAPL" || req.ClientRequestId == "" || req.ClientRequestId == "MC1" {
 		t.Fatalf("mass cancel must be rebound to the caller, got %v", req)
 	}
 	done := make(chan *protobuf.FXPMessage)
 	go func() { done <- readCODMsg(t, client) }()
 	routeFromCore(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderMassCancelReport{
-		OrderMassCancelReport: &protobuf.OrderMassCancelReport{Sender: "MC-OWNER", ClientRequestId: "MC1", TotalAffected: 3},
+		OrderMassCancelReport: &protobuf.OrderMassCancelReport{Sender: "MC-OWNER", ClientRequestId: req.ClientRequestId, TotalAffected: 3},
 	}})
 	rep := (<-done).GetOrderMassCancelReport()
 	if rep == nil || rep.TotalAffected != 3 || rep.ClientRequestId != "MC1" {

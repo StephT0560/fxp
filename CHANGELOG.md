@@ -7,6 +7,13 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Round 4 low findings
+- Bound pending gateway mass-cancel/status requests with a shared 4096-entry
+  tracker, configurable mass-cancel timeout (`FXP_GW_MASS_CANCEL_TIMEOUT_SEC`,
+  default 30s), stopped timers and disconnect/writer cleanup. Timeout rejects
+  retain client metadata; unique internal IDs prevent late/reused-ID misrouting.
+  Timeout does not roll back possible core cancellations (#4).
+
 ### FIX conformance (round 4 Medium #1)
 - Add a separately compiled, explicitly enabled loopback-only QuickFIX echo
   fixture, absent from production binaries. Only missing quantity is supplied;

@@ -174,27 +174,7 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 		}
 
 	case *protobuf.FXPMessage_OrderMassCancel:
-		req := payload.OrderMassCancel
-		raw, err := proto.Marshal(msg)
-		if err != nil {
-			log.Println("❌ Failed to encode mass cancel request:", err)
-			return
-		}
-		// The core validates the request and always answers with a report.
-		pushMassCancelRoute(req.Sender, req.ClientRequestId, conn)
-		if err := writeToCore(frameBytes(raw)); err != nil {
-			popMassCancelRoute(req.Sender, req.ClientRequestId)
-			reject := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderMassCancelReport{
-				OrderMassCancelReport: &protobuf.OrderMassCancelReport{
-					ClientRequestId: req.ClientRequestId, Sender: req.Sender,
-					Symbol: req.Symbol, Side: req.Side, Reason: req.Reason,
-					RejectReason: "core unavailable",
-				},
-			}}
-			if err := writeFXPMessage(conn, reject); err != nil {
-				log.Printf("❌ Failed to send mass cancel reject: %v", err)
-			}
-		}
+		forwardMassCancelRequest(conn, msg)
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
 		slog.Debug("processing MarketDataIncrementalUpdate", "symbol", payload.MarketDataIncremental.Symbol)

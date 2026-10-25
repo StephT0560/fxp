@@ -79,6 +79,13 @@ and the individual ERs travel on different core connections, so `35=r` may
 arrive before some of the ERs. ERs are delivered to the connection that
 entered each order.
 
+Mass-cancel confirmations expire after `FXP_GW_MASS_CANCEL_TIMEOUT_SEC` (30s
+by default). Pending status/mass-cancel routes share a 4096-entry cap and are
+cleared on disconnect. Client IDs are restored from independent internal keys;
+late replies cannot be misrouted to a reused client ID. A timeout reject means
+confirmation was lost, not that cancellation was rolled back. See
+[pending-request operations](operations.md#pending-mass-cancel-and-status-requests).
+
 ## Cancel-on-disconnect (COD)
 
 Opt in per session: FXP `Logon.cancel_on_disconnect = true`, or FIX Logon tag
