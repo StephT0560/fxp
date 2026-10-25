@@ -530,4 +530,42 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn equal_volume_and_imbalance_use_reference_then_deterministic_fallback() {
+        for (buy_qty, sell_qty) in [(5, 5), (10, 5), (5, 10)] {
+            let orders = [
+                order("B", Buy, Some(110), buy_qty, 1),
+                order("S", Sell, Some(90), sell_qty, 2),
+            ];
+            for (reference, expected) in [
+                (91, 90),
+                (109, 110),
+                (100, if buy_qty > sell_qty { 110 } else { 90 }),
+            ] {
+                let actual = uncross(&orders, Some(reference));
+                assert_eq!(
+                    actual,
+                    result(
+                        expected,
+                        u64::from(buy_qty.min(sell_qty)),
+                        i128::from(buy_qty) - i128::from(sell_qty)
+                    )
+                );
+                assert_eq!(
+                    allocate(&orders, actual)
+                        .iter()
+                        .map(|f| u64::from(f.quantity))
+                        .sum::<u64>(),
+                    actual.volume
+                );
+            }
+        }
+    }
+    #[test]
+    fn balanced_markets_without_reference_do_not_trade_at_an_invented_zero_price() {
+        let orders = [order("B", Buy, None, 5, 1), order("S", Sell, None, 5, 2)];
+        let r = uncross(&orders, None);
+        assert_eq!(r, result(0, 0, 0));
+        assert!(allocate(&orders, r).is_empty());
+    }
 }

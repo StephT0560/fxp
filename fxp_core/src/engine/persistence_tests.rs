@@ -335,3 +335,63 @@ fn symbol_config_is_replayed_and_cannot_change_silently() {
         20
     );
 }
+
+#[test]
+fn torn_final_matching_input_replays_only_committed_prefix_and_next_execution_id() {
+    for missing_tail in [1, 4, 10] {
+        let dir = TestDir::new();
+        let mut j = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+        j.apply(
+            "TEST",
+            at(1),
+            Input::New(order("B", fxp::TimeInForce::Gtc)),
+            7,
+        )
+        .unwrap();
+        let prefix = fingerprint(j.engines.get_mut("TEST").unwrap());
+        let good = std::fs::metadata(dir.log()).unwrap().len();
+        let sell = fxp::NewOrderSingle {
+            side: fxp::OrderSide::Sell as i32,
+            ..order("S", fxp::TimeInForce::Gtc)
+        };
+        j.apply("TEST", at(2), Input::New(sell), 7).unwrap();
+        drop(j);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(dir.log())
+            .unwrap();
+        file.set_len(file.metadata().unwrap().len() - missing_tail)
+            .unwrap();
+        drop(file);
+        let mut replay = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+        assert_eq!(std::fs::metadata(dir.log()).unwrap().len(), good);
+        assert_eq!(fingerprint(replay.engines.get_mut("TEST").unwrap()), prefix);
+        let out = replay
+            .apply(
+                "TEST",
+                at(3),
+                Input::Cancel(fxp::OrderCancelRequest {
+                    symbol: "TEST".into(),
+                    sender: "owner".into(),
+                    order_id: "B".into(),
+                    ..Default::default()
+                }),
+                7,
+            )
+            .unwrap();
+        let first = out
+            .iter()
+            .find_map(|o| {
+                if let Output::ExecutionReport(_, r) = o {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert_eq!(first.execution_id, "X2");
+        drop(replay);
+        let replay = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+        assert_eq!(replay.symbols(), vec!["TEST"]);
+    }
+}

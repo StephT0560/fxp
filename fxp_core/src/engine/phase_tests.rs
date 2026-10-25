@@ -631,3 +631,59 @@ fn multi_day_jump_processes_each_auction_once() {
     );
     assert!(e.tick().is_empty());
 }
+
+#[test]
+fn opening_uncross_elects_stops_then_cascades_in_continuous_phase() {
+    let (mut e, clock) = setup(11);
+    e.new_order(buy("B", fxp::TimeInForce::Gtc, 1, 100), 7);
+    e.new_order(sell("S", fxp::TimeInForce::Gtc, 1, 100), 7);
+    e.new_order(sell("LIQUIDITY", fxp::TimeInForce::Gtc, 2, 110), 7);
+    for (id, trigger, ty, limit) in [
+        ("STOP1", 100, fxp::OrderType::StopLimit, 110),
+        ("STOP2", 110, fxp::OrderType::Stop, 0),
+    ] {
+        e.new_order(
+            fxp::NewOrderSingle {
+                order_type: ty as i32,
+                stop_price: trigger,
+                ..buy(id, fxp::TimeInForce::Gtc, 1, limit)
+            },
+            7,
+        );
+    }
+    assert_eq!(e.stop_book.len(), 2);
+    assert_eq!(e.phase(), fxp::TradingPhase::OpeningCall);
+    advance(&clock, 20);
+    let out = e.tick();
+    assert_eq!(e.phase(), fxp::TradingPhase::Continuous);
+    let f = fills(&out);
+    assert_eq!(f.len(), 6);
+    assert_eq!(
+        f.iter()
+            .filter(|r| r.auction)
+            .map(|r| r.order_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["B", "S"]
+    );
+    assert_eq!(
+        f.iter()
+            .filter(|r| r.order_id.starts_with("STOP"))
+            .map(|r| (r.order_id.as_str(), r.execution_price, r.auction))
+            .collect::<Vec<_>>(),
+        vec![("STOP1", 110, false), ("STOP2", 110, false)]
+    );
+    let transition=out.iter().position(|o|matches!(o,Output::TradingSessionStatus(s) if s.phase==fxp::TradingPhase::Continuous as i32)).unwrap();
+    let first_stop = out
+        .iter()
+        .position(|o| matches!(o,Output::ExecutionReport(_,r) if r.order_id=="STOP1"))
+        .unwrap();
+    assert!(transition < first_stop);
+    assert!(e.stop_book.is_empty());
+    assert!(e.book.order_lookup.is_empty());
+    assert_eq!(e.last_trade_price, Some(110));
+    assert!(f.iter().all(|r| r.timestamp
+        == Some(Timestamp {
+            seconds: 20,
+            nanos: 0
+        })));
+}
