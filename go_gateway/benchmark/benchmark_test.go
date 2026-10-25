@@ -175,3 +175,31 @@ func TestSendFailureJoinsReaderAndRetainsBothErrors(t *testing.T) {
 		t.Fatal("sender did not join its receiver")
 	}
 }
+
+func TestRejectClosesTransportToUnblockOpenLoopSender(t *testing.T) {
+	client, server := net.Pipe()
+	release := make(chan struct{})
+	defer close(release)
+	defer func() { _ = client.Close(); _ = server.Close() }()
+	go func() {
+		m, err := readFramed(server)
+		if err != nil {
+			return
+		}
+		_ = sendFramed(server, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_ExecutionReport{ExecutionReport: &protobuf.ExecutionReport{OrderId: m.GetNewOrder().OrderId, ExecutionType: protobuf.ExecutionType_EXEC_REJECTED}}})
+		<-release
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := runClientPhase(client, config{Mode: "open", Rate: 1000, Timeout: 3 * time.Second, Quantity: 1}, "TEST", "reject", time.Now(), 2)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "did not fill") {
+			t.Fatalf("missing reject: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("rejected receiver left the sender blocked until the phase deadline")
+	}
+}

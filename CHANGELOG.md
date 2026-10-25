@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Abort blocked benchmark senders immediately when the receiver rejects/fails, retaining the original receiver error instead of waiting out the phase deadline (#3 verification).
+
 - Preserve both sender and joined-reader errors on failed benchmark writes; regression coverage prevents silently losing receiver diagnostics (#3 verification).
 
 - Supersede historical performance claims with recorded corrected measurements and raw artifacts: reusable FIX encode is faster than FXP in this run; publish five-run live endpoint spreads and full caveats (#3).

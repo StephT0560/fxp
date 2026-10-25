@@ -176,25 +176,32 @@ func runClientPhase(conn net.Conn, c config, symbol, prefix string, start time.T
 	acknowledged := make(chan struct{}, 1)
 	received := make(chan error, 1)
 	go func() {
+		var readerError error
+		defer func() {
+			if readerError != nil {
+				_ = conn.Close()
+			}
+			received <- readerError
+		}()
 		seenAck, seenFill := map[string]bool{}, map[string]bool{}
 		acks, fills := 0, 0
 		for acks < count || fills < count {
 			m, err := readFramed(conn)
 			if err != nil {
-				received <- fmt.Errorf("read with ack=%d/%d fill=%d/%d: %w", acks, count, fills, count, err)
+				readerError = fmt.Errorf("read with ack=%d/%d fill=%d/%d: %w", acks, count, fills, count, err)
 				return
 			}
 			r := m.GetExecutionReport()
 			if r == nil {
 				if m.GetErrorMessage() != nil {
-					received <- fmt.Errorf("core error: %s", m.GetErrorMessage().ErrorMessage)
+					readerError = fmt.Errorf("core error: %s", m.GetErrorMessage().ErrorMessage)
 					return
 				}
 				continue
 			}
 			value, ok := pending.Load(r.OrderId)
 			if !ok {
-				received <- fmt.Errorf("unexpected execution report order %q", r.OrderId)
+				readerError = fmt.Errorf("unexpected execution report order %q", r.OrderId)
 				return
 			}
 			latency := time.Since(value.(time.Time)).Nanoseconds()
@@ -204,13 +211,13 @@ func runClientPhase(conn net.Conn, c config, symbol, prefix string, start time.T
 			switch r.ExecutionType {
 			case protobuf.ExecutionType_EXEC_NEW:
 				if seenAck[r.OrderId] {
-					received <- errors.New("duplicate acknowledgment")
+					readerError = errors.New("duplicate acknowledgment")
 					return
 				}
 				seenAck[r.OrderId] = true
 				acks++
 				if err := result.Ack.RecordValue(latency); err != nil {
-					received <- err
+					readerError = err
 					return
 				}
 				if c.Mode == "closed" {
@@ -221,21 +228,21 @@ func runClientPhase(conn net.Conn, c config, symbol, prefix string, start time.T
 					continue
 				}
 				if seenFill[r.OrderId] {
-					received <- errors.New("duplicate terminal fill")
+					readerError = errors.New("duplicate terminal fill")
 					return
 				}
 				seenFill[r.OrderId] = true
 				fills++
 				if err := result.Fill.RecordValue(latency); err != nil {
-					received <- err
+					readerError = err
 					return
 				}
 			case protobuf.ExecutionType_EXEC_REJECTED, protobuf.ExecutionType_EXEC_CANCELED, protobuf.ExecutionType_EXEC_EXPIRED:
-				received <- fmt.Errorf("order %s did not fill: %s", r.OrderId, r.RejectReason)
+				readerError = fmt.Errorf("order %s did not fill: %s", r.OrderId, r.RejectReason)
 				return
 			}
 		}
-		received <- nil
+		readerError = nil
 	}()
 	// Every return joins the reader. Closing the connection on failure unblocks
 	// both directions; failed/incomplete runs never produce success percentiles.
