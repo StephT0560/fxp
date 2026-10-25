@@ -12,3 +12,6 @@ pub mod stops;
 
 #[cfg(test)]
 mod iceberg_tests;
+
+#[cfg(test)]
+mod edge_tests;

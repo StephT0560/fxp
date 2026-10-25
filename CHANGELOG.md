@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Repeat all measurements after the closed-loop deadline fix and retain the complete initial dataset; latest reused FXP/FIX encode is 149.3/133.8ns and the worst c10 fill tail is 15.630ms (#3 review verification).
+
+- Refresh closed-loop benchmark response deadlines per send so healthy long phases do not expire midstream; preserve the intended-time deadline for open-loop runs (#3 review).
+
+- Abort blocked benchmark senders immediately when the receiver rejects/fails, retaining the original receiver error instead of waiting out the phase deadline (#3 verification).
+
+- Preserve both sender and joined-reader errors on failed benchmark writes; regression coverage prevents silently losing receiver diagnostics (#3 verification).
+
+- Supersede historical performance claims with recorded corrected measurements and raw artifacts: reusable FIX encode is faster than FXP in this run; publish five-run live endpoint spreads and full caveats (#3).
+
+- Add non-gating nightly/manual benchmark artifacts, functional harness smoke coverage, and tag-triggered static Linux amd64/arm64 builds with checksums, CycloneDX inventories and draft-only releases (#3).
+
+- Add reusable integer-format FIX encoding, opaque SBE input/output and full owned fixture decoding, matching NewOrder timestamps/TIF, and measured encode/decode roundtrips with wire-integrity tests (#3).
+
+- Replace the live benchmark with intended-time open-loop and labeled ACK-controlled closed-loop modes, exact ACK/fill accounting, separate warmup, five-run HDR/spread reports, environment/JSON/Markdown output, shared JWT config and precision-correct $3000 pricing (#3).
+
+- Add behavior-level P09 per-print stop cascade and round-3 auction, exact-expiry, transition and torn-replay edge coverage (#3/§2).
+
 - Preserve STP-restated totals and reserve caps on price-only amendments; validate lot/min/max only on explicit new quantities (#1, review regression).
 
 - Keep unused market/stop-market limit prices and non-stop trigger fields out of symbol tick validation (#1, review regression).

@@ -1425,6 +1425,41 @@ mod expiry_tests {
         }
     }
     #[test]
+    fn expiry_at_boundary_precedes_a_crossing_order_and_is_not_repeated() {
+        for (tif, date, schedule, boundary) in [
+            (fxp::TimeInForce::Day, "", Some("close=00:01"), 60),
+            (fxp::TimeInForce::Gtd, "1970-01-01", None, 86_400),
+        ] {
+            let (mut engine, clock) = setup(schedule);
+            engine.new_order(order("EXPIRES", tif, date), 7);
+            advance(&clock, boundary - 1, 999_999_999);
+            assert!(engine.tick().is_empty());
+            advance(&clock, boundary, 0);
+            let incoming = fxp::NewOrderSingle {
+                side: fxp::OrderSide::Sell as i32,
+                order_type: fxp::OrderType::Market as i32,
+                ..order("ATBOUNDARY", fxp::TimeInForce::Gtc, "")
+            };
+            let outputs = engine.new_order(incoming, 7);
+            let r = reports(&outputs);
+            assert_eq!(r[0].order_id, "EXPIRES");
+            assert_eq!(r[0].execution_type, fxp::ExecutionType::ExecExpired as i32);
+            assert!(
+                r.iter()
+                    .all(|r| r.execution_type != fxp::ExecutionType::ExecFilled as i32)
+            );
+            assert_eq!(
+                r[0].timestamp,
+                Some(Timestamp {
+                    seconds: boundary,
+                    nanos: 0
+                })
+            );
+            assert!(engine.tick().is_empty());
+            assert!(engine.book.order_lookup.is_empty());
+        }
+    }
+    #[test]
     fn day_expires_at_close_with_cancel_market_data() {
         let (mut engine, clock) = setup(Some("close=00:01:00"));
         engine.new_order(order("D", fxp::TimeInForce::Day, ""), 7);

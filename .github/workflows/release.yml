@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: MIT
+name: Static Linux release
+on:
+  push:
+    tags: ['v*']
+  # Manual runs build reviewable artifacts only; never create a release.
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v7
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: '25.3'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fxp_core
+          key: release-${{ matrix.arch }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go_gateway/go.mod
+          cache-dependency-path: '**/go.sum'
+      - uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.27.1
+      - name: Build static binaries and CycloneDX inventories
+        run: bash scripts/build_release.sh '${{ matrix.arch }}' "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/release/*.tar.gz
+            ${{ runner.temp }}/release/*.cdx.json
+            ${{ runner.temp }}/release/syft-version.txt
+  draft:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: release-linux-*
+          path: assets
+          merge-multiple: true
+      - name: Checksums and draft release (never publish automatically)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd assets
+          # Hash the archives and both source/binary SBOMs for each architecture.
+          sha256sum -- *.tar.gz *.cdx.json > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          cat > release-notes.md <<'NOTES'
+          Draft for maintainer review. Both Linux architectures contain statically
+          linked core, gateway and bridge binaries, LICENSE and build metadata.
+          SHA256SUMS covers archives and CycloneDX source/binary inventories.
+          Source inventories include locked Rust build/dev dependencies; they are
+          a dependency superset, not a claim that every package is runtime-linked.
+          Verify artifacts and release notes before manually publishing.
+          NOTES
+          gh release create "$RELEASE_TAG" --verify-tag --draft \
+            --title "$RELEASE_TAG" --notes-file release-notes.md \
+            ./*.tar.gz ./*.cdx.json SHA256SUMS

@@ -8,3 +8,5 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	google.golang.org/protobuf v1.36.12
 )
+
+require github.com/HdrHistogram/hdrhistogram-go v1.4.0

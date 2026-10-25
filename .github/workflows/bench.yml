@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: MIT
+name: Benchmarks (non-gating)
+on:
+  schedule:
+    - cron: '19 3 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: nightly-bench-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: '25.3'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fxp_core
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go_gateway/go.mod
+          cache-dependency-path: '**/go.sum'
+      - name: Intended-time live runs and corrected encoding fixtures
+        run: bash scripts/bench.sh "$RUNNER_TEMP/bench"
+        env:
+          GOMAXPROCS: '2'
+          TOKIO_WORKER_THREADS: '2'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: benchmarks-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/bench/**/*.json
+            ${{ runner.temp }}/bench/**/*.md
+            ${{ runner.temp }}/bench/**/*.log
+            ${{ runner.temp }}/bench/**/*.txt
+          retention-days: 14

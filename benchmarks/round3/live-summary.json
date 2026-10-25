@@ -1,0 +1,737 @@
+{
+  "open-c1": {
+    "schema_version": 1,
+    "created_utc": "2026-10-25T05:24:23Z",
+    "config": {
+      "mode": "open",
+      "gateway": "127.0.0.1:8082",
+      "connections": 1,
+      "measured_orders_per_connection": 1000,
+      "warmup_orders_per_connection": 100,
+      "repetitions": 5,
+      "open_loop_orders_per_second_per_connection": 1000,
+      "response_timeout_ns": 30000000000,
+      "symbol": "BENCH",
+      "symbol_mode": "single",
+      "quantity": 1,
+      "default_price_minor_units": 300000,
+      "pinning_notes": "no explicit pinning; component affinities/build versions in build-environment.txt"
+    },
+    "instruments": [
+      {
+        "symbol": "BENCH",
+        "price_minor_units": 300000,
+        "price_scale": 2,
+        "rules": {
+          "PriceScale": 2,
+          "TickSize": 1,
+          "LotSize": 1,
+          "MinQuantity": 1,
+          "MaxQuantity": 2147483647
+        }
+      }
+    ],
+    "environment": {
+      "arch": "amd64",
+      "client_cpu_affinity": "0-4",
+      "cpu": "AMD EPYC 7763 64-Core Processor",
+      "go": "go1.26.10",
+      "gomaxprocs": "2",
+      "launch_env_FXP_GW_RATE": "2000",
+      "launch_env_FXP_GW_RATE_BURST": "4000",
+      "launch_env_FXP_SYMBOL_CONFIG": "",
+      "launch_env_RUST_LOG": "warn",
+      "launch_env_TOKIO_WORKER_THREADS": "2",
+      "logical_cpus": "5",
+      "os": "linux",
+      "pinning_notes": "no explicit pinning; component affinities/build versions in build-environment.txt",
+      "revision": "f0edb3eda1719506366a0835070ddb3cbb52641b",
+      "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+    },
+    "runs": [
+      {
+        "index": 1,
+        "orders": 1000,
+        "elapsed_ns": 1000008080,
+        "orders_per_second": 999.9919200652859,
+        "max_send_lag_ns": 1280588,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 764415,
+          "p90_ns": 1231871,
+          "p99_ns": 1537023,
+          "p99_9_ns": 1924095,
+          "max_ns": 1935359
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 1337343,
+          "p90_ns": 2179071,
+          "p99_ns": 2465791,
+          "p99_9_ns": 2957311,
+          "max_ns": 3067903
+        }
+      },
+      {
+        "index": 2,
+        "orders": 1000,
+        "elapsed_ns": 1000321685,
+        "orders_per_second": 999.6784184479615,
+        "max_send_lag_ns": 1234991,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 791551,
+          "p90_ns": 1312767,
+          "p99_ns": 1613823,
+          "p99_9_ns": 2658303,
+          "max_ns": 3332095
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 1346559,
+          "p90_ns": 2232319,
+          "p99_ns": 2584575,
+          "p99_9_ns": 4073471,
+          "max_ns": 4362239
+        }
+      },
+      {
+        "index": 3,
+        "orders": 1000,
+        "elapsed_ns": 1000928041,
+        "orders_per_second": 999.072819461554,
+        "max_send_lag_ns": 1777878,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 765951,
+          "p90_ns": 1273855,
+          "p99_ns": 1415167,
+          "p99_9_ns": 3166207,
+          "max_ns": 3964927
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 1335295,
+          "p90_ns": 2187263,
+          "p99_ns": 2412543,
+          "p99_9_ns": 3960831,
+          "max_ns": 4179967
+        }
+      },
+      {
+        "index": 4,
+        "orders": 1000,
+        "elapsed_ns": 1000216281,
+        "orders_per_second": 999.7837657673562,
+        "max_send_lag_ns": 1406025,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 777215,
+          "p90_ns": 1281023,
+          "p99_ns": 1487871,
+          "p99_9_ns": 2162687,
+          "max_ns": 2271231
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 1332223,
+          "p90_ns": 2185215,
+          "p99_ns": 2451455,
+          "p99_9_ns": 2994175,
+          "max_ns": 3643391
+        }
+      },
+      {
+        "index": 5,
+        "orders": 1000,
+        "elapsed_ns": 1000732071,
+        "orders_per_second": 999.2684645358987,
+        "max_send_lag_ns": 2085198,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 796159,
+          "p90_ns": 1290239,
+          "p99_ns": 1641471,
+          "p99_9_ns": 4370431,
+          "max_ns": 5255167
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 1351679,
+          "p90_ns": 2215935,
+          "p99_ns": 2543615,
+          "p99_9_ns": 5267455,
+          "max_ns": 6291455
+        }
+      }
+    ],
+    "summary": {
+      "ack_max_ns": {
+        "median": 3332095,
+        "min": 1935359,
+        "max": 5255167
+      },
+      "ack_p50_ns": {
+        "median": 777215,
+        "min": 764415,
+        "max": 796159
+      },
+      "ack_p90_ns": {
+        "median": 1281023,
+        "min": 1231871,
+        "max": 1312767
+      },
+      "ack_p99_9_ns": {
+        "median": 2658303,
+        "min": 1924095,
+        "max": 4370431
+      },
+      "ack_p99_ns": {
+        "median": 1537023,
+        "min": 1415167,
+        "max": 1641471
+      },
+      "fill_max_ns": {
+        "median": 4179967,
+        "min": 3067903,
+        "max": 6291455
+      },
+      "fill_p50_ns": {
+        "median": 1337343,
+        "min": 1332223,
+        "max": 1351679
+      },
+      "fill_p90_ns": {
+        "median": 2187263,
+        "min": 2179071,
+        "max": 2232319
+      },
+      "fill_p99_9_ns": {
+        "median": 3960831,
+        "min": 2957311,
+        "max": 5267455
+      },
+      "fill_p99_ns": {
+        "median": 2465791,
+        "min": 2412543,
+        "max": 2584575
+      },
+      "max_send_lag_ns": {
+        "median": 1406025,
+        "min": 1234991,
+        "max": 2085198
+      },
+      "orders_per_second": {
+        "median": 999.6784184479615,
+        "min": 999.072819461554,
+        "max": 999.9919200652859
+      }
+    }
+  },
+  "open-c10": {
+    "schema_version": 1,
+    "created_utc": "2026-10-25T05:24:29Z",
+    "config": {
+      "mode": "open",
+      "gateway": "127.0.0.1:8082",
+      "connections": 10,
+      "measured_orders_per_connection": 1000,
+      "warmup_orders_per_connection": 100,
+      "repetitions": 5,
+      "open_loop_orders_per_second_per_connection": 1000,
+      "response_timeout_ns": 30000000000,
+      "symbol": "BENCH",
+      "symbol_mode": "spread",
+      "quantity": 1,
+      "default_price_minor_units": 300000,
+      "pinning_notes": "no explicit pinning; component affinities/build versions in build-environment.txt"
+    },
+    "instruments": [
+      {
+        "symbol": "BENCH0",
+        "price_minor_units": 300000,
+        "price_scale": 2,
+        "rules": {
+          "PriceScale": 2,
+          "TickSize": 1,
+          "LotSize": 1,
+          "MinQuantity": 1,
+          "MaxQuantity": 2147483647
+        }
+      },
+      {
+        "symbol": "BENCH1",
+        "price_minor_units": 300000,
+        "price_scale": 2,
+        "rules": {
+          "PriceScale": 2,
+          "TickSize": 1,
+          "LotSize": 1,
+          "MinQuantity": 1,
+          "MaxQuantity": 2147483647
+        }
+      },
+      {
+        "symbol": "BENCH2",
+        "price_minor_units": 300000,
+        "price_scale": 2,
+        "rules": {
+          "PriceScale": 2,
+          "TickSize": 1,
+          "LotSize": 1,
+          "MinQuantity": 1,
+          "MaxQuantity": 2147483647
+        }
+      },
+      {
+        "symbol": "BENCH3",
+        "price_minor_units": 300000,
+        "price_scale": 2,
+        "rules": {
+          "PriceScale": 2,
+          "TickSize": 1,
+          "LotSize": 1,
+          "MinQuantity": 1,
+          "MaxQuantity": 2147483647
+        }
+      },
+      {
+        "symbol": "BENCH4",
+        "price_minor_units": 300000,
+        "price_scale": 2,
+        "rules": {
+          "PriceScale": 2,
+          "TickSize": 1,
+          "LotSize": 1,
+          "MinQuantity": 1,
+          "MaxQuantity": 2147483647
+        }
+      }
+    ],
+    "environment": {
+      "arch": "amd64",
+      "client_cpu_affinity": "0-4",
+      "cpu": "AMD EPYC 7763 64-Core Processor",
+      "go": "go1.26.10",
+      "gomaxprocs": "2",
+      "launch_env_FXP_GW_RATE": "2000",
+      "launch_env_FXP_GW_RATE_BURST": "4000",
+      "launch_env_FXP_SYMBOL_CONFIG": "",
+      "launch_env_RUST_LOG": "warn",
+      "launch_env_TOKIO_WORKER_THREADS": "2",
+      "logical_cpus": "5",
+      "os": "linux",
+      "pinning_notes": "no explicit pinning; component affinities/build versions in build-environment.txt",
+      "revision": "f0edb3eda1719506366a0835070ddb3cbb52641b",
+      "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+    },
+    "runs": [
+      {
+        "index": 1,
+        "orders": 10000,
+        "elapsed_ns": 1002726669,
+        "orders_per_second": 9972.807455069293,
+        "max_send_lag_ns": 1478409,
+        "ack": {
+          "count": 10000,
+          "p50_ns": 962559,
+          "p90_ns": 1800191,
+          "p99_ns": 2541567,
+          "p99_9_ns": 4681727,
+          "max_ns": 5132287
+        },
+        "fill": {
+          "count": 10000,
+          "p50_ns": 1687551,
+          "p90_ns": 2643967,
+          "p99_ns": 3334143,
+          "p99_9_ns": 5599231,
+          "max_ns": 6123519
+        }
+      },
+      {
+        "index": 2,
+        "orders": 10000,
+        "elapsed_ns": 1003795564,
+        "orders_per_second": 9962.187878327783,
+        "max_send_lag_ns": 3299830,
+        "ack": {
+          "count": 10000,
+          "p50_ns": 961023,
+          "p90_ns": 1773567,
+          "p99_ns": 2801663,
+          "p99_9_ns": 5390335,
+          "max_ns": 6926335
+        },
+        "fill": {
+          "count": 10000,
+          "p50_ns": 1733631,
+          "p90_ns": 2648063,
+          "p99_ns": 3436543,
+          "p99_9_ns": 5783551,
+          "max_ns": 6934527
+        }
+      },
+      {
+        "index": 3,
+        "orders": 10000,
+        "elapsed_ns": 1003060384,
+        "orders_per_second": 9969.489533742766,
+        "max_send_lag_ns": 4469118,
+        "ack": {
+          "count": 10000,
+          "p50_ns": 935423,
+          "p90_ns": 1712127,
+          "p99_ns": 2324479,
+          "p99_9_ns": 4284415,
+          "max_ns": 5500927
+        },
+        "fill": {
+          "count": 10000,
+          "p50_ns": 1649663,
+          "p90_ns": 2592767,
+          "p99_ns": 3237887,
+          "p99_9_ns": 5263359,
+          "max_ns": 6627327
+        }
+      },
+      {
+        "index": 4,
+        "orders": 10000,
+        "elapsed_ns": 1003414780,
+        "orders_per_second": 9965.968410391564,
+        "max_send_lag_ns": 1957580,
+        "ack": {
+          "count": 10000,
+          "p50_ns": 974847,
+          "p90_ns": 1768447,
+          "p99_ns": 5697535,
+          "p99_9_ns": 13230079,
+          "max_ns": 15261695
+        },
+        "fill": {
+          "count": 10000,
+          "p50_ns": 1717247,
+          "p90_ns": 2672639,
+          "p99_ns": 5713919,
+          "p99_9_ns": 13590527,
+          "max_ns": 15630335
+        }
+      },
+      {
+        "index": 5,
+        "orders": 10000,
+        "elapsed_ns": 1002273790,
+        "orders_per_second": 9977.313683918643,
+        "max_send_lag_ns": 1622545,
+        "ack": {
+          "count": 10000,
+          "p50_ns": 954367,
+          "p90_ns": 1761279,
+          "p99_ns": 2226175,
+          "p99_9_ns": 2840575,
+          "max_ns": 4149247
+        },
+        "fill": {
+          "count": 10000,
+          "p50_ns": 1663999,
+          "p90_ns": 2586623,
+          "p99_ns": 3125247,
+          "p99_9_ns": 3817471,
+          "max_ns": 4866047
+        }
+      }
+    ],
+    "summary": {
+      "ack_max_ns": {
+        "median": 5500927,
+        "min": 4149247,
+        "max": 15261695
+      },
+      "ack_p50_ns": {
+        "median": 961023,
+        "min": 935423,
+        "max": 974847
+      },
+      "ack_p90_ns": {
+        "median": 1768447,
+        "min": 1712127,
+        "max": 1800191
+      },
+      "ack_p99_9_ns": {
+        "median": 4681727,
+        "min": 2840575,
+        "max": 13230079
+      },
+      "ack_p99_ns": {
+        "median": 2541567,
+        "min": 2226175,
+        "max": 5697535
+      },
+      "fill_max_ns": {
+        "median": 6627327,
+        "min": 4866047,
+        "max": 15630335
+      },
+      "fill_p50_ns": {
+        "median": 1687551,
+        "min": 1649663,
+        "max": 1733631
+      },
+      "fill_p90_ns": {
+        "median": 2643967,
+        "min": 2586623,
+        "max": 2672639
+      },
+      "fill_p99_9_ns": {
+        "median": 5599231,
+        "min": 3817471,
+        "max": 13590527
+      },
+      "fill_p99_ns": {
+        "median": 3334143,
+        "min": 3125247,
+        "max": 5713919
+      },
+      "max_send_lag_ns": {
+        "median": 1957580,
+        "min": 1478409,
+        "max": 4469118
+      },
+      "orders_per_second": {
+        "median": 9969.489533742766,
+        "min": 9962.187878327783,
+        "max": 9977.313683918643
+      }
+    }
+  },
+  "closed-c1": {
+    "schema_version": 1,
+    "created_utc": "2026-10-25T05:24:30Z",
+    "config": {
+      "mode": "closed",
+      "gateway": "127.0.0.1:8082",
+      "connections": 1,
+      "measured_orders_per_connection": 1000,
+      "warmup_orders_per_connection": 100,
+      "repetitions": 5,
+      "open_loop_orders_per_second_per_connection": 1000,
+      "response_timeout_ns": 30000000000,
+      "symbol": "BENCH",
+      "symbol_mode": "single",
+      "quantity": 1,
+      "default_price_minor_units": 300000,
+      "pinning_notes": "no explicit pinning; component affinities/build versions in build-environment.txt"
+    },
+    "instruments": [
+      {
+        "symbol": "BENCH",
+        "price_minor_units": 300000,
+        "price_scale": 2,
+        "rules": {
+          "PriceScale": 2,
+          "TickSize": 1,
+          "LotSize": 1,
+          "MinQuantity": 1,
+          "MaxQuantity": 2147483647
+        }
+      }
+    ],
+    "environment": {
+      "arch": "amd64",
+      "client_cpu_affinity": "0-4",
+      "cpu": "AMD EPYC 7763 64-Core Processor",
+      "go": "go1.26.10",
+      "gomaxprocs": "2",
+      "launch_env_FXP_GW_RATE": "2000",
+      "launch_env_FXP_GW_RATE_BURST": "4000",
+      "launch_env_FXP_SYMBOL_CONFIG": "",
+      "launch_env_RUST_LOG": "warn",
+      "launch_env_TOKIO_WORKER_THREADS": "2",
+      "logical_cpus": "5",
+      "os": "linux",
+      "pinning_notes": "no explicit pinning; component affinities/build versions in build-environment.txt",
+      "revision": "f0edb3eda1719506366a0835070ddb3cbb52641b",
+      "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+    },
+    "runs": [
+      {
+        "index": 1,
+        "orders": 1000,
+        "elapsed_ns": 256546459,
+        "orders_per_second": 3897.929458461167,
+        "max_send_lag_ns": 49102,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 234495,
+          "p90_ns": 311551,
+          "p99_ns": 398335,
+          "p99_9_ns": 887807,
+          "max_ns": 1214463
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 381439,
+          "p90_ns": 609791,
+          "p99_ns": 743423,
+          "p99_9_ns": 1070079,
+          "max_ns": 1615871
+        }
+      },
+      {
+        "index": 2,
+        "orders": 1000,
+        "elapsed_ns": 256337174,
+        "orders_per_second": 3901.1119003754015,
+        "max_send_lag_ns": 26339,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 226047,
+          "p90_ns": 322559,
+          "p99_ns": 453375,
+          "p99_9_ns": 1130495,
+          "max_ns": 5373951
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 338943,
+          "p90_ns": 605695,
+          "p99_ns": 877567,
+          "p99_9_ns": 1415167,
+          "max_ns": 5746687
+        }
+      },
+      {
+        "index": 3,
+        "orders": 1000,
+        "elapsed_ns": 225460187,
+        "orders_per_second": 4435.372884703586,
+        "max_send_lag_ns": 43562,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 191487,
+          "p90_ns": 290303,
+          "p99_ns": 438015,
+          "p99_9_ns": 1096703,
+          "max_ns": 1204223
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 323071,
+          "p90_ns": 520447,
+          "p99_ns": 809471,
+          "p99_9_ns": 1274879,
+          "max_ns": 1568767
+        }
+      },
+      {
+        "index": 4,
+        "orders": 1000,
+        "elapsed_ns": 249245608,
+        "orders_per_second": 4012.106805107675,
+        "max_send_lag_ns": 56195,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 216959,
+          "p90_ns": 301823,
+          "p99_ns": 455423,
+          "p99_9_ns": 996863,
+          "max_ns": 1870847
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 353279,
+          "p90_ns": 540159,
+          "p99_ns": 758783,
+          "p99_9_ns": 1411071,
+          "max_ns": 1916927
+        }
+      },
+      {
+        "index": 5,
+        "orders": 1000,
+        "elapsed_ns": 279470875,
+        "orders_per_second": 3578.1903928271595,
+        "max_send_lag_ns": 27171,
+        "ack": {
+          "count": 1000,
+          "p50_ns": 241919,
+          "p90_ns": 329727,
+          "p99_ns": 654847,
+          "p99_9_ns": 2017279,
+          "max_ns": 2254847
+        },
+        "fill": {
+          "count": 1000,
+          "p50_ns": 377343,
+          "p90_ns": 612351,
+          "p99_ns": 1350655,
+          "p99_9_ns": 2486271,
+          "max_ns": 2527231
+        }
+      }
+    ],
+    "summary": {
+      "ack_max_ns": {
+        "median": 1870847,
+        "min": 1204223,
+        "max": 5373951
+      },
+      "ack_p50_ns": {
+        "median": 226047,
+        "min": 191487,
+        "max": 241919
+      },
+      "ack_p90_ns": {
+        "median": 311551,
+        "min": 290303,
+        "max": 329727
+      },
+      "ack_p99_9_ns": {
+        "median": 1096703,
+        "min": 887807,
+        "max": 2017279
+      },
+      "ack_p99_ns": {
+        "median": 453375,
+        "min": 398335,
+        "max": 654847
+      },
+      "fill_max_ns": {
+        "median": 1916927,
+        "min": 1568767,
+        "max": 5746687
+      },
+      "fill_p50_ns": {
+        "median": 353279,
+        "min": 323071,
+        "max": 381439
+      },
+      "fill_p90_ns": {
+        "median": 605695,
+        "min": 520447,
+        "max": 612351
+      },
+      "fill_p99_9_ns": {
+        "median": 1411071,
+        "min": 1070079,
+        "max": 2486271
+      },
+      "fill_p99_ns": {
+        "median": 809471,
+        "min": 743423,
+        "max": 1350655
+      },
+      "max_send_lag_ns": {
+        "median": 43562,
+        "min": 26339,
+        "max": 56195
+      },
+      "orders_per_second": {
+        "median": 3901.1119003754015,
+        "min": 3578.1903928271595,
+        "max": 4435.372884703586
+      }
+    }
+  }
+}

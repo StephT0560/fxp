@@ -104,6 +104,19 @@ jobs:
       - run: bash scripts/gen_proto.sh && bash scripts/e2e.sh
         env:
           E2E_LOG_DIR: ${{ runner.temp }}/e2e
+      - name: Benchmark smoke and static-artifact verifier tests
+        run: |
+          python3 -m unittest discover -s tests/release -v
+          bash scripts/bench.sh "$RUNNER_TEMP/benchmark-smoke" --smoke
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: benchmark-smoke
+          path: |
+            ${{ runner.temp }}/benchmark-smoke/*.json
+            ${{ runner.temp }}/benchmark-smoke/*.md
+            ${{ runner.temp }}/benchmark-smoke/*.log
+            ${{ runner.temp }}/benchmark-smoke/*.txt
       - uses: actions/upload-artifact@v7
         if: always()
         with:

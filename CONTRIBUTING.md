@@ -81,3 +81,13 @@ Review every expected failure individually. Preserve meaningful assertions;
 do not add a runner crash or timeout to the allow-list to make CI pass. Local
 baseline: 28 passed, 31 allow-listed failures, 0 unexpected failures / runner
 errors, 59 definitions. This is a regression gate, not certification.
+
+## Benchmark and release maintenance
+
+Run `bash scripts/bench.sh target/bench` for five-repetition live measurements
+and the corrected Criterion suite, or add `--smoke` as the second argument for
+functional coverage without publishing performance claims. Do not compare
+figures without their hardware, build, workload, affinity and run-spread metadata.
+See [benchmark methodology](docs/benchmark-methodology.md) and
+[release/required-check setup](docs/releasing.md). Nightly results are non-gating;
+release workflows build static Linux artifacts and create drafts only.

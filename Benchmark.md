@@ -1,401 +1,140 @@
-# FXP Protocol — Benchmark Results & Methodology
+# Corrected benchmark results and methodology
 
-## Overview
+Measurements: 2026-10-25, source **`f0edb3eda1719506366a0835070ddb3cbb52641b`**.
+The previous Windows/round-1/round-2 tables are superseded; they used different
+hardware, incomplete SBE decoding, unequal encoding allocation and actual-send
+latency. Historical reports remain in git history. No speedup claim is carried
+forward without an equivalent definition and measured implementation.
 
-This document records the benchmarking methodology and actual results for FXP
-Protocol performance evaluation against FIX 4.4 (text) and Simple Binary
-Encoding (SBE). All benchmarks are designed to be fair to each format — each
-is tested under its best realistic conditions.
-
-**Test environment:**
-- OS: Windows 11 (Git Bash / MINGW64)
-- CPU: 8 logical cores
-- Rust toolchain: cargo 1.85.0
-- Go: 1.24.1
-- Rust encoding benchmarks: release build (`cargo bench`)
-- End-to-end benchmarks: debug and release builds (see Part 2)
-- Go connection pool default: `runtime.NumCPU()`; this machine had 8 logical CPUs, so the default was 8 connections
-
----
-
-## Part 1 — Encoding Benchmarks (Rust)
-
-**Location:** `fxp_core/benches/encoding_benchmark.rs`
-**Framework:** [Criterion.rs](https://github.com/bheisler/criterion.rs) v0.5
-**Runtime:** `cargo bench --bench encoding_benchmark`
-
-### Formats Compared
-
-| Format | Description | Used by |
-|---|---|---|
-| FXP (Protobuf) | Binary, schema-driven, variable-length | This project |
-| FIX 4.4 text | ASCII tag=value, SOH-delimited | Industry standard legacy |
-| SBE | Fixed-width binary, no schema at runtime | CME, NASDAQ, LSE |
-
-### Methodology
-
-**Message construction is excluded from timing.** All message objects are built
-once outside the timed loop. Only encode/decode operations are measured.
-
-**FXP uses a pre-allocated buffer.** `FXP_preallocated` calls `buf.clear()` and
-reuses the same `Vec<u8>` across iterations, eliminating per-call heap
-allocation. `FXP_fresh_alloc` shows the raw allocation cost separately. The
-75% gap between these two variants demonstrates that most of the historical
-"Protobuf is slow" narrative was measuring heap allocation, not encoding logic.
-
-**SBE is tested with both stack and heap allocation.** `SBE_stack` writes into a
-fixed `[u8; N]` array — its natural advantage. `SBE_heap` converts to `Vec<u8>`
-to match FXP's allocation model. Both variants are labelled explicitly so the
-comparison is unambiguous.
-
-**Realistic payloads** reflecting production field lengths:
-- Order ID: 21 chars (`ORD-2024-01-15-000042`)
-- Sender comp ID: 14 chars (`GOLDMANSACHS01`)
-- Target comp ID: 13 chars (`NASDAQOPTIONS`)
-- Sequence number: 1,048,576 (high realistic value)
-- Price: $185.42 fixed-point, Quantity: 500
-
-**Four message types** are benchmarked because SBE's size advantage disappears
-on `MarketDataSnapshot` — Protobuf `repeated` fields beat SBE fixed arrays for
-variable-depth order books.
-
-**`black_box()` wraps all inputs and outputs** to prevent the compiler from
-optimising away the work being measured.
-
----
-
-### Message Size Results
-
-```
-╔═══════════════════════════════════════════════════════════════════════════╗
-║              FXP Protocol — Message Size Benchmark                       ║
-║  Realistic payloads (21-char order IDs, 14-char sender IDs)              ║
-╠══════════════════════════╦═════════╦═══════╦════════╦═════════╦══════════╣
-║  Message Type            ║ FIX 4.4 ║  FXP  ║  SBE  ║ FXP/FIX ║  SBE/FIX ║
-╠══════════════════════════╬═════════╬═══════╬════════╬═════════╬══════════╣
-║  NewOrderSingle          ║     164 ║    82 ║     82 ║   50.0% ║    50.0% ║
-║  ExecutionReport         ║     192 ║    84 ║     76 ║   56.2% ║    60.4% ║
-║  MarketSnapshot (5L)     ║     331 ║   123 ║    168 ║   62.8% ║    49.2% ║
-║  MarketDataIncremental   ║     102 ║    30 ║     24 ║   70.6% ║    76.5% ║
-╚══════════════════════════╩═════════╩═══════╩════════╩═════════╩══════════╝
-```
-
-**Key findings:**
-- FXP ties SBE on `NewOrderSingle` at 82 bytes each with realistic field lengths
-- `ExecutionReport` is 84 bytes (proto v2.0 with `leaves_qty`, `avg_px`, `cum_qty`) vs 192 FIX — 56% smaller
-- FXP beats SBE on `MarketSnapshot` by 27% — Protobuf `repeated` fields are
-  more compact than SBE fixed arrays for variable-depth order books
-- FXP reduces `MarketDataIncremental` by 70.6% vs FIX — the highest-frequency
-  message type and the one where bandwidth savings matter most
-
----
-
-### Encode Performance Results
-
-```
-new_order/encode  (release build, criterion, 100 samples)
-  FXP_preallocated    91.6 ns   (10.9M encodes/sec)
-  FXP_fresh_alloc    403.5 ns    (2.5M encodes/sec)
-  FIX_44_text        618.4 ns    (1.6M encodes/sec)   — 6.7x slower than FXP
-  SBE_stack           42.1 ns   (23.8M encodes/sec)
-  SBE_heap            44.5 ns   (22.5M encodes/sec)
-
-execution_report/encode
-  FXP_preallocated   107.2 ns   (9.3M encodes/sec)
-  FIX_44_text        639.7 ns   (1.6M encodes/sec)   — 6.0x slower
-  SBE_stack           37.0 ns   (27.1M encodes/sec)
-
-market_snapshot_5L/encode
-  FXP_preallocated   359.0 ns   (2.8M encodes/sec)
-  FIX_44_text          2.50 µs  (400K encodes/sec)   — 7.0x slower
-
-incremental_update/encode
-  FXP_preallocated    79.1 ns   (12.6M encodes/sec)
-  FIX_44_text        562.3 ns   (1.8M encodes/sec)   — 7.1x slower
-```
-
-### Decode Performance Results
-
-```
-new_order/decode  (release build)
-  SBE_binary         1.6 ns   (625M decodes/sec)  — 4 array reads, no validation
-  FXP_protobuf     435.0 ns     (2.3M decodes/sec)
-  FIX_44_text    2,988.0 ns     (335K decodes/sec)  — 6.9x slower than FXP
-```
-
-### Roundtrip (Encode + Decode)
-
-```
-FXP_protobuf     527 ns   (encode 92ns + decode 435ns)
-FIX_44_text    3,606 ns   (encode 618ns + decode 2,988ns)  — 6.8x slower than FXP
-SBE_binary         2.9 ns
-```
-
-### Batch Throughput (10,000 orders)
-
-```
-FXP_preallocated    954 µs   (10.5M orders/sec)
-FIX_44_text        6,078 µs   (1.6M orders/sec)    — 6.4x slower
-SBE_stack           112 µs   (89.2M orders/sec)
-```
-
-> **Note on release vs debug:** The encoding benchmarks run under `cargo bench`,
-> which uses the release profile automatically. The numbers above are release
-> figures. Part 2 records both debug and release end-to-end runs; the measured
-> release p50 is 21.8ms and the debug p50 is 17ms, while the release run has a
-> lower maximum latency. These are separate historical measurements, not a
-> guarantee that release always lowers p50.
-
----
-
-### SBE vs FXP: Understanding the Gap
-
-The 2.2x encode gap between FXP (pre-allocated) and SBE represents a genuine
-engineering tradeoff, not a deficiency:
-
-| Capability | FXP (Protobuf) | SBE |
-|---|---|---|
-| Schema evolution | ✅ Add/remove fields without breaking parsers | ❌ Breaking change |
-| Optional fields | ✅ Native support | ❌ Requires workarounds |
-| Cross-language codegen | ✅ 10+ languages | ⚠️ Limited tooling |
-| Encode speed (pre-alloc) | 92ns (10.9M/sec) | 42ns (23.8M/sec) — 2.2x faster |
-| Decode speed | 435ns (2.3M/sec) | 1.6ns (625M/sec) — 272x faster |
-| Size: NewOrder | 82 bytes (ties) | 82 bytes |
-| Size: MarketSnapshot | **123 bytes** | 168 bytes (FXP wins by 27%) |
-| Appropriate for | Open protocol ecosystem | Closed internal bus |
-
-SBE's decode speed advantage (272x) comes from the fact that "decoding" SBE
-is four array index reads with no field validation, schema lookup, or optional
-field handling. FXP at 435ns performs all three. In a system where messages
-cross organisational boundaries and schemas must evolve, FXP's approach is
-the correct tradeoff.
-
-### How to Reproduce
+## Reproduction and environment
 
 ```bash
-cd fxp_core
-cargo bench --bench encoding_benchmark
-# HTML report: open target/criterion/report/index.html in browser
+GOMAXPROCS=2 TOKIO_WORKER_THREADS=2 RUST_LOG=warn bash scripts/bench.sh target/bench
 ```
 
----
+The recorded run also verified non-default FXP_JWT_SECRET/ISSUER/AUDIENCE/KID
+against the gateway (a disposable verification key, not a production secret).
+Raw provenance is in [benchmarks/round3](benchmarks/round3/).
 
-## Part 2 — End-to-End Benchmarks (Go)
+| Environment | Recorded value |
+|---|---|
+| Host | shared Linux VM, loopback, single host |
+| CPU | AMD EPYC 7763; 5 visible logical CPUs |
+| Affinity | core, gateway and runner all allowed CPUs 0–4; no explicit pinning |
+| Rust | 1.99.1 (58cf8f9c3, 2026-10-13), release profile |
+| Go | 1.26.10, go build -trimpath, GOMAXPROCS=2 |
+| Core | TOKIO_WORKER_THREADS=2; persistence disabled; no session schedule |
+| Gateway | rate=2000/s/connection, burst=4000; default pool=visible logical CPUs |
+| Logging | RUST_LOG=warn; normal gateway logging |
+| Symbols | unlisted BENCH/BENCH0…4, scale 2, tick 1, quantity 1, price 300000 |
+| Encoding | Criterion 0.8.2, 50 samples, 1 s warmup, 2 s target measurement/group |
 
-**Location:** `go_gateway/benchmark/benchmark.go`
-**Stack:** Benchmark client → Go Gateway (:8082) → Rust Core (:8080) → back
+The runner stops live processes before encoding measurements and uses a fresh
+Criterion directory. No other agent builds/tests ran during this recorded run.
+The VM itself is shared; this does not eliminate external contention.
 
-### Architecture Under Test
+## NewOrder serialization results
 
-```
-Benchmark clients (N concurrent senders)
-    │  TCP, length-prefixed Protobuf frames
-    ▼
-Go Gateway
-    ├── JWT auth (HS256 token validation)
-    ├── Session management (per-connection state)
-    ├── Connection pool (`runtime.NumCPU()` default; 8 on this benchmark machine)
-    └── orderClientMap (routes ExecutionReports back to originators)
-    │  TCP, length-prefixed Protobuf frames
-    ▼
-Rust Core
-    ├── SymbolRouter: per-symbol Tokio tasks (25 independent order books)
-    ├── Tokio mpsc channels; the symbol-to-task map uses a global mutex
-    └── BTreeMap price-time priority matcher
-    │  Protobuf ExecutionReport + MarketDataIncrementalUpdate frames
-    ▼
-Go Gateway → Benchmark clients
-```
+| Operation / implementation | Median ns [95% CI] |
+|---|---:|
+| FXP encode, reused buffer | 149.3 [148.9, 149.6] |
+| FXP encode, fresh allocation | 292.5 [291.1, 294.2] |
+| FIX encode, reusable integer formatter | 133.8 [132.8, 134.8] |
+| FIX encode, allocating format! baseline | 535.3 [531.2, 541.1] |
+| SBE encode, stack | 29.6 [29.1, 31.7] |
+| SBE encode, heap | 36.2 [35.8, 36.8] |
+| FXP decode, owned schema | 377.2 [372.6, 385.9] |
+| FIX decode, owned generic tag map | 1938.5 [1928.4, 1947.8] |
+| SBE decode, owned full fixture | 110.2 [109.7, 111.1] |
+| FXP measured encode+decode | 535.1 [532.0, 541.2] |
+| FIX measured encode+generic-map decode | 2150.7 [2141.9, 2172.6] |
+| SBE measured stack encode+owned decode | 122.1 [121.3, 122.4] |
 
-### What Is Measured
+**The reusable FIX encoder is faster than FXP encode in this run**
+(133.8 versus 149.3 ns). The allocating FIX baseline is much slower,
+so the old headline based only on format! overstated the advantage. SBE heap
+(36.2 ns) is now slower than stack (29.6 ns); full owned SBE decode
+is 110.2 ns, not the old ~1 ns scalar projection.
+Roundtrip rows execute both operations together; they are not sums of medians.
 
-**Round-trip latency:** `time.Now()` recorded immediately before `sendFramed`,
-latency sample recorded when the matching ExecutionReport arrives. Includes: Go
-auth overhead, pool connection write, Rust dispatch + order book insert + match
-+ ExecutionReport encode, Go delivery to client.
+These are **implementation/fixture** timings. FIX decode is a generic owned tag
+map without full session/dictionary validation; SBE is a local hand-written
+layout with full owned strings, not a certified exchange-generated implementation.
+Differences in decoder design and field handling prevent a universal protocol
+ranking. Fixture construction and UTC string conversion are outside timing.
+The allocating FIX formatter uses floating point; its output is checked against
+the integer encoder for the benchmark fixtures, not all possible int64 prices.
 
-**Throughput:** Orders/sec and fills/sec under sustained concurrent load.
+NewOrder fixture sizes are **FXP 94 B, FIX 164 B, SBE 95 B**, including the
+NewOrder timestamp and DAY TIF. Secondary fixtures retain their own subsets:
+ExecutionReport 91/192/76 B, 5-level snapshot 134/331/168 B (SBE size estimate
+only), incremental 32/102/24 B. These subsets are not semantically identical and
+do not justify a general compression claim.
 
-**Market data fan-out latency:** Separate subscriber connection measures time
-from order placement to `MarketDataIncrementalUpdate` arrival.
+## Live paired-order results
 
-### Methodology
+Each connection alternates equal-quantity buy/sell limits at $3000.00; every
+phase is even and completes all fills. There are **five repetitions** per scenario,
+each with 100 separate warmup orders/connection and 1000 measured orders/connection.
+Open-loop scenarios offer 1000 orders/s/connection from absolute intended times.
+The c10 spread scenario shares five books across adjacent connection pairs.
+Closed c1 waits for each ACK before sending the next order; it is labeled
+**closed-loop**, not a coordinated-omission-corrected capacity estimate.
 
-**Warmup excluded.** First 20 orders per sender are discarded from latency
-samples. Allows TCP slow-start, connection pool warm-up, and first-time symbol
-task creation to settle.
+| Scenario | Orders/run | Orders/s median [min, max] | ACK count/run | Final-fill count/run |
+|---|---:|---:|---:|---:|
+| open-c1 | 1,000 | 999.7 [999.1, 1000.0] | 1,000 | 1,000 |
+| open-c10 | 10,000 | 9969.5 [9962.2, 9977.3] | 10,000 | 10,000 |
+| closed-c1 | 1,000 | 3901.1 [3578.2, 4435.4] | 1,000 | 1,000 |
 
-**Symbol spread mode** (`--symbols spread`, default). Adjacent sender pairs
-share a unique symbol from a pool of 50 — senders 0+1 trade `ETH/USD`, 2+3
-trade `BTC/USD`, 4+5 trade `AAPL`, etc. This eliminates cross-symbol order book
-mutex contention and reflects realistic multi-symbol market load.
+All latency cells below show **median of the five per-run values [min, max]**,
+in milliseconds. ACK means EXEC_NEW; fill means terminal ORDER_FILLED. Every
+order contributes one sample to each endpoint; reports are not counted as orders.
 
-**Fixed-side pairing.** Even senders send BUY only, odd senders send SELL only,
-both at the same price on the same symbol. Guarantees fills without requiring
-each sender to alternate sides internally.
+| Scenario / endpoint | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms |
+|---|---:|---:|---:|---:|---:|
+| open-c1 / ack | 0.777 [0.764, 0.796] | 1.281 [1.232, 1.313] | 1.537 [1.415, 1.641] | 2.658 [1.924, 4.370] | 3.332 [1.935, 5.255] |
+| open-c1 / fill | 1.337 [1.332, 1.352] | 2.187 [2.179, 2.232] | 2.466 [2.413, 2.585] | 3.961 [2.957, 5.267] | 4.180 [3.068, 6.291] |
+| open-c10 / ack | 0.961 [0.935, 0.975] | 1.768 [1.712, 1.800] | 2.542 [2.226, 5.698] | 4.682 [2.841, 13.230] | 5.501 [4.149, 15.262] |
+| open-c10 / fill | 1.688 [1.650, 1.734] | 2.644 [2.587, 2.673] | 3.334 [3.125, 5.714] | 5.599 [3.817, 13.591] | 6.627 [4.866, 15.630] |
+| closed-c1 / ack | 0.226 [0.191, 0.242] | 0.312 [0.290, 0.330] | 0.453 [0.398, 0.655] | 1.097 [0.888, 2.017] | 1.871 [1.204, 5.374] |
+| closed-c1 / fill | 0.353 [0.323, 0.381] | 0.606 [0.520, 0.612] | 0.809 [0.743, 1.351] | 1.411 [1.070, 2.486] | 1.917 [1.569, 5.747] |
 
-**Rate-limited latency mode** (`--rate N`). A `time.Ticker` paces each sender
-at N orders/second. Keeps the in-flight queue shallow so fill timestamps reflect
-actual processing time rather than queue wait time. Use this mode for latency
-characterisation. Omit for peak throughput measurement.
 
-**Fill counting.** Both buy-side and sell-side ExecutionReports are counted as
-fills. Latency samples are only recorded for orders submitted by this sender
-(matched via `pending` map).
+For example, c10 open-loop ACK p99 ranges from
+2.226 to 5.698 ms;
+this spread is published, not discarded as an outlier. The maximum observed
+run's terminal-fill tail is 15.630 ms.
+A 1000-order run's p99.9 is an extreme with little statistical confidence.
 
-### Architectural Improvements Made During Benchmarking
+## Initial record retained
 
-The following issues were identified by running the benchmark iteratively and
-fixed before final results were recorded:
+The first complete five-repetition dataset (source `dff2cc3`) is preserved in
+[benchmarks/round3/initial](benchmarks/round3/initial/), including all raw HDR
+snapshots, estimates, provenance and checksums. It measured FXP/FIX reused encode
+at 163.6/127.9 ns and owned SBE decode at 114.2 ns. The current tables above come
+from a fresh full run after the closed-loop deadline correction (`f0edb3e`),
+not a filtered subset of the first run. All measured phases in the initial run
+finished within the old timeout; different code revisions/runs are not pooled.
+Shared-host variation and the deadline-refresh work preclude assigning every
+number change to the fix. Neither favorable nor unfavorable results are erased.
 
-| Issue Found | Observable Symptom | Fix Applied |
-|---|---|---|
-| Single global mutex (`connLock`) on Rust Core connection | p50 latency 3.2s at concurrency=10 | Go pool defaulted to `runtime.NumCPU()` (8 on this machine) |
-| All senders on same symbol (`ETH/USD`) | One per-symbol task processes that symbol's messages in order | Symbol spread: 50 unique symbols |
-| Sequential Rust message processing | 2,916 fills at concurrency=50, all timeouts | Per-symbol Tokio tasks with independent order books |
-| `Arc<Mutex<OwnedWriteHalf>>` (SharedWriter) | Write contention across symbol tasks | Tokio `mpsc` output channel feeding the socket writer |
-| Latency measured across full send queue | p50 reported as 25s (queue depth, not RTT) | Rate-limited mode (`--rate` flag) |
+## Caveats and boundaries
 
----
-
-### Throughput Results (unlimited send rate)
-
-**Debug build (cargo run / go run):**
-```
-Concurrency=1   orders=200   symbols=spread
-  Orders/sec:  1,454    Fills/sec:  1,309    Errors: 0
-
-Concurrency=10  orders=500   symbols=spread
-  Orders/sec:  2,259    Fills/sec:  2,169    Errors: 0
-  Total fills: 4,800/5,000 (96%)
-
-Concurrency=50  orders=1000  symbols=spread
-  Orders/sec:  1,449    Fills/sec:  1,420    Errors: 0
-  Total fills: 49,000/50,000 (98%)
-```
-
-**Release build (cargo build --release / go build):**
-```
-Concurrency=10  orders=500   symbols=spread
-  Orders/sec:  1,909    Fills/sec:  1,833    Errors: 0
-  Total fills: 4,800/5,000 (96%)
-
-Concurrency=50  orders=200   symbols=spread
-  Orders/sec:  1,369    Fills/sec:  1,232    Errors: 0
-  Total fills: 9,000/10,000 (90%)
-```
-
-Zero errors across the recorded throughput runs. The measured rates vary by
-concurrency and build: for example, the concurrency-50 samples are 1,449 orders/sec
-in debug and 1,369 orders/sec in release. The recorded machine's default pool has
-8 connections (`runtime.NumCPU()`); pool size is configurable with `SetPoolSize`.
-
----
-
-### Latency Results (rate-limited, honest RTT measurement)
-
-The debug and release results below were recorded separately. The release run used
-`cargo build --release` plus `go build`.
-
-**Debug build (`cargo run` / `go run`):**
-```
-Concurrency=50   orders=200   rate=25/sec   symbols=spread
-  p50:   17ms    p95:  237ms    p99:  330ms    Max: 3,050ms
-  Market data fan-out: p95=443µs  p99=515µs
-```
-
-**Release build (`cargo build --release` + `go build`):**
-```
-Concurrency=50   orders=200   rate=25/sec   symbols=spread
-  p50:   21.8ms   p95:  313ms    p99:  409ms    Max: 803ms
-  Market data fan-out: p95=558µs  p99=1.71ms
-```
-
-**Key finding — tail compression:** Release build Max drops from **3,050ms → 803ms**
-(3.8x improvement). The 3.05s debug outlier was first-time `SymbolRouter.get_or_create`
-symbol task spawn under unoptimised code — release eliminates most cold-start overhead.
-
-**p50 is comparable (17ms vs 21.8ms):** The rate-limited mode at 25 orders/sec per
-sender creates 1,250 aggregate orders/sec through the default 8-connection pool
-(`runtime.NumCPU()` on this benchmark machine). The release sample has a slightly
-higher p50; these results do not establish a universal build-profile latency
-ordering. Both measured p50 values are below 25ms through two process hops with
-50 concurrent senders.
-
-**Round-trip latency includes queueing across the stack:** The measurement spans
-sender scheduling, the Go Gateway pool, Rust dispatch and matching, and report
-delivery. With 50 senders and the default pool of 8 on this benchmark machine,
-senders share pooled connections. The result does not isolate engine matching
-latency. `SetPoolSize` can tune the pool; this document does not include a
-16-connection comparison.
-
-**Market data fan-out is build-agnostic:** p95 is 443–558µs across both builds,
-confirming the broadcast path is I/O bound, not CPU bound.
-
----
-
-### How to Reproduce
-
-```bash
-# Set this in the gateway and benchmark terminals.
-export FXP_JWT_SECRET="dev-secret-change-in-production"
-
-# Debug build — run each command in a separate terminal
-# terminal 1
-cd fxp_core && cargo run
-# terminal 2
-cd go_gateway && go run main.go
-
-# Release build — run each command in a separate terminal
-# terminal 1
-cd fxp_core && cargo build --release && ./target/release/fxp_core
-# terminal 2
-cd go_gateway && go build -o gateway . && ./gateway
-
-# Throughput test (unlimited rate)
-go run benchmark/benchmark.go --concurrency 10 --orders 500
-go run benchmark/benchmark.go --concurrency 50 --orders 1000 --timeout 120
-
-# Latency test (rate-limited for honest RTT)
-go run benchmark/benchmark.go --concurrency 50 --orders 200 --rate 25 --timeout 60
-
-# Single-symbol baseline (shows order book contention without spread)
-go run benchmark/benchmark.go --concurrency 50 --orders 200 --symbols single --rate 25
-```
-
----
-
-## Part 3 — Interpreting the Numbers
-
-### Revised Whitepaper Claims
-
-The whitepaper originally stated "70% message size reduction." Actual benchmark
-results with realistic payloads show:
-
-| Claim | Original | Revised (benchmark-verified) |
-|---|---|---|
-| Size reduction vs FIX | "up to 70%" | "50–71% depending on message type" |
-| vs SBE | not stated | "matches or beats SBE on market data" |
-| Encode speed | not stated | "6–8x faster encode than FIX" |
-| Decode speed | not stated | "6.9x faster decode than FIX" |
-| Roundtrip speed | not stated | "6.8x faster than FIX end-to-end" |
-| Throughput | not stated | "10.9M encodes/sec single thread (pre-allocated)" |
-| E2E latency | not stated | "p50 21.8ms at concurrency=50 (release build; debug comparison 17ms)" |
-
-### Who These Numbers Are For
-
-**For institutional trading desks migrating from FIX:**
-The 6.8x roundtrip speedup and 6.9x decode improvement are the most actionable
-numbers. Network RTT to an exchange (typically 1–50ms) dominates protocol
-overhead — FXP's decode speed means the protocol is never the bottleneck.
-
-**For market data infrastructure teams:**
-The 70.6% size reduction on `MarketDataIncrementalUpdate` and sub-millisecond
-fan-out latency are the relevant metrics. At high tick rates, bandwidth
-reduction directly translates to lower infrastructure cost.
-
-**For HFT / ultra-low-latency venues:**
-FXP is not optimised for sub-microsecond single-message latency. SBE on a
-direct kernel-bypass connection is the right tool for that use case. FXP targets
-the multi-venue, multi-counterparty institutional layer where schema evolution
-and interoperability matter more than nanosecond encoding speed.
+- Shared VM, loopback, one host; client, gateway and core contend for CPUs and
+  memory. Client serialization, GC, sleep/wakeup lateness, blocked writes and
+  queueing are included in intended-time latency. Profile the load generator
+  separately before attributing a bottleneck to the engine.
+- Open-loop throughput at an offered rate primarily confirms that load was
+  delivered and drained. These finite bursts (including token-bucket burst
+  capacity) are **not** a sustainable maximum-capacity measurement.
+- Paired fill latency includes waiting for a counterparty order and differs
+  from ACK latency. No market-data fan-out figure is claimed by this harness.
+- Warmup is excluded, every ACK/final fill is required, rejections/timeouts fail,
+  and sender backlog is not erased. HDR has 3 significant digits; extrema are
+  quantized. Histograms are not synthetically corrected a second time.
+- The new hardware, compiler and endpoints differ from historical reports;
+  results cannot establish a historical regression or improvement.
+- See [the full contract](docs/benchmark-methodology.md) for fields, authentication,
+  symbol precision, failure policy and output schema. Nightly artifacts are for
+  manual comparison; there is no automatic numerical pass/fail threshold.

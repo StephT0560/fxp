@@ -1,52 +1,33 @@
 // SPDX-License-Identifier: MIT
+//! Local serialization fixtures; see docs/benchmark-methodology.md.
+//! NewOrder variants include timestamp/TIF. FIX_format allocates; FIX_preallocated
+//! reuses two buffers with integer decimal conversion. SBE is a local hand-written
+//! layout; owned decode reads all fields and allocates strings. The FIX generic
+//! tag-map decoder is not a typed production parser. Secondary fixtures are field
+//! subsets, so their sizes/timings do not establish semantic equivalence.
+//! Fixture construction is outside timing. Inputs and full outputs are opaque.
+//! Roundtrip executes both operations rather than adding separate medians.
 
-/// FXP Encoding Benchmark — v2
-///
-/// ## Methodology
-///
-/// Each format (FXP/Protobuf, FIX 4.4, SBE) is tested under identical conditions:
-///
-///   1. Messages are pre-constructed OUTSIDE the timed loop — we measure
-///      encode/decode time only, not object construction or string allocation.
-///
-///   2. FXP uses a pre-allocated `Vec` with `reserve()` to eliminate heap
-///      reallocation cost, giving it the same allocation advantage as SBE.
-///
-///   3. SBE is benchmarked with BOTH stack allocation (its natural advantage)
-///      AND heap allocation (matching FXP's model) — the numbers are labelled
-///      so the comparison is explicit about what each means.
-///
-///   4. Payloads are REALISTIC: order IDs (21 chars), sender IDs (14 chars),
-///      full counterparty names, realistic prices and large sequence numbers.
-///
-///   5. Four message types are benchmarked:
-///        - NewOrderSingle        (most common order entry message)
-///        - ExecutionReport       (fill confirmation, high volume)
-///        - MarketDataSnapshot    (5-level order book, typical exchange depth)
-///        - MarketDataIncremental (single level update, highest frequency)
-///
-///   6. `black_box()` wraps all inputs AND outputs to prevent the compiler
-///      from optimising away any work being measured.
-///
-/// ## What the SBE vs FXP gap means
-///
-///   SBE is a memcpy into a fixed struct — it has zero schema flexibility,
-///   cannot evolve fields without breaking compatibility, and requires
-///   out-of-band schema management. The encode speed reflects this.
-///
-///   FXP (Protobuf) supports schema evolution, optional fields, and
-///   cross-language code generation. The pre-allocated variant shows the
-///   realistic production cost with allocation amortised away.
-///
-///   The market snapshot benchmark is where FXP's variable-length repeated
-///   fields beat SBE's fixed arrays — deeper books widen this advantage.
-///
-/// ## Reproducing
-///
-///   cargo bench --bench encoding_benchmark
-///   # HTML report: fxp_core/target/criterion/report/index.html
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use prost::Message;
+#[path = "support/encoding.rs"]
+mod encoding;
+use encoding::{FixBuffer, NewOrderInput, TRANSACT_SECONDS};
+
+fn input() -> NewOrderInput<'static> {
+    NewOrderInput {
+        seq: SEQ_NUM,
+        order_id: ORDER_ID,
+        sender: SENDER,
+        receiver: RECEIVER,
+        symbol: SYMBOL,
+        price: PRICE_FIXED,
+        quantity: QUANTITY,
+        seconds: encoding::TRANSACT_SECONDS,
+        nanos: 0,
+        transact_time: "20240115-12:00:00.000",
+    }
+}
 use std::hint::black_box;
 
 #[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
@@ -85,7 +66,10 @@ fn make_fxp_new_order() -> fxp::FxpMessage {
             quantity: QUANTITY,
             order_type: fxp::OrderType::Limit as i32,
             time_in_force: fxp::TimeInForce::Day as i32,
-            timestamp: None,
+            timestamp: Some(prost_types::Timestamp {
+                seconds: TRANSACT_SECONDS,
+                nanos: 0,
+            }),
             stop_price: 0,
             expire_date: String::new(),
             account: String::new(),
@@ -194,20 +178,8 @@ fn decode_fxp(bytes: &[u8]) -> fxp::FxpMessage {
 
 // ── FIX 4.4 text ─────────────────────────────────────────────────────────────
 
-fn encode_fix_new_order() -> Vec<u8> {
-    let body = format!(
-        "35=D\x0134={}\x0149={}\x0156={}\x0111={}\x0155={}\x0154=1\x0138={}\x0140=2\x0144={:.2}\x0159=0\x0160=20240115-12:00:00.000\x01",
-        SEQ_NUM,
-        SENDER,
-        RECEIVER,
-        ORDER_ID,
-        SYMBOL,
-        QUANTITY,
-        PRICE_FIXED as f64 / 100.0
-    );
-    let full = format!("8=FIX.4.4\x019={}\x01{}", body.len(), body);
-    let cs: u32 = full.bytes().map(|b| b as u32).sum::<u32>() % 256;
-    format!("{}10={:03}\x01", full, cs).into_bytes()
+fn encode_fix_new_order(i: &NewOrderInput<'_>) -> Vec<u8> {
+    encoding::encode_fix_format(i)
 }
 
 fn encode_fix_execution_report() -> Vec<u8> {
@@ -281,63 +253,35 @@ fn decode_fix(bytes: &[u8]) -> std::collections::HashMap<String, String> {
 // ── SBE (Simple Binary Encoding) ─────────────────────────────────────────────
 // Tested with stack (its natural advantage) and heap (matching FXP's model).
 
-const SBE_NEW_ORDER_SIZE: usize = 82;
+const SBE_NEW_ORDER_SIZE: usize = encoding::SBE_SIZE;
 const SBE_EXEC_REPORT_SIZE: usize = 76;
-// SBE market snapshot: 8-byte header + BOOK_DEPTH*2 entries * 16 bytes each
 const SBE_SNAPSHOT_SIZE: usize = 8 + BOOK_DEPTH * 2 * 16;
-
-fn encode_sbe_new_order_stack() -> [u8; SBE_NEW_ORDER_SIZE] {
-    let mut buf = [0u8; SBE_NEW_ORDER_SIZE];
-    buf[0..2].copy_from_slice(&((SBE_NEW_ORDER_SIZE - 8) as u16).to_le_bytes());
-    buf[2..4].copy_from_slice(&14u16.to_le_bytes()); // template: NewOrder
-    buf[4..6].copy_from_slice(&1u16.to_le_bytes());
-    buf[6..8].copy_from_slice(&0u16.to_le_bytes());
-    buf[8..16].copy_from_slice(&SEQ_NUM.to_le_bytes());
-    let cp = |dst: &mut [u8], src: &str| {
-        let b = src.as_bytes();
-        let n = b.len().min(dst.len());
-        dst[..n].copy_from_slice(&b[..n]);
-    };
-    cp(&mut buf[16..37], ORDER_ID);
-    cp(&mut buf[37..51], SENDER);
-    cp(&mut buf[51..64], RECEIVER);
-    cp(&mut buf[64..68], SYMBOL);
-    buf[68..76].copy_from_slice(&PRICE_FIXED.to_le_bytes());
-    buf[76..80].copy_from_slice(&QUANTITY.to_le_bytes());
-    buf[80] = 0;
-    buf[81] = 2; // Buy, Limit
-    buf
+fn encode_sbe_new_order_stack(i: &NewOrderInput<'_>) -> [u8; SBE_NEW_ORDER_SIZE] {
+    encoding::encode_sbe(i).unwrap()
+}
+fn encode_sbe_new_order_heap(i: &NewOrderInput<'_>) -> Vec<u8> {
+    encoding::encode_sbe(i).unwrap().to_vec()
+}
+fn decode_sbe_new_order(b: &[u8; SBE_NEW_ORDER_SIZE]) -> encoding::OwnedOrder {
+    encoding::decode_sbe_owned(b).unwrap()
 }
 
-fn encode_sbe_new_order_heap() -> Vec<u8> {
-    encode_sbe_new_order_stack().to_vec()
-}
-
-fn decode_sbe_new_order(buf: &[u8; SBE_NEW_ORDER_SIZE]) -> (u64, i64, i32, u8) {
-    (
-        u64::from_le_bytes(buf[8..16].try_into().unwrap()),
-        i64::from_le_bytes(buf[68..76].try_into().unwrap()),
-        i32::from_le_bytes(buf[76..80].try_into().unwrap()),
-        buf[80],
-    )
-}
-
-fn encode_sbe_exec_report_stack() -> [u8; SBE_EXEC_REPORT_SIZE] {
+fn encode_sbe_exec_report_stack(i: &NewOrderInput<'_>) -> [u8; SBE_EXEC_REPORT_SIZE] {
     let mut buf = [0u8; SBE_EXEC_REPORT_SIZE];
     buf[0..2].copy_from_slice(&((SBE_EXEC_REPORT_SIZE - 8) as u16).to_le_bytes());
     buf[2..4].copy_from_slice(&15u16.to_le_bytes());
     buf[4..6].copy_from_slice(&1u16.to_le_bytes());
-    buf[8..16].copy_from_slice(&(SEQ_NUM + 1).to_le_bytes());
+    buf[8..16].copy_from_slice(&(i.seq + 1).to_le_bytes());
     let cp = |dst: &mut [u8], src: &str| {
         let b = src.as_bytes();
         let n = b.len().min(dst.len());
         dst[..n].copy_from_slice(&b[..n]);
     };
-    cp(&mut buf[16..37], ORDER_ID);
+    cp(&mut buf[16..37], i.order_id);
     cp(&mut buf[37..59], "EXEC-2024-01-15-000099");
-    cp(&mut buf[59..63], SYMBOL);
-    buf[63..71].copy_from_slice(&PRICE_FIXED.to_le_bytes());
-    buf[71..75].copy_from_slice(&QUANTITY.to_le_bytes());
+    cp(&mut buf[59..63], i.symbol);
+    buf[63..71].copy_from_slice(&i.price.to_le_bytes());
+    buf[71..75].copy_from_slice(&i.quantity.to_le_bytes());
     buf[75] = 2; // Filled
     buf
 }
@@ -373,7 +317,7 @@ fn print_size_report() {
     let rows: &[(&str, usize, usize, usize)] = &[
         (
             "NewOrderSingle",
-            encode_fix_new_order().len(),
+            encode_fix_new_order(black_box(&input())).len(),
             fxp_new_order,
             SBE_NEW_ORDER_SIZE,
         ),
@@ -415,8 +359,8 @@ fn print_size_report() {
         );
     }
     println!("╚══════════════════════════╩═════════╩═══════╩════════╩═════════╩══════════╝");
-    println!("\nNote: FXP beats SBE on MarketSnapshot — Protobuf repeated fields are more");
-    println!("      compact than SBE fixed arrays for variable-depth order books.\n");
+    println!("\nSizes describe these fixture subsets; the SBE snapshot is a size-only estimate.");
+    println!("See docs/benchmark-methodology.md for allocation and validation differences.\n");
 }
 
 // ── Benchmarks ────────────────────────────────────────────────────────────────
@@ -431,7 +375,7 @@ fn bench_new_order_encode(c: &mut Criterion) {
         let mut buf = Vec::with_capacity(128);
         b.iter(|| {
             encode_fxp_into(black_box(&msg), &mut buf);
-            black_box(buf.len())
+            black_box(buf.as_slice());
         })
     });
     g.bench_function("FXP_fresh_alloc", |b| {
@@ -442,14 +386,25 @@ fn bench_new_order_encode(c: &mut Criterion) {
             black_box(buf)
         })
     });
-    g.bench_function("FIX_44_text", |b| {
-        b.iter(|| black_box(encode_fix_new_order()))
+    g.bench_function("FIX_format", |b| {
+        let fixture = input();
+        b.iter(|| black_box(encode_fix_new_order(black_box(&fixture))))
+    });
+    g.bench_function("FIX_preallocated", |b| {
+        let input = input();
+        let mut buffer = FixBuffer::new();
+        buffer.new_order(&input);
+        b.iter(|| {
+            black_box(buffer.new_order(black_box(&input)));
+        })
     });
     g.bench_function("SBE_stack", |b| {
-        b.iter(|| black_box(encode_sbe_new_order_stack()))
+        let fixture = input();
+        b.iter(|| black_box(encode_sbe_new_order_stack(black_box(&fixture))))
     });
     g.bench_function("SBE_heap", |b| {
-        b.iter(|| black_box(encode_sbe_new_order_heap()))
+        let fixture = input();
+        b.iter(|| black_box(encode_sbe_new_order_heap(black_box(&fixture))))
     });
     g.finish();
 }
@@ -464,17 +419,17 @@ fn bench_new_order_decode(c: &mut Criterion) {
         m.encode(&mut b).unwrap();
         b
     };
-    let fix_bytes = encode_fix_new_order();
-    let sbe_bytes = encode_sbe_new_order_stack();
+    let fix_bytes = encode_fix_new_order(black_box(&input()));
+    let sbe_bytes = encode_sbe_new_order_stack(black_box(&input()));
 
     g.bench_function("FXP_protobuf", |b| {
-        b.iter(|| decode_fxp(black_box(&fxp_bytes)))
+        b.iter(|| black_box(decode_fxp(black_box(&fxp_bytes))))
     });
-    g.bench_function("FIX_44_text", |b| {
-        b.iter(|| decode_fix(black_box(&fix_bytes)))
+    g.bench_function("FIX_format", |b| {
+        b.iter(|| black_box(decode_fix(black_box(&fix_bytes))))
     });
-    g.bench_function("SBE_binary", |b| {
-        b.iter(|| decode_sbe_new_order(black_box(&sbe_bytes)))
+    g.bench_function("SBE_owned", |b| {
+        b.iter(|| black_box(decode_sbe_new_order(black_box(&sbe_bytes))))
     });
     g.finish();
 }
@@ -488,14 +443,15 @@ fn bench_execution_report_encode(c: &mut Criterion) {
         let mut buf = Vec::with_capacity(128);
         b.iter(|| {
             encode_fxp_into(black_box(&msg), &mut buf);
-            black_box(buf.len())
+            black_box(buf.as_slice());
         })
     });
-    g.bench_function("FIX_44_text", |b| {
+    g.bench_function("FIX_format", |b| {
         b.iter(|| black_box(encode_fix_execution_report()))
     });
     g.bench_function("SBE_stack", |b| {
-        b.iter(|| black_box(encode_sbe_exec_report_stack()))
+        let fixture = input();
+        b.iter(|| black_box(encode_sbe_exec_report_stack(black_box(&fixture))))
     });
     g.finish();
 }
@@ -509,10 +465,10 @@ fn bench_market_snapshot_encode(c: &mut Criterion) {
         let mut buf = Vec::with_capacity(512);
         b.iter(|| {
             encode_fxp_into(black_box(&msg), &mut buf);
-            black_box(buf.len())
+            black_box(buf.as_slice());
         })
     });
-    g.bench_function("FIX_44_text", |b| {
+    g.bench_function("FIX_format", |b| {
         b.iter(|| black_box(encode_fix_market_snapshot()))
     });
     g.finish();
@@ -527,10 +483,10 @@ fn bench_incremental_encode(c: &mut Criterion) {
         let mut buf = Vec::with_capacity(64);
         b.iter(|| {
             encode_fxp_into(black_box(&msg), &mut buf);
-            black_box(buf.len())
+            black_box(buf.as_slice());
         })
     });
-    g.bench_function("FIX_44_text", |b| {
+    g.bench_function("FIX_format", |b| {
         b.iter(|| black_box(encode_fix_incremental()))
     });
     g.finish();
@@ -547,22 +503,52 @@ fn bench_batch_throughput(c: &mut Criterion) {
         b.iter(|| {
             for _ in 0..BATCH {
                 encode_fxp_into(black_box(&msg), &mut buf);
-                black_box(buf.len());
+                black_box(buf.as_slice());
             }
         })
     });
-    g.bench_function("FIX_44_text", |b| {
+    g.bench_function("FIX_format", |b| {
+        let fixture = input();
         b.iter(|| {
             for _ in 0..BATCH {
-                black_box(encode_fix_new_order());
+                black_box(encode_fix_new_order(black_box(&fixture)));
             }
         })
     });
     g.bench_function("SBE_stack", |b| {
+        let fixture = input();
         b.iter(|| {
             for _ in 0..BATCH {
-                black_box(encode_sbe_new_order_stack());
+                black_box(encode_sbe_new_order_stack(black_box(&fixture)));
             }
+        })
+    });
+    g.finish();
+}
+
+fn bench_new_order_roundtrip(c: &mut Criterion) {
+    let mut g = c.benchmark_group("new_order/roundtrip");
+    let i = input();
+    g.bench_function("FXP_reused_encode_owned_decode", |b| {
+        let msg = make_fxp_new_order();
+        let mut bytes = Vec::with_capacity(256);
+        b.iter(|| {
+            encode_fxp_into(black_box(&msg), &mut bytes);
+            black_box(decode_fxp(black_box(&bytes)));
+        })
+    });
+    g.bench_function("FIX_reused_encode_tag_map_decode", |b| {
+        let mut buffer = FixBuffer::new();
+        buffer.new_order(&i);
+        b.iter(|| {
+            let bytes = buffer.new_order(black_box(&i));
+            black_box(decode_fix(black_box(bytes)));
+        })
+    });
+    g.bench_function("SBE_stack_encode_owned_decode", |b| {
+        b.iter(|| {
+            let bytes = encode_sbe_new_order_stack(black_box(&i));
+            black_box(decode_sbe_new_order(black_box(&bytes)));
         })
     });
     g.finish();
@@ -572,6 +558,7 @@ criterion_group!(
     benches,
     bench_new_order_encode,
     bench_new_order_decode,
+    bench_new_order_roundtrip,
     bench_execution_report_encode,
     bench_market_snapshot_encode,
     bench_incremental_encode,

@@ -8,24 +8,20 @@ A high-performance binary trading protocol and matching engine built as an open-
 
 ## Why FXP?
 
-FIX 4.x is the industry standard for electronic order routing, but it has fundamental limitations:
+FXP combines a versioned binary schema, session handling and a matching engine.
+The corrected local NewOrder fixture measurements are:
 
-- **Text encoding:** ASCII tag=value format is verbose and slow to parse
-- **No schema evolution:** Adding fields requires new protocol versions and breaks existing parsers
-- **Single-threaded bottleneck:** Traditional FIX engines process messages sequentially
+| Operation | FXP | FIX | SBE |
+|---|---:|---:|---:|
+| Encode, reused buffer / SBE stack | 149.3 ns | 133.8 ns | 29.6 ns |
+| Decode, owned output | 377.2 ns | 1938.5 ns generic tag map | 110.2 ns |
+| Measured encode+decode | 535.1 ns | 2150.7 ns | 122.1 ns |
+| Fixture size, timestamp/TIF included | 94 B | 164 B | 95 B |
 
-FXP addresses all three:
-
-| Metric | FXP (Protobuf) | FIX 4.4 text | Improvement |
-|---|---|---|---|
-| `NewOrderSingle` size | 86 bytes | 164 bytes | **48% smaller** |
-| `ExecutionReport` size | 91 bytes | 192 bytes | **53% smaller** |
-| `MarketDataSnapshot` (5L) | 134 bytes | 331 bytes | **60% smaller, beats SBE** |
-| Encode throughput | 10.9M msg/sec | 1.6M msg/sec | **6.7x faster** |
-| Decode throughput | 2.3M msg/sec | 335K msg/sec | **6.9x faster** |
-| Round-trip (encode+decode) | 527 ns | 3,606 ns | **6.8x faster** |
-
-End-to-end (order → ExecutionReport): **p50 ≈ 0.45 ms, p99 ≈ 1.2–2.5 ms** at 50 concurrent senders × 25 orders/s in the release-build benchmark (Rust `--release`, Go `go build`, Linux; see [Benchmark Results](#benchmark-results)).
+**Reusable FIX encoding is faster than FXP in this run.** Decoder implementations
+and field layouts differ; this table is not a universal protocol speed ranking.
+Shared Linux VM, loopback, single host, no explicit pinning. See
+[full results, five-run spreads and caveats](Benchmark.md).
 
 ---
 
@@ -38,7 +34,7 @@ Client (TCP/WebSocket)
 Go Gateway  :8082
     ├── JWT authentication (HS256)
     ├── Session management
-    ├── Connection pool (`runtime.NumCPU()` default; 8 on this benchmark machine)
+    ├── Connection pool (`runtime.NumCPU()` default; 5 on the recorded benchmark host)
     └── orderClientMap (routes ExecutionReports back to originators)
     │
     ▼
@@ -55,8 +51,8 @@ Client ← ExecutionReport + MarketDataIncrementalUpdate
 **Key design decisions:**
 - Per-symbol Tokio tasks own their order books; the symbol-to-task map is protected by a global mutex
 - Tokio `mpsc` channels carry messages to the socket writer
-- The Go connection pool defaults to `runtime.NumCPU()` and can be tuned with `SetPoolSize`; the benchmark machine had 8 logical CPUs
-- Protobuf binary encoding with pre-allocated buffers — 10.9M encodes/sec single thread
+- The Go connection pool defaults to `runtime.NumCPU()` and can be tuned with `SetPoolSize`; the measured host exposed 5 logical CPUs
+- Protobuf binary encoding with reusable buffers; measured implementations and allocation variants are documented in Benchmark.md
 
 ---
 
@@ -166,15 +162,18 @@ cargo bench --bench encoding_benchmark
 
 ### 5. Run the end-to-end benchmark
 
+With a fresh release core and gateway running and compatible `FXP_JWT_*` settings:
+
 ```bash
 cd go_gateway
-
-# Throughput test
-go run benchmark/benchmark.go --concurrency 10 --orders 500
-
-# Latency test (rate-limited for honest RTT measurement)
-go run benchmark/benchmark.go --concurrency 50 --orders 200 --rate 25 --timeout 60
+go run ./benchmark --mode open --rate 1000 --concurrency 1 --orders 1000 --warmup 100 --repetitions 5
+go run ./benchmark --mode closed --concurrency 1 --orders 1000 --warmup 100 --repetitions 5
 ```
+
+JSON contains per-run HDR histograms, separate ACK/final-fill endpoints and
+median/min/max summaries; Markdown is printed and saved alongside it. Open-loop
+latency includes sender backlog from intended send times. See the
+[methodology and limitations](docs/benchmark-methodology.md).
 
 ### Logging
 
@@ -381,47 +380,23 @@ Counts observed at this revision:
 
 ## Benchmark Results
 
-Full methodology and results: [`Benchmark.md`](Benchmark.md)
+Five repetitions on a shared Linux VM (AMD EPYC 7763, 5 visible CPUs), Rust
+1.99.1 and Go 1.26.10; Go/core each configured with two workers, affinity 0–4
+without explicit pinning. Live counts are exact, with a separate 100-order
+warmup and 1000 measured orders per connection per run.
 
-**Benchmark environment:** encoding timings and the debug-build throughput figures were measured on Windows 11, 8 logical cores, Rust 1.85.0, Go 1.24.1; message sizes are deterministic. The release-build latency figures were measured on a shared Linux KVM guest (no CPU pinning) with Rust 1.97 and Go 1.26.10. The code now requires Rust edition 2024 and Go ≥ 1.25 (`go 1.25.0` in `go.mod`, toolchain `go1.26.10`).
+| Scenario | Completed orders/s | ACK p50 / p99 ms | Final-fill p50 / p99 ms |
+|---|---:|---:|---:|
+| open-c1 | 999.7 | 0.777 / 1.537 | 1.337 / 2.466 |
+| open-c10 | 9969.5 | 0.961 / 2.542 | 1.688 / 3.334 |
+| closed-c1 | 3901.1 | 0.226 / 0.453 | 0.353 / 0.809 |
 
-### Encoding (Rust, release build)
 
-```
-Message size vs FIX 4.4 (realistic payloads):
-  NewOrderSingle:        FXP 86B    FIX 164B   SBE 82B    (FXP -48%)
-  ExecutionReport:       FXP 91B    FIX 192B   SBE 76B    (FXP -53%)
-  MarketSnapshot (5L):   FXP 134B   FIX 331B   SBE 168B   (FXP -60%, beats SBE by 20%)
-  MarketDataIncremental: FXP 30B    FIX 102B   SBE 24B    (FXP -71%)
-
-Schema v2.0 moved every enum off zero, so BUY/LIMIT/DAY/EXEC_NEW are now
-encoded on the wire (proto3 omits zero values): +4 to +11 bytes per message.
-
-Encode (pre-allocated buffer):
-  FXP:  91.6ns  (10.9M/sec)
-  FIX:  618.4ns (1.6M/sec)   — 6.7x slower
-  SBE:  42.1ns  (23.8M/sec)  — 2.2x faster than FXP (no schema, pure memcpy)
-
-Decode:
-  FXP:  435ns   FIX: 2,988ns (6.9x slower)   SBE: 1.6ns
-
-Roundtrip: FXP 527ns vs FIX 3,606ns (6.8x faster)
-```
-
-### End-to-End (Go gateway → Rust Core)
-
-```
-Debug-build throughput (unlimited rate):
-  Concurrency=1:   1,454 orders/sec   0 errors
-  Concurrency=10:  2,259 orders/sec   0 errors
-  Concurrency=50:  1,449 orders/sec   0 errors  (98% fill rate)
-
-Release-build latency (rate=25/sec, concurrency=50, orders=200, symbols=spread;
-3 runs, TCP_NODELAY on all hops, default info logging):
-  p50:   0.40–0.46ms   p95:  0.82–0.98ms   p99:  1.2–2.5ms   Max: 3.7–4.3ms
-  9,000 fills / 10,000 orders per run, 0 errors
-  Market data fan-out: p50 ≈ 40µs
-```
+Values are medians of per-run statistics; [Benchmark.md](Benchmark.md) includes
+all min/max spreads, p90/p99.9/max, encoding confidence intervals, raw artifacts
+and commands. Open-loop offers 1000 orders/s/connection and measures from intended
+send time, including backlog. Closed-loop is ACK-controlled. Finite paired-order
+bursts and loopback figures are not production capacity or WAN SLO claims.
 
 ---
 
@@ -566,3 +541,16 @@ orders can consume reserve with the existing STP policy. See the complete
 Pegged orders (Stage C) are deferred; the [design note](docs/pegged-orders.md)
 specifies references, cycles, priority, caps, interactions and acceptance tests.
 They are not enabled by this change.
+
+## Nightly benchmarks and draft releases
+
+`bash scripts/bench.sh target/bench` builds an isolated release stack, runs
+five-repetition intended-time/open and labeled closed-loop scenarios, then the
+corrected encoding suite. JSON, Markdown, raw Criterion estimates and actual
+build/affinity metadata are retained. Nightly/manual [bench.yml](.github/workflows/bench.yml)
+uses `ubuntu-24.04` with no numerical regression threshold.
+
+Tagged [release.yml](.github/workflows/release.yml) builds static Linux amd64 and
+arm64 core/gateway/bridge archives, SHA256SUMS and CycloneDX inventories, and
+attaches them to a draft for manual review. Manual workflow runs build artifacts
+only. See [required checks and repository configuration](docs/releasing.md).
