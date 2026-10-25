@@ -34,7 +34,7 @@ services:
       - FXP_SHUTDOWN_TIMEOUT_SEC=${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
     volumes:
       - core_store:/data/core_store
-      - ./config:/etc/fxp:ro
+      - ./config:/etc/fxp/config:ro
     ports:
       - "${FXP_WS_PORT:-8081}:8081"   # gateway WebSocket
       - "${FXP_TCP_PORT:-8082}:8082"  # gateway TCP (FXP protobuf)
@@ -124,7 +124,7 @@ services:
       FXP_SHUTDOWN_TIMEOUT_SEC: ${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
     volumes:
       - fix_store:/data/fix_store
-      - ./config:/etc/fxp:ro
+      - ./config:/etc/fxp/config:ro
       - ${FXP_CERTS_DIR:-./certs}:/etc/fxp/certs:ro
 
 volumes:

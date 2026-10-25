@@ -545,7 +545,7 @@ same symbol scales. FIX execution reports and market data use those scales.
 
 | Variable | Default | Components | Meaning |
 |---|---|---|---|
-| `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/symbols.example.csv` or another file under the mounted `config/` directory |
+| `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/config/symbols.example.csv` or another file under the mounted `config/` directory |
 
 Price-only amendments retain STP-restated totals even below entry quantity
 minimums; explicit new totals still undergo lot/min/max validation.

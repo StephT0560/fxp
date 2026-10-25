@@ -24,7 +24,7 @@ services:
     - FXP_CORE_AUTH_TOKEN=
     volumes:
     - core_store:/data/core_store
-    - ./config:/etc/fxp:ro
+    - ./config:/etc/fxp/config:ro
     ports:
     - 127.0.0.1:8081:8081
     - 127.0.0.1:8082:8082
@@ -124,7 +124,7 @@ services:
       FXP_FIX_ADDR: 0.0.0.0:8083
     volumes:
     - fix_store:/data/fix_store
-    - ./config:/etc/fxp:ro
+    - ./config:/etc/fxp/config:ro
     profiles:
     - dev
 volumes:

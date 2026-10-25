@@ -31,6 +31,11 @@ class ComposeTests(unittest.TestCase):
             self.assertEqual(env['FXP_ALLOW_PLAINTEXT'], 'false')
             self.assertTrue(env['FXP_TLS_CERT_FILE'])
         self.assertEqual(services['bridge']['environment']['FXP_GATEWAY_TLS'], 'true')
+        # A read-only parent bind hides /etc/fxp/certs and prevents creating the
+        # nested mountpoint on some runtimes; keep config and certs as siblings.
+        targets = [v['target'] for v in services['bridge']['volumes']]
+        self.assertNotIn('/etc/fxp', targets)
+        self.assertIn('/etc/fxp/config', targets)
 
     def test_dev_is_explicit_and_needs_no_token(self):
         result = self.config('docker-compose.dev.yml', None)

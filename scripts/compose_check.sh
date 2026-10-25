@@ -4,8 +4,15 @@
 set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+build_flag=--build
+if [[ "${1:-}" == --no-build && "$#" == 1 ]]; then
+    build_flag=--no-build
+elif [[ "$#" != 0 ]]; then
+    printf 'usage: %s [--no-build]\n' "$0" >&2; exit 1
+fi
 mkdir -p target
-export FXP_CERTS_DIR="$(mktemp -d "$repo_root/target/compose-certs.XXXXXX")"
+FXP_CERTS_DIR="$(mktemp -d "$repo_root/target/compose-certs.XXXXXX")"
+export FXP_CERTS_DIR
 export FXP_CERT_GID="$(id -g)"
 export FXP_JWT_SECRET="$(openssl rand -hex 32)"
 export FXP_CORE_AUTH_TOKEN="$(openssl rand -hex 32)"
@@ -25,5 +32,5 @@ cleanup() {
 }
 trap cleanup EXIT
 make dev-certs
-"${compose[@]}" up --build --wait --wait-timeout 90
+"${compose[@]}" up "$build_flag" --wait --wait-timeout 90
 python3 scripts/compose_smoke.py

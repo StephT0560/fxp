@@ -135,6 +135,10 @@ period. Native loopback users with sufficiently long keys need no TLS changes.
 `docker compose up --build` is now the secure path: TLS is required, the bridge's
 upstream verifies TLS, client certificates are required by default, and Compose
 requires a nonempty `FXP_CORE_AUTH_TOKEN` as well as JWT/FIX credentials.
+The config bind is now `/etc/fxp/config`, a sibling of the certificate mount;
+update existing `FXP_SYMBOL_CONFIG` paths (for example to
+`/etc/fxp/config/symbols.example.csv`). This avoids nesting the certificate bind
+inside a read-only parent bind, which prevents container startup on some runtimes.
 The default certificate paths are under `/etc/fxp/certs`, mounted read-only from
 `FXP_CERTS_DIR` (default `./certs`). `FXP_CERT_GID` (default 1000) adds the host
 certificate group to UID 10001; it does not change the application UID.
@@ -166,7 +170,7 @@ interpolation also evaluates inactive profiles in the secure file. Stop one
 stack before starting the other; their published ports overlap.
 
 For repeatable verification, `bash scripts/compose_check.sh` builds a disposable
-secure stack, checks mTLS on TCP/WS/FIX plus a WebSocket upgrade, and crosses a
+secure stack (`--no-build` reuses a prebuilt image), checks mTLS on TCP/WS/FIX plus a WebSocket upgrade, and crosses a
 FIX order through gateway/core; it then removes its own containers/volumes and
 throwaway certificates. `scripts/compose_smoke.py` can check an already-running
 stack using exported credentials and host certificate paths; `--dev` selects the

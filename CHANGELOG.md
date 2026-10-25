@@ -20,6 +20,8 @@ date when the reviewed main commit is tagged.
   and a nonempty matching core token. Add `.env.example`, `make dev-certs`,
   secure Compose smoke coverage and an explicit bannered `dev` profile in
   `docker-compose.dev.yml` that disables transport/core authentication.
+- Compose mounts config under `/etc/fxp/config` to avoid a read-only parent
+  masking the cert mount; migrate `FXP_SYMBOL_CONFIG` container paths accordingly.
 - Migration: rotate short/default deployment keys, install trusted certificates,
   configure explicit external binds and update clients for TLS/mTLS. Generate
   independent random keys with `openssl rand -hex 32`; reissue JWTs when keys
