@@ -9,10 +9,12 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	"go_gateway/protobuf"
+	"go_gateway/tlsconfig"
 
 	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
@@ -25,15 +27,27 @@ func StartTCPServer() {
 }
 
 func RunTCPServer(ctx context.Context) error {
+	manager, err := tlsconfig.ServerFromEnv()
+	if err != nil {
+		return err
+	}
+	go manager.Watch(ctx, time.Second)
+	return RunTCPServerWithTLS(ctx, manager)
+}
+func RunTCPServerWithTLS(ctx context.Context, manager *tlsconfig.Server) error {
 	if err := InitPool(); err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", ":8082")
+	addr := os.Getenv("FXP_GW_TCP_ADDR")
+	if addr == "" {
+		addr = ":8082"
+	}
+	listener, err := manager.Listen(addr)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	log.Println("✅ TCP Server started on 127.0.0.1:8082")
+	log.Printf("TCP server listening on %s (TLS=%t)", listener.Addr(), manager.Enabled())
 	serveTCPContext(ctx, listener)
 	return nil
 }
@@ -77,6 +91,10 @@ func serveTCPContext(ctx context.Context, listener net.Listener) {
 		go func() {
 			defer handlers.Done()
 			defer conns.release()
+			if err := tlsconfig.Handshake(ctx, clientConn, lim.HandshakeTimeout); err != nil {
+				unregisterClientWriter(clientConn)
+				return
+			}
 			handleTCPClientWithWriter(clientConn, writer)
 		}()
 	}

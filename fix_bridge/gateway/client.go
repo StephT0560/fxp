@@ -22,6 +22,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -36,7 +37,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context"
 	"go_gateway/protobuf"
+	"go_gateway/tlsconfig"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -95,17 +98,18 @@ func NewClient(traderID, jwtSecret string, onReceive OnReceive) *Client {
 }
 
 // dialGateway opens the gateway connection with Nagle disabled. Go already
-// defaults TCP_NODELAY to on; it is set explicitly so the latency contract is
-// visible and covered by TestDialGatewaySetsNoDelay.
+// defaults TCP_NODELAY to on, including the TCP socket wrapped by TLS.
+// The plaintext behavior is covered by TestDialGatewaySetsNoDelay.
 func dialGateway(addr string) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	options, err := tlsconfig.ClientFromEnv("FXP_GATEWAY_")
 	if err != nil {
 		return nil, err
 	}
-	if err := conn.(*net.TCPConn).SetNoDelay(true); err != nil {
-		_ = conn.Close()
+	conn, err := options.Dial(context.Background(), addr, 5*time.Second)
+	if err != nil {
 		return nil, err
 	}
+
 	return conn, nil
 }
 
@@ -225,9 +229,16 @@ func (c *Client) shutdown() {
 
 func (c *Client) sendLogon() error {
 	token := generateJWT(c.jwtSecret, c.traderID)
+	encryption := protobuf.EncryptionType_NONE
+	if tlsconfig.Version(c.conn) == tls.VersionTLS13 {
+		encryption = protobuf.EncryptionType_TLS_1_3
+	} else if tlsconfig.Version(c.conn) == tls.VersionTLS12 {
+		encryption = protobuf.EncryptionType_TLS_1_2
+	}
 	msg := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_Logon{
 			Logon: &protobuf.Logon{
+				EncryptionType:     encryption,
 				Token:              token,
 				SessionId:          c.sessionID,
 				Timestamp:          timestamppb.Now(),
