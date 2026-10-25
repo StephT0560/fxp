@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 pub mod auction;
 #[cfg(test)]
+mod iceberg_tests;
+#[cfg(test)]
 mod mass_cancel_tests;
 #[cfg(test)]
 mod persistence_tests;
@@ -48,6 +50,7 @@ pub struct CancelReplaceMsg<R> {
     pub new_quantity: i32, // 0 = no change
     pub new_time_in_force: i32,
     pub new_stop_price: i64, // 0 = no change (parked stops only)
+    pub new_display_quantity: Option<i32>,
     pub output_tx: R,
 }
 
@@ -548,6 +551,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                     arrival,
                                     side: side_to_proto(replacement.side),
                                     order_qty: replacement.quantity,
+                                    display_quantity: replacement.display_quantity,
                                     cum_qty: 0,
                                     notional: 0,
                                     account: replacement.account.clone(),
@@ -582,10 +586,12 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                     }
 
                     let original = book.order_lookup.get(&cr_msg.order_id).cloned();
+                    let original_visible = original.as_ref().map_or(0, |o| book.visible(o));
                     let result = book.replace_order(
                         &cr_msg.order_id,
                         &cr_msg.new_order_id,
                         OrderReplace {
+                            new_display_quantity: cr_msg.new_display_quantity.map(|q| q as u32),
                             new_price: cr_msg.new_price,
                             new_total_qty: cr_msg.new_quantity.max(0) as u32,
                             new_time_in_force,
@@ -618,12 +624,25 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 arrival,
                                 side: side_to_proto(replacement.side),
                                 order_qty: cum_qty + replacement.quantity,
+                                display_quantity: replacement.display_quantity,
                                 cum_qty,
                                 notional,
                                 account: replacement.account.clone(),
                                 client_order_id: cr_msg.client_replace_id.clone(),
                                 output_tx: cr_msg.output_tx.clone(),
                             };
+
+                            if let Some(orig) = original.as_ref()
+                                && (orig.display_quantity > 0 || replacement.display_quantity > 0)
+                            {
+                                let md = book.generate_incremental_update(
+                                    MarketUpdateType::CancelOrder,
+                                    orig.price,
+                                    original_visible,
+                                    orig.side,
+                                );
+                                outputs.push(Output::MarketData(build_md_update(&md, &ts)));
+                            }
 
                             send_replace_reports(
                                 ids,
@@ -727,6 +746,17 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 }
                             })
                     });
+                    let invalid = invalid.or_else(|| {
+                        let (_, ty, tif) = parsed_enums.as_ref().ok()?;
+                        iceberg_reason(
+                            order.display_quantity,
+                            order.quantity as u32,
+                            *ty,
+                            *tif,
+                            full_schedule,
+                            symbol_rules.lot_size,
+                        )
+                    });
                     if let Some(reason) = invalid {
                         let ts = Some(Timestamp {
                             seconds: now.seconds,
@@ -769,6 +799,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         expire_date: order.expire_date.clone(),
                         account: order.account.clone(),
                         client_order_id: order.client_order_id.clone(),
+                        display_quantity: order.display_quantity as u32,
                         stp: Stp {
                             mode: stp.expect("stp_mode validated").0,
                             group: order.stp_group.clone(),
@@ -916,6 +947,7 @@ struct OrderState<R> {
     arrival: u64,
     side: i32,
     order_qty: u32,
+    display_quantity: u32,
     cum_qty: u32,
     notional: i128,
     account: String,
@@ -932,6 +964,7 @@ impl<R: Clone> OrderState<R> {
             arrival,
             side: order.side,
             order_qty,
+            display_quantity: order.display_quantity.max(0) as u32,
             cum_qty: 0,
             notional: 0,
             account: order.account.clone(),
@@ -1017,6 +1050,7 @@ fn build_report<R: Clone>(
         side: state.map_or(0, |s| s.side),
         order_quantity: state.map_or(0, |s| s.order_qty as i32),
         auction: false,
+        display_quantity: state.map_or(0, |s| s.display_quantity as i32),
     }
 }
 
@@ -1510,6 +1544,7 @@ mod expiry_tests {
     }
     fn replace(id: &str, new_id: &str, tif: fxp::TimeInForce) -> CancelReplaceMsg<u32> {
         CancelReplaceMsg {
+            new_display_quantity: None,
             order_id: id.into(),
             sender: "owner".into(),
             new_order_id: new_id.into(),
@@ -1755,4 +1790,33 @@ mod tests {
         assert!(engine.states.is_empty());
         assert!(engine.book.order_lookup.is_empty());
     }
+}
+
+/// Reserve is supported only in continuous-only limit sessions. Reject before mutation.
+fn iceberg_reason(
+    display: i32,
+    total: u32,
+    ty: OrderType,
+    tif: TimeInForce,
+    full_schedule: bool,
+    lot: u32,
+) -> Option<String> {
+    if display < 0 {
+        return Some("display quantity must be nonnegative".into());
+    }
+    if display == 0 {
+        return None;
+    }
+    if display as u32 > total || !(display as u32).is_multiple_of(lot) {
+        return Some(
+            "display quantity must not exceed total and must be a multiple of lot size".into(),
+        );
+    }
+    if full_schedule
+        || ty != OrderType::Limit
+        || !matches!(tif, TimeInForce::Day | TimeInForce::GTC | TimeInForce::Gtd)
+    {
+        return Some("icebergs require limit DAY/GTC/GTD without auction sessions".into());
+    }
+    None
 }

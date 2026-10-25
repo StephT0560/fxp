@@ -7,6 +7,8 @@ pub struct Order {
     pub symbol: String,
     pub price: i64, // fixed-point, cents (e.g. 10050 = $100.50)
     pub quantity: u32,
+    /// Maximum visible slice; zero means fully displayed. Quantity is total leaves.
+    pub display_quantity: u32,
     pub side: OrderSide,
     pub order_type: OrderType,
     pub time_in_force: TimeInForce,

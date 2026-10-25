@@ -416,6 +416,7 @@ impl<R: Clone> Journal<R> {
                 new_quantity: m.new_quantity,
                 new_time_in_force: m.new_time_in_force,
                 new_stop_price: m.new_stop_price,
+                new_display_quantity: m.new_display_quantity,
                 output_tx: owner,
             }),
             Input::Tick => engine.tick(),

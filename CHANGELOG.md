@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in limit reserve orders, displayed-only depth, FIFO replenishment, cumulative reports, reserve-aware STP/FOK and deterministic replay (additive wire v2.4, #1).
+
 - Add per-symbol price scale/tick and quantity rules, FIX/MD precision-aware formatting, int64 boundary checks and configuration-safe input-log replay (#1, order types).
 
 - Bound mass-status batches by encoded bytes as well as report count to prevent core-pool disconnects on large valid orders (#2).

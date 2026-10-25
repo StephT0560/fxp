@@ -142,6 +142,10 @@ func translateExecutionReport(
 		b.SetInt(codec.TagOrderQty, int(rep.OrderQuantity))
 	}
 
+	if rep.DisplayQuantity > 0 {
+		b.SetInt(111, int(rep.DisplayQuantity))
+	}
+
 	// ClOrdID — use client_order_id if set, fall back to order_id
 	clOrdID := rep.ClientOrderId
 	if clOrdID == "" {

@@ -253,6 +253,7 @@ mod property_tests {
     #[derive(Default)]
     struct Reference {
         book: Vec<Order>, // arrival order
+        slices: std::collections::HashMap<String, u32>,
         stops: Vec<Order>,
         last: Option<i64>,
         fills: Vec<Fill>,
@@ -297,23 +298,47 @@ mod property_tests {
                     return;
                 }
             }
+            let mut incoming_display = if o.display_quantity == 0 {
+                o.quantity
+            } else {
+                o.quantity.min(o.display_quantity)
+            };
             while o.quantity > 0 {
                 let Some(i) = self.best(&o) else { break };
-                let r = &mut self.book[i];
-                let q = r.quantity.min(o.quantity);
-                let (b, s) = match o.side {
-                    OrderSide::Buy => (o.order_id.clone(), r.order_id.clone()),
-                    OrderSide::Sell => (r.order_id.clone(), o.order_id.clone()),
+                let mut resting = self.book.remove(i);
+                let mut display = self.slices.remove(&resting.order_id).unwrap();
+                let q = display.min(incoming_display).min(o.quantity);
+                let (buy, sell) = if o.side == OrderSide::Buy {
+                    (o.order_id.clone(), resting.order_id.clone())
+                } else {
+                    (resting.order_id.clone(), o.order_id.clone())
                 };
-                self.fills.push((b, s, r.price, q));
-                r.quantity -= q;
+                self.fills.push((buy, sell, resting.price, q));
+                resting.quantity -= q;
+                display -= q;
                 o.quantity -= q;
-                if r.quantity == 0 {
-                    self.book.remove(i);
+                incoming_display -= q;
+                if resting.quantity > 0 {
+                    if display == 0 {
+                        display = resting.quantity.min(resting.display_quantity);
+                        self.slices.insert(resting.order_id.clone(), display);
+                        self.book.push(resting);
+                    } else {
+                        self.slices.insert(resting.order_id.clone(), display);
+                        self.book.insert(i, resting);
+                    }
+                }
+                if incoming_display == 0 && o.quantity > 0 {
+                    incoming_display = if o.display_quantity == 0 {
+                        o.quantity
+                    } else {
+                        o.quantity.min(o.display_quantity)
+                    };
                 }
             }
             let rests = matches!(o.time_in_force, TimeInForce::Day | TimeInForce::GTC);
             if o.quantity > 0 && o.order_type == OrderType::Limit && rests {
+                self.slices.insert(o.order_id.clone(), incoming_display);
                 self.book.push(o);
             }
         }
@@ -349,6 +374,7 @@ mod property_tests {
 
         fn cancel(&mut self, id: &str) {
             self.book.retain(|o| o.order_id != id);
+            self.slices.remove(id);
             self.stops.retain(|o| o.order_id != id);
         }
 
@@ -356,6 +382,7 @@ mod property_tests {
             let n = self.fills.len();
             if let Some(i) = self.book.iter().position(|o| o.order_id == id) {
                 let o = self.book.remove(i);
+                self.slices.remove(id);
                 self.execute(Order {
                     order_id: new_id.into(),
                     price: px,
@@ -440,6 +467,7 @@ mod property_tests {
                     id,
                     new_id,
                     OrderReplace {
+                        new_display_quantity: None,
                         new_price: px,
                         new_total_qty: 0,
                         new_time_in_force: None,
@@ -500,6 +528,14 @@ mod property_tests {
             expire_date: String::new(),
             account: String::new(),
             client_order_id: String::new(),
+            display_quantity: if kind == OrderType::Limit
+                && matches!(tif, TimeInForce::Day | TimeInForce::GTC)
+                && rng.range(0, 2) == 0
+            {
+                rng.range(1, u64::from(qty)) as u32
+            } else {
+                0
+            },
             stp: Default::default(),
         }
     }
@@ -558,6 +594,15 @@ mod property_tests {
                 got.sort();
                 want.sort();
                 assert_eq!(got, want, "seed {seed} step {step}: resting book");
+                let snap = engine.book.get_market_snapshot();
+                for (side, got) in [(OrderSide::Buy, snap.bids), (OrderSide::Sell, snap.asks)] {
+                    let mut levels = std::collections::BTreeMap::<i64, u32>::new();
+                    for o in reference.book.iter().filter(|o| o.side == side) {
+                        *levels.entry(o.price).or_default() += reference.slices[&o.order_id];
+                    }
+                    let want: Vec<_> = levels.into_iter().collect();
+                    assert_eq!(got, want, "seed {seed} step {step}: displayed levels");
+                }
                 let mut got: Vec<_> = engine.stops.ids().map(String::from).collect();
                 let mut want: Vec<_> = reference.stops.iter().map(|o| o.order_id.clone()).collect();
                 got.sort();
@@ -626,6 +671,7 @@ mod property_tests {
                         let id = ids[rng.range(0, ids.len() as u64 - 1) as usize].clone();
                         let px = rng.range(95, 105) as i64 * 100;
                         let changes = OrderReplace {
+                            new_display_quantity: None,
                             new_price: px,
                             new_total_qty: 0,
                             new_time_in_force: None,

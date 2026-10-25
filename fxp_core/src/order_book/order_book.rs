@@ -23,7 +23,9 @@ pub struct OrderBook {
     pub cum_filled: HashMap<String, u32>,
     /// Arrival sequence of each live order; the lower value is the resting side.
     pub arrival: HashMap<String, u64>,
-    next_arrival: u64,
+    pub(crate) next_arrival: u64,
+    pub(crate) displayed: HashMap<String, u32>,
+    pub(crate) last_added: Option<String>,
     /// Self-trade prevention results of the last matching call.
     pub stp: StpOutcome,
 }
@@ -57,6 +59,7 @@ impl OrderReject {
 pub struct OrderReplace<'a> {
     pub new_price: i64,
     pub new_total_qty: u32,
+    pub new_display_quantity: Option<u32>,
     pub new_time_in_force: Option<TimeInForce>,
     pub client_order_id: &'a str,
     pub timestamp: u64,
@@ -73,6 +76,8 @@ impl OrderBook {
             cum_filled: HashMap::new(),
             arrival: HashMap::new(),
             next_arrival: 0,
+            displayed: HashMap::new(),
+            last_added: None,
             stp: StpOutcome::default(),
         }
     }
@@ -84,6 +89,13 @@ impl OrderBook {
             OrderSide::Sell => self.sell_orders.entry(order.price).or_default(),
         };
         price_level.push_back(order.clone());
+        let visible = if order.display_quantity == 0 {
+            order.quantity
+        } else {
+            order.display_quantity.min(order.quantity)
+        };
+        self.displayed.insert(order.order_id.clone(), visible);
+        self.last_added = Some(order.order_id.clone());
         self.order_lookup
             .insert(order.order_id.clone(), order.clone());
         self.next_arrival += 1;
@@ -94,7 +106,7 @@ impl OrderBook {
         self.generate_incremental_update(
             MarketUpdateType::NewOrder,
             order.price,
-            order.quantity,
+            visible,
             order.side,
         )
     }
@@ -102,6 +114,7 @@ impl OrderBook {
     /// ✅ Notify clients when canceling an order
     pub fn cancel_order(&mut self, order_id: &str) -> Option<MarketDataIncrementalUpdate> {
         if let Some(order) = self.order_lookup.remove(order_id) {
+            let visible = self.displayed.remove(order_id).unwrap_or(order.quantity);
             self.cum_filled.remove(order_id);
             self.arrival.remove(order_id);
             let price_level = match order.side {
@@ -123,7 +136,7 @@ impl OrderBook {
             return Some(self.generate_incremental_update(
                 MarketUpdateType::CancelOrder,
                 order.price,
-                order.quantity,
+                visible,
                 order.side,
             ));
         }
@@ -199,6 +212,11 @@ impl OrderBook {
             remaining,
             quantity,
         );
+        if remaining == 0 {
+            self.displayed.remove(id);
+        } else {
+            self.displayed.insert(id.to_string(), remaining);
+        }
         self.generate_incremental_update(
             MarketUpdateType::ModifyOrder,
             order.price,
@@ -207,6 +225,74 @@ impl OrderBook {
         )
     }
 
+    pub(crate) fn visible(&self, order: &Order) -> u32 {
+        self.displayed
+            .get(&order.order_id)
+            .copied()
+            .unwrap_or(order.quantity)
+    }
+    pub(crate) fn sync_visible_fill(&mut self, order: &Order, trade_qty: u32, visible: u32) {
+        Self::sync_fill(
+            &mut self.order_lookup,
+            &mut self.cum_filled,
+            &mut self.arrival,
+            &order.order_id,
+            order.quantity,
+            trade_qty,
+        );
+        if order.quantity == 0 {
+            self.displayed.remove(&order.order_id);
+        } else {
+            self.displayed.insert(order.order_id.clone(), visible);
+        }
+    }
+    pub(crate) fn replenish(&mut self, order: &Order) -> Option<MarketDataIncrementalUpdate> {
+        if order.quantity == 0 || order.display_quantity == 0 || self.visible(order) > 0 {
+            return None;
+        }
+        let visible = order.quantity.min(order.display_quantity);
+        self.displayed.insert(order.order_id.clone(), visible);
+        self.next_arrival += 1;
+        self.arrival
+            .insert(order.order_id.clone(), self.next_arrival);
+        Some(self.generate_incremental_update(
+            MarketUpdateType::NewOrder,
+            order.price,
+            visible,
+            order.side,
+        ))
+    }
+    pub(crate) fn requeue(&mut self, order: Order, back: bool) {
+        if order.quantity == 0 {
+            return;
+        }
+        let levels = match order.side {
+            OrderSide::Buy => &mut self.buy_orders,
+            OrderSide::Sell => &mut self.sell_orders,
+        };
+        let level = levels.entry(order.price).or_default();
+        if back {
+            level.push_back(order)
+        } else {
+            level.push_front(order)
+        }
+    }
+    pub(crate) fn pop_best(&mut self, side: OrderSide) -> Option<Order> {
+        let levels = match side {
+            OrderSide::Buy => &mut self.buy_orders,
+            OrderSide::Sell => &mut self.sell_orders,
+        };
+        let price = match side {
+            OrderSide::Buy => *levels.keys().next_back()?,
+            OrderSide::Sell => *levels.keys().next()?,
+        };
+        let level = levels.get_mut(&price)?;
+        let order = level.pop_front();
+        if level.is_empty() {
+            levels.remove(&price);
+        }
+        order
+    }
     /// Cancel/replace a live order. `new_price` 0 keeps the price; `new_total_qty`
     /// 0 keeps the remaining quantity, otherwise it is the new total order
     /// quantity (FIX OrderQty) and the replacement rests with total - filled.
@@ -221,6 +307,7 @@ impl OrderBook {
         let OrderReplace {
             new_price,
             new_total_qty,
+            new_display_quantity,
             new_time_in_force,
             client_order_id,
             timestamp,
@@ -248,6 +335,7 @@ impl OrderBook {
             order_id: new_id.to_string(),
             price: if new_price > 0 { new_price } else { orig.price },
             quantity: leaves,
+            display_quantity: new_display_quantity.unwrap_or(orig.display_quantity),
             time_in_force: new_time_in_force.unwrap_or(orig.time_in_force),
             timestamp,
             client_order_id: client_order_id.to_string(),
@@ -287,13 +375,13 @@ impl OrderBook {
         let bids = self
             .buy_orders
             .iter()
-            .map(|(price, orders)| (*price, orders.iter().map(|o| o.quantity).sum()))
+            .map(|(price, orders)| (*price, orders.iter().map(|o| self.visible(o)).sum()))
             .collect();
 
         let asks = self
             .sell_orders
             .iter()
-            .map(|(price, orders)| (*price, orders.iter().map(|o| o.quantity).sum()))
+            .map(|(price, orders)| (*price, orders.iter().map(|o| self.visible(o)).sum()))
             .collect();
 
         MarketDataSnapshot {

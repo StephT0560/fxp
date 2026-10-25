@@ -88,7 +88,7 @@ Auction price selection maximizes volume, minimizes imbalance, prefers the refer
 
 ---
 
-## Proto Schema (v2.3)
+## Proto Schema (v2.4)
 
 Full institutional-grade message coverage:
 
@@ -106,7 +106,7 @@ ErrorMessage            — structured error responses
 OrderMassCancelRequest / OrderMassCancelReport — owner-scoped mass cancel
 ```
 
-Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+Version 2.4 adds optional iceberg display quantities on entry/replacement and execution reports; see [iceberg behavior](docs/iceberg-orders.md). Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
 **TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
@@ -441,7 +441,7 @@ fxp/
 │   ├── benches/
 │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   └── proto/
-│       └── fxp.proto            Protocol schema v2.3
+│       └── fxp.proto            Protocol schema v2.4
 │
 ├── go_gateway/                  Go gateway
 │   ├── logging/                 slog setup (FXP_LOG_LEVEL), shared with fix_bridge
@@ -544,3 +544,15 @@ same symbol scales. FIX execution reports and market data use those scales.
 | Variable | Default | Components | Meaning |
 |---|---|---|---|
 | `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/symbols.example.csv` or another file under the mounted `config/` directory |
+
+## Reserve orders
+
+Limit DAY/GTC/GTD orders can opt into reserve using FIX MaxFloor (111) or native
+`display_quantity`; zero keeps fully displayed behavior. Only the current slice
+appears in market data. Replenishment moves the order to the back of its price
+level, and private reports accumulate fills against the total. Replace resets the
+slice and priority; omitted MaxFloor retains it and explicit zero disables it.
+Iceberg IOC/FOK, stops and full-auction schedules are rejected. Ordinary IOC/FOK
+orders can consume reserve with the existing STP policy. See the complete
+[iceberg contract](docs/iceberg-orders.md) and [symbol precision](docs/symbol-config.md).
+

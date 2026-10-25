@@ -93,6 +93,7 @@ fn persisted_input(
                 new_quantity: m.new_quantity,
                 new_time_in_force: m.new_time_in_force,
                 new_stop_price: m.new_stop_price,
+                new_display_quantity: m.new_display_quantity,
                 ..Default::default()
             }),
             m.output_tx,
@@ -212,6 +213,7 @@ struct CancelReplaceMsg {
     new_quantity: i32, // 0 = no change
     new_time_in_force: i32,
     new_stop_price: i64, // 0 = no change (parked stops only)
+    new_display_quantity: Option<i32>,
     output_tx: OutputTx,
 }
 
@@ -539,6 +541,7 @@ async fn configured_order_book_task(
                         new_quantity: m.new_quantity,
                         new_time_in_force: m.new_time_in_force,
                         new_stop_price: m.new_stop_price,
+                        new_display_quantity: m.new_display_quantity,
                         output_tx: m.output_tx,
                     }),
                     SymbolMsg::Subscribe(m) => engine.subscribe(m.tx),
@@ -888,6 +891,7 @@ async fn handle_tcp_client_with_shutdown(
                     };
                     if tx
                         .send(SymbolMsg::CancelReplace(CancelReplaceMsg {
+                            new_display_quantity: cr.new_display_quantity,
                             order_id: cr.order_id.clone(),
                             sender: cr.sender.clone(),
                             new_order_id: cr.new_order_id.clone(),
@@ -977,6 +981,7 @@ fn server_reject(
         side,
         order_quantity,
         auction: false,
+        display_quantity: 0,
     }
 }
 
@@ -2477,6 +2482,7 @@ mod report_tests {
         assert_eq!(et(&next(&mut rx).await), fxp::ExecutionType::ExecNew);
 
         book.send(SymbolMsg::CancelReplace(CancelReplaceMsg {
+            new_display_quantity: None,
             order_id: "R0".into(),
             sender: "A".into(),
             new_order_id: "R1".into(),
@@ -2502,6 +2508,7 @@ mod report_tests {
         assert_eq!(et(&next(&mut rx).await), fxp::ExecutionType::ExecNew);
 
         book.send(SymbolMsg::CancelReplace(CancelReplaceMsg {
+            new_display_quantity: None,
             order_id: "P0".into(),
             sender: "A".into(),
             new_order_id: "P1".into(),
@@ -2534,6 +2541,7 @@ mod report_tests {
                 "P0",
                 "P1",
                 OrderReplace {
+                    new_display_quantity: None,
                     new_price: 0,
                     new_total_qty: 0,
                     new_time_in_force: None,
@@ -2836,6 +2844,7 @@ mod report_tests {
         rest(&book, &t, &mut t_rx, stop("S2", "T", BUY, 10_300, 1)).await;
         let replace = |sender: &str, out: &OutputTx| {
             SymbolMsg::CancelReplace(CancelReplaceMsg {
+                new_display_quantity: None,
                 order_id: "S1".into(),
                 sender: sender.into(),
                 new_order_id: "S1R".into(),
@@ -2905,6 +2914,7 @@ mod snapshot_tests {
                 expire_date: String::new(),
                 account: String::new(),
                 client_order_id: String::new(),
+                display_quantity: 0,
                 stp: Default::default(),
             });
         }

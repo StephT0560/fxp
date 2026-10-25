@@ -9,3 +9,6 @@ pub mod order;
 // public path `order_book::order_book::OrderBook` is used across the crate
 pub mod order_book;
 pub mod stops;
+
+#[cfg(test)]
+mod iceberg_tests;

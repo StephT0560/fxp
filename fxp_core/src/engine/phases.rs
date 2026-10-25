@@ -435,6 +435,39 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             }
                         })
                 });
+                let reason = reason.or_else(|| {
+                    let state = state.unwrap();
+                    let display = c
+                        .new_display_quantity
+                        .unwrap_or(state.display_quantity as i32);
+                    let ty = if self.call_markets.contains_key(&c.order_id) {
+                        OrderType::Market
+                    } else if self.stop_book.contains(&c.order_id) {
+                        OrderType::Stop
+                    } else {
+                        OrderType::Limit
+                    };
+                    let tif = if c.new_time_in_force == 0 {
+                        state.time_in_force
+                    } else {
+                        parse_replace_time_in_force(c.new_time_in_force).ok()??
+                    };
+                    if state.display_quantity>0 && !matches!(tif,TimeInForce::Day|TimeInForce::GTC|TimeInForce::Gtd) {
+                        return Some("iceberg replacements require DAY/GTC/GTD; cancel and enter a new order to change to IOC/FOK/auction".into());
+                    }
+                    iceberg_reason(
+                        display,
+                        if c.new_quantity == 0 {
+                            state.order_qty
+                        } else {
+                            c.new_quantity as u32
+                        },
+                        ty,
+                        tif,
+                        self.schedule.is_some_and(SessionSchedule::is_full),
+                        self.symbol_rules.lot_size,
+                    )
+                });
                 if let Some(reason) = reason {
                     out.push(Output::ExecutionReport(
                         c.output_tx.clone(),

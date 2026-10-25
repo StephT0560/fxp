@@ -215,6 +215,7 @@ mod engine_tests {
         }
         engine.new_order(order, 0);
         let out = engine.cancel_replace(CancelReplaceMsg {
+            new_display_quantity: None,
             order_id: "O".into(),
             sender: "T".into(),
             new_order_id: "N".into(),

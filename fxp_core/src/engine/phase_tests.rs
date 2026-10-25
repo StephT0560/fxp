@@ -13,6 +13,7 @@ fn queued_market_cancel_replace_ownership_and_duplicate_ids() {
     );
     rejected(
         &e.cancel_replace(CancelReplaceMsg {
+            new_display_quantity: None,
             sender: "other".into(),
             ..replace("M", "M2", 0, fxp::TimeInForce::Unspecified)
         }),
@@ -23,6 +24,7 @@ fn queued_market_cancel_replace_ownership_and_duplicate_ids() {
         "Duplicate",
     );
     let replaced = e.cancel_replace(CancelReplaceMsg {
+        new_display_quantity: None,
         new_quantity: 8,
         ..replace("M", "M2", 0, fxp::TimeInForce::Unspecified)
     });
@@ -274,6 +276,7 @@ fn cancel(id: &str) -> CancelMsg<u32> {
 }
 fn replace(id: &str, new: &str, price: i64, tif: fxp::TimeInForce) -> CancelReplaceMsg<u32> {
     CancelReplaceMsg {
+        new_display_quantity: None,
         order_id: id.into(),
         sender: "owner".into(),
         new_order_id: new.into(),

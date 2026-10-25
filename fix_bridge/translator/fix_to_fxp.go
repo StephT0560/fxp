@@ -153,7 +153,12 @@ func translateNewOrder(msg *codec.Message) (*protobuf.FXPMessage, error) {
 		return nil, err
 	}
 
+	display, err := parseMaxFloor(msg)
+	if err != nil {
+		return nil, err
+	}
 	order := &protobuf.NewOrderSingle{
+		DisplayQuantity: display,
 		Header: &protobuf.FXPHeader{
 			ProtocolVersion: "1.1",
 		},
@@ -268,7 +273,16 @@ func translateCancelReplaceRequest(msg *codec.Message) (*protobuf.FXPMessage, er
 		}
 	}
 
+	var display *int32
+	if msg.Get(111) != "" {
+		value, err := parseMaxFloor(msg)
+		if err != nil {
+			return nil, err
+		}
+		display = &value
+	}
 	cr := &protobuf.OrderCancelReplaceRequest{
+		NewDisplayQuantity: display,
 		Header: &protobuf.FXPHeader{
 			ProtocolVersion: "1.1",
 		},
@@ -440,3 +454,16 @@ func mapTimeInForce(s string) (protobuf.TimeInForce, error) {
 // "185.42" → 18542, "185" → 18500, "0.50" → 50
 // Supports up to 2 decimal places (cent precision).
 func parseFixedPoint(s string) (int64, error) { return symbolconfig.ParseDefault(s) }
+
+// MaxFloor is integral in FXP; zero explicitly disables reserve on replacement.
+func parseMaxFloor(msg *codec.Message) (int32, error) {
+	value := msg.Get(111)
+	if value == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid MaxFloor (111) %q", value)
+	}
+	return int32(n), nil
+}

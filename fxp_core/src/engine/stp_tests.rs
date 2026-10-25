@@ -457,6 +457,7 @@ fn cancel_replace_into_a_self_cross_applies_the_replacements_stp() {
     e.new_order(buy("B", "T", 5, 99, Stp::Unspecified), 1);
     e.new_order(sell("S", "T", 5, 101, Stp::CancelNewest), 1);
     let out = e.cancel_replace(CancelReplaceMsg {
+        new_display_quantity: None,
         order_id: "S".into(),
         sender: "T".into(),
         new_order_id: "S2".into(),
