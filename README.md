@@ -520,13 +520,34 @@ Single status echoes OrdStatusReqID(790); mass status echoes 584 and includes
 911/912 count/final markers. Unknown/foreign IDs and empty mass results get
 BusinessMessageReject (`380=1`). See [status retention and consistency](docs/fix-conformance.md#order-status).
 
-The CI `quickfix-acceptance` job runs 59 pinned QuickFIX v1.15.1 FIX44 server
-definitions with its official POSIX runner. Observed local result: **28 passed,
-31 failed and explicitly allow-listed, 0 unexpected failures / runner errors**.
-The [per-case reasons](tests/quickfix/expected-failures.json) preserve unsupported
-features and policy differences; this is a regression gate, not certification.
-See [runner/adapter details](tests/quickfix/README.md) and the command in
-[CONTRIBUTING.md](CONTRIBUTING.md#quickfix-fix44-acceptance).
+#### FIX conformance
+
+CI runs all 59 pinned QuickFIX v1.15.1 FIX44 server definitions with the official
+POSIX runner under both policy configurations:
+
+| Configuration | Strict pass | Allow-listed | Unexpected failures / runner errors |
+|---|---:|---:|---:|
+| Default policy | 45 | 14 | 0 / 0 |
+| `FXP_FIX_COMPAT=quickfix` | 57 | 2 | 0 / 0 |
+
+The preset's remaining entries are **14a** (legacy zero/negative tag parsing and
+user-tag policy) and **21** (out-of-scope SecurityDefinition echo). Default policy
+also retains 7 explanatory-Logon-vs-silent-disconnect cases, 4 immediate-fatal-close
+cases (2f/2i/2k/2o), and 1 heartbeat-timeout Logout case (6).
+[Exact grouped names and reasons](tests/quickfix/README.md#remaining-allow-listed-entries-by-reason)
+are maintained separately for [default](tests/quickfix/expected-failures.json) and
+[preset](tests/quickfix/expected-failures-quickfix.json).
+
+These are **test-fixture session results**, not matching-venue certification.
+The isolated echo adapter supplies only absent OrderQty (`38=1`), keeps malformed
+explicit values, and does not forward orders to the engine. It is absent from
+normal builds and additionally requires a test build, explicit flag/environment,
+literal loopback and disabled TLS/core auth. Production order validation remains
+unchanged. The fixture fixes `TestReqID=TEST` only for upstream expectations;
+production IDs remain unique. Default fatal-close races can produce reported
+unexpected passes rather than stable compatibility. See the full
+[adapter and guard details](tests/quickfix/README.md) and
+[session policy configuration](docs/fix-conformance.md#session-policy-configuration).
 
 Status batches are bounded by both 64 reports and the gateway's 1 MiB frame
 limit, so large valid order identifiers cannot disconnect the core pool.
@@ -595,6 +616,11 @@ See [deployment, reload and client examples](docs/tls-trust.md) and the
 
 | Variable | Default | Applies to / behavior |
 |---|---|---|
+| `FXP_FIX_COMPAT` | `default` | Bridge session preset: `quickfix` enables silent Logon failures, bounded fatal Logout waiting and silent heartbeat-expiry close; explicit policy booleans override the first two |
+| `FXP_FIX_SILENT_LOGON_FAILURES` | unset (preset; default false) | Bridge silently disconnects on failed Logon instead of explanatory Logout |
+| `FXP_FIX_WAIT_PEER_LOGOUT` | unset (preset; default false) | Bridge waits for peer Logout after a fatal error, bounded by `FXP_FIX_LOGOUT_TIMEOUT` (5s default) |
+| `FXP_FIX_LOGOUT_TIMEOUT` | `5s` | Bridge graceful/fatal Logout wait bound; nonpositive values use a 5s safety bound for fatal waiting |
+| `FXP_FIX_TEST_FIXTURE` | unset | Test build only: `quickfix` also requires `-test-fixture`, literal loopback, no TLS/core token; normal binaries reject it; disabled in Compose |
 | `FXP_ALLOW_PLAINTEXT` | `false` | Explicitly permit non-loopback plaintext, with a startup warning; does not bypass TLS-required or secret policy |
 | `FXP_GW_TCP_ADDR` / `FXP_GW_WS_ADDR` | native `127.0.0.1:8082` / `127.0.0.1:8081`; Compose `0.0.0.0` at those ports | Gateway listener binds |
 | `FXP_FIX_ADDR` | native `127.0.0.1:8083`; Compose `0.0.0.0:8083` | FIX bind; `-addr` overrides |

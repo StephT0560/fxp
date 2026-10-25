@@ -7,6 +7,25 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### FIX conformance (round 4 Medium #1)
+- Add a separately compiled, explicitly enabled loopback-only QuickFIX echo
+  fixture, absent from production binaries. Only missing quantity is supplied;
+  explicit invalid values and normal production validation remain unchanged.
+- Reverse routing CompID/SubID/LocationID headers on immediate session replies;
+  recover bounded buffered admin/application gaps, serve repeated low-sequence
+  ResendRequests idempotently, retain PossDup reject references, and treat invalid
+  OrigSendingTime accuracy as fatal. Explicit reset clears buffered input.
+- Start heartbeat monitoring with the negotiated interval and suppress idle
+  heartbeats while awaiting a TestRequest response; real TestReqIDs stay unique.
+- Add opt-in `FXP_FIX_COMPAT=quickfix` and explicit Logon/fatal-close policy
+  overrides, preserving existing defaults. The preset waits for fatal Logout
+  with a timeout and silently closes unanswered TestRequests, as QuickFIX expects.
+- Run all 59 definitions under both policies in CI: default 45 pass / 14
+  allow-listed / 0 unexpected; preset 57 / 2 / 0. Remaining preset exclusions
+  are legacy invalid-tag policy (14a) and out-of-scope SecurityDefinition (21).
+  These are fixture session results, not venue certification; full reasons and
+  test-only timing/reset assumptions are documented.
+
 ### Breaking configuration changes (round 4 Medium #2)
 - Native gateway TCP/WS and FIX listener defaults are now loopback. Use
   `FXP_GW_TCP_ADDR`, `FXP_GW_WS_ADDR` and `FXP_FIX_ADDR` (or bridge `-addr`)

@@ -1,50 +1,115 @@
 # QuickFIX FIX44 acceptance gate
 
-The definitions and Linux runner come from QuickFIX C++ v1.15.1, commit
-`6908dc8c1084eeb7af7f322d35216e9965684489`. The script fetches that exact
-commit over the existing Git HTTPS route and rejects a modified tracked test
-tree. It copies fixtures into ignored `target/quickfix-acceptance/runner`.
-The upstream Windows-only `test/atrun` process wrapper cannot run on Linux;
-this uses the same suite's official POSIX entrypoint, `test/Runner.rb`, as
-invoked by upstream `test/runat.sh`. No alternate FIX engine replaces FXP.
+The 59 definitions and official POSIX Ruby runner are pinned to QuickFIX C++
+v1.15.1, commit `6908dc8c1084eeb7af7f322d35216e9965684489`. A modified tracked
+test tree or different commit is rejected. The Windows-only `atrun` wrapper is
+not used; upstream `test/Runner.rb` runs the actual definitions. The upstream
+license is preserved in `fix_bridge/codec/spec/LICENSE.quickfix`.
 
-This product includes software developed by quickfixengine.org
-(http://www.quickfixengine.org/). The upstream QuickFIX license is preserved
-in [LICENSE.quickfix](../../fix_bridge/codec/spec/LICENSE.quickfix).
+## Results (all 59 definitions per configuration)
 
-## Adapter scope
+| Policy | Strict passes | Allow-listed failures | Unexpected failures / runner errors |
+|---|---:|---:|---:|
+| Default | 45 | 14 | 0 / 0 |
+| `FXP_FIX_COMPAT=quickfix` | 57 | 2 | 0 / 0 |
 
-The only input change adds the venue's generated Logon password to otherwise
-unframed Logon definitions. Explicit invalid BodyLength/checksum logons remain
-untouched. No assertions, required business fields, enums, sequence numbers or
-group counts are rewritten. The Ruby adapter runs the upstream reader,
-reflector and comparator. It permits reordered non-group fields, normalizes
-free-form diagnostic Text (requiring nonempty Text if the fixture requires
-it), and permits optional diagnostic Text on Logout. Repeating-field bodies
-are never reordered. Actual BodyLength and checksum are independently checked
-instead of comparing fixture constants with different timestamp precisions.
+These are fixture-mode session results, not venue application certification.
+The old 28/31 baseline used the venue handler; many definitions failed before
+reaching their session assertions because QuickFIX expects its echo application.
+Every definition still runs in each configuration; none is silently skipped.
 
-These adaptations matter: raw QuickFIX fixtures assume an unauthenticated
-application echo server and specific optional formatting choices. FXP remains
-an authenticated matching venue. `expected-failures.json` lists each remaining
-incompatibility with its reason. The entire definition still runs; it is never
-silently skipped. Some definitions fail on their application echo before
-reaching the session probe named in the filename; no claim is made that those
-later probes executed.
+## Test-only adapter and guard
 
-## Gate and results
+The script builds **a separate `bin/fix_bridge_fixture`** with Go build tag
+`quickfix_fixture`. The normal binary, Docker image and release artifacts do not
+contain the adapter; they reject either fixture flag/environment opt-in.
+The special build additionally requires all of:
 
-All 59 definitions are run on every PR in `quickfix-acceptance`. Unexpected
-failures, stale/empty allow-list entries, missing runner results, zero-test
-runs and process timeouts fail the gate. An improvement in an allow-listed
-case is reported as an unexpected pass without failing a regression-only gate.
-A runner failure cannot be hidden by the allow-list. Tests exercise these gate
-rules. Each definition runs against a fresh bridge/store; the core and gateway
-run for the suite. Backend state is not claimed to be isolated per definition.
+- `-test-fixture` and `FXP_FIX_TEST_FIXTURE=quickfix`;
+- a literal loopback bind, and actual local/remote loopback TCP addresses;
+- no configured listener TLS, required TLS, or core authentication token.
 
-Observed full local run: **28 passed, 31 failed and explicitly allow-listed,
-0 unexpected failures, 0 runner errors (59 definitions)**. This is a regression
-baseline, not FIX certification. Full results and individual diagnostics are
-written to `target/quickfix-acceptance/results.json` and `*.runner.log` and
-uploaded by CI. Revisit the allow-list when adding session buffering, routed
-sessions, error-Logout handshakes, or broader FIX application coverage.
+It logs a warning on every startup. The production validation path is unchanged.
+The fixture is an isolated **echo application**, never a path to the matching
+engine: it injects `38=1` only when OrderQty is absent on NewOrderSingle and
+preserves explicit empty/invalid quantities for normal dictionary rejection.
+The synthetic quantity is not added to the expected echo. Framing, identity,
+time, sequence, dictionary, group and enum checks still run normally. Echoes use
+the normal session sender/store, so resend definitions exercise actual replay.
+PossResend deduplication belongs to this echo fixture and does not claim new
+venue application deduplication. Its seen-ID set is bounded at 4096 entries.
+
+The upstream setup uses `ResetOnLogon=Y`; fixture sessions reset their ephemeral
+store on disconnect so separate connections in one definition start fresh while
+simultaneous duplicate identities still fail. Production durable sessions retain
+their configured reset behavior and cancel-on-disconnect persistence ordering.
+The fixture uses a two-second Logon timeout (the runner's disconnect deadline is
+ten seconds); production's default remains ten seconds. The fixture emits fixed
+`TestReqID=TEST` to match definition 6; real deployments retain unique IDs.
+
+The copied `.def` inputs are changed only to add a generated venue Logon password
+when their framing is not explicitly malformed. Input checksums/BodyLength,
+sequence numbers, enums, groups, and all expected assertions remain untouched.
+The existing Ruby comparator adapter verifies actual framing/checksum, tolerates
+non-group field order and optional diagnostic Text, and uses upstream timestamp
+patterns. Repeating group order is preserved; it never substitutes message types
+or hides extra/missing fields. The new fixture does not add comparator masks.
+
+## Remaining allow-listed entries, by reason
+
+Both configurations:
+
+- **Legacy invalid-tag policy:** `14a_BadField.def`. Undefined tag 999 is rejected;
+  the next assertion expects a numeric Reject for tag 0, which the parser treats
+  as garbled. Negative tag syntax is also ignored and default user tags >=5000
+  remain permitted. Later assertions in that definition are not claimed to pass.
+- **Out of scope:** `21_RepeatingGroupSpecifierWithValueOfZero.def`, which expects
+  a SecurityDefinition (`35=d`) application echo. FXP returns unsupported-type
+  BusinessMessageReject. This does not implement SecurityDefinition.
+
+Default policy only:
+
+- **Explanatory Logon failure vs silent disconnect (7):**
+  `1b_DuplicateIdentity`, `1c_InvalidSenderCompID`, `1c_InvalidTargetCompID`,
+  `1d_InvalidLogonBadSendingTime`, `1d_InvalidLogonWrongBeginString`,
+  `1e_NotLogonMessage`, `AlreadyLoggedOn` (all `.def`).
+- **Immediate fatal close vs waiting for peer Logout (4):**
+  `2f_PossDupOrigSendingTimeTooHigh`, `2i_BeginStringValueUnexpected`,
+  `2k_CompIDDoesNotMatchProfile`, `2o_SendingTimeValueOutOfRange` (all `.def`).
+  The required Reject/Logout is sent, but the peer's final Logout can meet TCP
+  reset. Timing may produce an unexpected pass; it is reported, not silently
+  counted as an allow-listed failure or a guarantee of compatibility.
+- **Diagnostic Logout on heartbeat expiry (1):** `6_SendTestRequest.def` now
+  reaches its final disconnect assertion; cadence and fixed fixture ID pass.
+  The preset closes silently when the peer fails to answer the TestRequest.
+
+Exact reasons live in `expected-failures.json` (default) and
+`expected-failures-quickfix.json` (preset). There are no remaining echo-blocked
+allow-list reasons. SecurityDefinition, TradeCaptureReport, initiator mode,
+pegs and the `35=H`/`35=AE` edge replies are not implemented by this work.
+
+## Running and CI
+
+Install normal build prerequisites plus Ruby 3.3, with ports 8080–8083 free:
+
+```sh
+python3 -m unittest discover -s tests/quickfix -v
+python3 scripts/quickfix_acceptance.py --compat default
+python3 scripts/quickfix_acceptance.py --compat quickfix
+```
+
+CI runs both policies in a non-fail-fast matrix, plus normal-build and tagged
+fixture tests. `ci-success` depends on the combined matrix result. Each policy
+writes logs and `results.json` (pin, policy, fixture, per-definition result and
+summary) under `target/quickfix-acceptance/{default,quickfix}/`, uploaded as
+separate artifacts. The core/gateway also run, but fixture orders are echoed
+locally and never execute there. This gate certifies neither engine matching
+nor application validation; production E2E/dictionary/security tests cover those.
+
+Missing/empty allow-list reasons, stale definition names, unexpected failures,
+zero tests, missing runner results, timeouts and runner errors fail the gate.
+Unexpected passes remain visible in the regression-only summary. Review and
+remove resolved entries rather than using the allow-list to conceal errors.
+`--source` reuses a verified source checkout; `--no-build` requires current normal
+and separate fixture binaries. `--only NAME.def` is diagnostic and marks
+`complete_suite=false`; it cannot establish a complete-suite result.
