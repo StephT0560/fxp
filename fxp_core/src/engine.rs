@@ -732,14 +732,18 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             .validate_quantity(order.quantity as u32)
                             .err()
                             .or_else(|| {
-                                if order.price > 0 {
+                                if is_limit {
                                     symbol_rules.validate_price(order.price).err()
                                 } else {
                                     None
                                 }
                             })
                             .or_else(|| {
-                                if order.stop_price != 0 {
+                                if order.stop_price != 0
+                                    && parsed_enums.as_ref().is_ok_and(|(_, ty, _)| {
+                                        matches!(ty, OrderType::Stop | OrderType::StopLimit)
+                                    })
+                                {
                                     symbol_rules.validate_price(order.stop_price).err()
                                 } else {
                                     None

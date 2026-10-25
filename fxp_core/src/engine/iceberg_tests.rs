@@ -278,3 +278,35 @@ fn configured_scales_retain_int64_price_and_i128_notional_headroom() {
         );
     }
 }
+
+#[test]
+fn symbol_tick_rules_ignore_unused_market_and_stop_limit_prices() {
+    let rules = crate::symbol_config::SymbolRules {
+        tick_size: 5,
+        ..Default::default()
+    };
+    for ty in [fxp::OrderType::Market, fxp::OrderType::Stop] {
+        let mut e = engine().with_symbol_rules(rules);
+        let mut o = order("UNUSED", fxp::OrderSide::Buy, 10, 0);
+        o.order_type = ty as i32;
+        o.price = 101;
+        o.stop_price = if ty == fxp::OrderType::Stop { 105 } else { 101 };
+        let out = e.new_order(o, 1);
+        assert!(
+            reports(&out)
+                .iter()
+                .all(|r| r.execution_type != fxp::ExecutionType::ExecRejected as i32),
+            "{ty:?}"
+        );
+    }
+    // A stop's trigger still must align to the tick.
+    let mut e = engine().with_symbol_rules(rules);
+    let mut o = order("BADSTOP", fxp::OrderSide::Buy, 10, 0);
+    o.order_type = fxp::OrderType::Stop as i32;
+    o.price = 101;
+    o.stop_price = 101;
+    assert_eq!(
+        reports(&e.new_order(o, 1))[0].execution_type,
+        fxp::ExecutionType::ExecRejected as i32
+    );
+}

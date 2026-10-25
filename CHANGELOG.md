@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep unused market/stop-market limit prices and non-stop trigger fields out of symbol tick validation (#1, review regression).
+
 - Document the deferred Stage C pegged-order design and its required acceptance tests (#1).
 
 - Restore CI compatibility after the merged Criterion/prost-build upgrades: use standard-library black_box and scope a Zlib license exception to foldhash 0.1.5 (#1 verification).

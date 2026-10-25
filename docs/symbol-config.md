@@ -22,7 +22,9 @@ price: P2's tick 5 is 0.05. Scale is 0–8. Tick/lot/minimum must be positive;
 minimum ≤ maximum ≤ INT32_MAX, with at least one lot multiple in the interval.
 
 Unlisted symbols keep scale 2, tick 1 (0.01), lot/minimum 1 and maximum
-2,147,483,647. Positive limit and stop prices must be tick multiples; order
+2,147,483,647. Only limit/stop-limit prices and stop/stop-limit triggers are validated for ticks;
+unused price fields on market and stop-market orders retain their ignored
+semantics. Positive active prices must be tick multiples; order
 total quantity must be within min/max and a lot multiple. Replace uses the same
 rules before changing the book; zero change fields retain their existing
 meaning. Invalid replaces leave the original order intact. Matching permits
