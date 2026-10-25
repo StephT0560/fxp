@@ -19,10 +19,36 @@ ask us not to.
 
 Only the latest `main` is supported. There are no released versions yet.
 
-## Scope notes
+## Trust model
 
-- `fxp_core` (127.0.0.1:8080) is unauthenticated by design and must only be
-  reachable from the gateway. Reports that require direct access to the core
-  port are in scope only if the core is exposed by the default configuration.
-- The JWT secret `dev-secret-change-in-production` used by the benchmark and
-  test clients is a development default, not a vulnerability.
+The core always binds `127.0.0.1:8080` and refuses non-loopback listeners. Do not
+publish that port or proxy untrusted traffic to it. Compose shares a private
+network namespace between the three services and publishes only the external
+ports. Loopback isolation alone does not authenticate processes in that namespace.
+
+| Configuration | Protection and remaining access |
+|---|---|
+| Development defaults: plaintext, no core token | External JWT/FIX authentication still applies, but traffic can be intercepted. Any process with core loopback access can claim any sender and submit orders. |
+| External TLS | Encrypts and authenticates the server on TCP, wss and FIX links. Application JWT/FIX credentials still determine trader identity. Core loopback access remains trusted unless a token is configured. |
+| External mTLS | Additionally admits only clients signed by the configured client CA. Certificate subjects are not mapped to trader identities; application authentication still applies. |
+| Core shared token | Core rejects connections before parsing orders unless they present the configured token. An attacker with loopback access but without the token cannot assert a sender. An admitted gateway can assert sender identities and must remain trusted. |
+
+Set `FXP_CORE_AUTH_TOKEN` identically on core and gateway, using a random secret
+(e.g. `openssl rand -hex 32`) distinct from `FXP_JWT_SECRET`. The bridge connects
+through the authenticated gateway pool, never directly to the core. Token errors
+are generic and the token is never logged. Rotation requires coordinated core and
+gateway restarts; there is no previous-token grace period.
+
+Core token authentication provides possession-based admission over loopback. It
+provides neither encryption nor server authentication: a privileged local sniffer,
+a malicious process impersonating the core before it starts, or host/root access
+can compromise that secret. Secrets in process environments, files and memory
+require host access controls. A compromised admitted gateway can impersonate
+traders. TLS does not protect compromised endpoints or replace order ownership
+checks. Use container/network isolation and restrict local accounts accordingly.
+
+Production listeners should set `FXP_TLS_REQUIRED=true`; the development default
+only warns on non-loopback plaintext binds. See [TLS deployment](docs/tls-trust.md)
+for certificate reload and client configuration. The development JWT secret
+`dev-secret-change-in-production` is a documented local default, never a production
+credential.

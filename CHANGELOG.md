@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Omit local TLS material paths from benchmark artifacts and preserve fixed gateway/bridge internal ports after review (#4).
+
+- Add optional reloadable TLS 1.2+ and mTLS on gateway TCP/WebSocket and FIX listeners, mandatory-TLS startup enforcement and non-loopback plaintext warnings (#4).
+- Enforce a loopback-only core listener and optional pre-parser shared-token connection admission, including gateway reconnects and authenticated health checks (#4).
+- Add verified TLS/mTLS flags to Go/Python clients and benchmark, temporary certificate generation, rotation probes, full TLS e2e CI and deployment/trust documentation (#4).
+
 - Repeat all measurements after the closed-loop deadline fix and retain the complete initial dataset; latest reused FXP/FIX encode is 149.3/133.8ns and the worst c10 fill tail is 15.630ms (#3 review verification).
 
 - Refresh closed-loop benchmark response deadlines per send so healthy long phases do not expire midstream; preserve the intended-time deadline for open-loop runs (#3 review).

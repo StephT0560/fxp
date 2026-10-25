@@ -5,12 +5,14 @@ package main
 import (
 	"context"
 	"go_gateway/logging"
+	"go_gateway/tlsconfig"
 	"go_gateway/transport"
 	"log"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -20,17 +22,22 @@ func main() {
 	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
 
+	manager, err := tlsconfig.ServerFromEnv()
+	if err != nil {
+		log.Fatalf("TLS configuration: %v", err)
+	}
+	go manager.Watch(ctx, time.Second)
 	var wg sync.WaitGroup
 	serverErrors := make(chan error, 2)
 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		serverErrors <- transport.RunWebSocketServer(ctx)
+		serverErrors <- transport.RunWebSocketServerWithTLS(ctx, manager)
 	}()
 	go func() {
 		defer wg.Done()
-		serverErrors <- transport.RunTCPServer(ctx)
+		serverErrors <- transport.RunTCPServerWithTLS(ctx, manager)
 	}()
 
 	log.Println("🚀 Go API Gateway is running...")

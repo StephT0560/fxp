@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/hex"
 	"flag"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go_gateway/protobuf"
 	"go_gateway/test_clients/devjwt"
+	"go_gateway/tlsconfig"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -27,19 +29,43 @@ const wsAddress = "ws://localhost:8081/ws"
 func main() {
 	singleRun := flag.Bool("single", false, "Run once and exit")
 	continuousRun := flag.Bool("continuous", false, "Keep sending randomized orders")
+	options, err := tlsconfig.ClientFromEnv("FXP_CLIENT_")
+	if err != nil {
+		log.Fatal(err)
+	}
+	options.Flags(flag.CommandLine)
+	address := flag.String("address", wsAddress, "gateway WebSocket URL")
 	flag.Parse()
 
 	if !*singleRun && !*continuousRun {
 		log.Fatalf("❌ Please specify either --single or --continuous mode.")
 	}
 
-	jwtSecret := "dev-secret-change-in-production"
+	jwtSecret := os.Getenv("FXP_JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret-change-in-production"
+	}
 	traderID := "WebTrader"
 	sessionID := "ws-session-" + strconv.Itoa(rand.Intn(100000))
 
 	log.Println("🌐 Connecting to WebSocket Server...")
-	u, _ := url.Parse(wsAddress)
-	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	u, err := url.Parse(*address)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if u.Scheme == "wss" {
+		options.Enabled = true
+	}
+	if options.Enabled {
+		u.Scheme = "wss"
+	}
+	cfg, err := options.Config()
+	if err != nil {
+		log.Fatal(err)
+	}
+	dialer := *websocket.DefaultDialer
+	dialer.TLSClientConfig = cfg
+	conn, _, err := dialer.Dial(u.String(), nil)
 	if err != nil {
 		log.Fatalf("❌ WebSocket connection failed: %v", err)
 	}
@@ -53,12 +79,18 @@ func main() {
 	token := devjwt.Generate(jwtSecret, traderID)
 	log.Printf("🔑 Generated JWT for %s (session: %s)", traderID, sessionID)
 
+	encryption := protobuf.EncryptionType_NONE
+	if tlsconfig.Version(conn.UnderlyingConn()) == tls.VersionTLS13 {
+		encryption = protobuf.EncryptionType_TLS_1_3
+	} else if tlsconfig.Version(conn.UnderlyingConn()) == tls.VersionTLS12 {
+		encryption = protobuf.EncryptionType_TLS_1_2
+	}
 	logon := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_Logon{
 			Logon: &protobuf.Logon{
 				Token:          token,
 				SessionId:      sessionID,
-				EncryptionType: protobuf.EncryptionType_TLS_1_3,
+				EncryptionType: encryption,
 				Timestamp:      timestamppb.Now(),
 			},
 		},

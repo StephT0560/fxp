@@ -46,11 +46,15 @@ RUN bash scripts/gen_proto.sh \
     && (cd fix_bridge && go build -trimpath -o /out/fix_bridge .)
 
 FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --home-dir /data --create-home fxp \
     && mkdir -p /data/fix_store /data/core_store && chown fxp:fxp /data/fix_store /data/core_store
 COPY --from=core-build /src/fxp_core/target/release/fxp_core /usr/local/bin/fxp_core
 COPY --from=go-build /out/go_gateway /usr/local/bin/go_gateway
 COPY --from=go-build /out/fix_bridge /usr/local/bin/fix_bridge
+COPY --chmod=755 scripts/core_healthcheck.sh /usr/local/bin/core_healthcheck
 USER fxp
 WORKDIR /data
 ENV FXP_FIX_STORE_DIR=/data/fix_store

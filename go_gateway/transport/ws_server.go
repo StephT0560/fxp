@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go_gateway/protobuf"
+	"go_gateway/tlsconfig"
 
 	"github.com/gorilla/websocket"
 )
@@ -53,7 +54,15 @@ func StartWebSocketServer() {
 }
 
 func RunWebSocketServer(ctx context.Context) error {
-	listener, err := net.Listen("tcp", ":8081")
+	manager, err := tlsconfig.ServerFromEnv()
+	if err != nil {
+		return err
+	}
+	go manager.Watch(ctx, time.Second)
+	return RunWebSocketServerWithTLS(ctx, manager)
+}
+func RunWebSocketServerWithTLS(ctx context.Context, manager *tlsconfig.Server) error {
+	listener, err := manager.Listen(":8081")
 	if err != nil {
 		return err
 	}
@@ -64,7 +73,7 @@ func runWebSocketServer(ctx context.Context, listener net.Listener, timeout time
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", handleConnections)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: currentLimits().HandshakeTimeout}
-	log.Println("✅ WebSocket Server started on ws://localhost:8081")
+	log.Printf("WebSocket server listening on %s", listener.Addr())
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Serve(listener) }()

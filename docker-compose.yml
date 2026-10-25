@@ -24,6 +24,7 @@ services:
       - FXP_SYMBOL_CONFIG
       - FXP_SESSION_SCHEDULE
       - FXP_EVENT_LOG
+      - FXP_CORE_AUTH_TOKEN
       - FXP_STP_DEFAULT
       - FXP_SYMBOLS
       - FXP_MAX_SYMBOLS
@@ -36,7 +37,7 @@ services:
       - "${FXP_TCP_PORT:-8082}:8082"  # gateway TCP (FXP protobuf)
       - "${FXP_FIX_PORT:-8083}:8083"  # FIX 4.4 bridge
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      test: ["CMD", "/usr/local/bin/core_healthcheck"]
       interval: 2s
       timeout: 2s
       retries: 15
@@ -51,8 +52,13 @@ services:
       core:
         condition: service_healthy
     environment:
+      FXP_TLS_CERT_FILE: ${FXP_TLS_CERT_FILE:-}
+      FXP_TLS_KEY_FILE: ${FXP_TLS_KEY_FILE:-}
+      FXP_TLS_CLIENT_CA_FILE: ${FXP_TLS_CLIENT_CA_FILE:-}
+      FXP_TLS_REQUIRED: ${FXP_TLS_REQUIRED:-false}
       FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set FXP_JWT_SECRET}
       FXP_JWT_KID: ${FXP_JWT_KID:-}
+      FXP_CORE_AUTH_TOKEN: ${FXP_CORE_AUTH_TOKEN:-}
       FXP_JWT_PREVIOUS_KID: ${FXP_JWT_PREVIOUS_KID:-}
       FXP_JWT_PREVIOUS_SECRET: ${FXP_JWT_PREVIOUS_SECRET:-}
       FXP_JWT_ISSUER: ${FXP_JWT_ISSUER:-}
@@ -65,6 +71,9 @@ services:
       FXP_LOG_LEVEL: ${FXP_LOG_LEVEL:-info}
       FXP_SHUTDOWN_TIMEOUT_SEC: ${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
 
+    volumes:
+      - ./certs:/etc/fxp/certs:ro
+
   bridge:
     <<: *image
     command: ["fix_bridge"]
@@ -75,7 +84,16 @@ services:
       gateway:
         condition: service_started
     environment:
+      FXP_TLS_CERT_FILE: ${FXP_TLS_CERT_FILE:-}
+      FXP_TLS_KEY_FILE: ${FXP_TLS_KEY_FILE:-}
+      FXP_TLS_CLIENT_CA_FILE: ${FXP_TLS_CLIENT_CA_FILE:-}
+      FXP_TLS_REQUIRED: ${FXP_TLS_REQUIRED:-false}
       FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set FXP_JWT_SECRET}
+      FXP_GATEWAY_TLS: ${FXP_GATEWAY_TLS:-false}
+      FXP_GATEWAY_TLS_CA_FILE: ${FXP_GATEWAY_TLS_CA_FILE:-}
+      FXP_GATEWAY_TLS_CERT_FILE: ${FXP_GATEWAY_TLS_CERT_FILE:-}
+      FXP_GATEWAY_TLS_KEY_FILE: ${FXP_GATEWAY_TLS_KEY_FILE:-}
+      FXP_GATEWAY_TLS_SERVER_NAME: ${FXP_GATEWAY_TLS_SERVER_NAME:-}
       FXP_JWT_KID: ${FXP_JWT_KID:-}
       FXP_JWT_ISSUER: ${FXP_JWT_ISSUER:-}
       FXP_JWT_AUDIENCE: ${FXP_JWT_AUDIENCE:-}
@@ -97,6 +115,7 @@ services:
     volumes:
       - fix_store:/data/fix_store
       - ./config:/etc/fxp:ro
+      - ./certs:/etc/fxp/certs:ro
 
 volumes:
   core_store:

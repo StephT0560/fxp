@@ -91,3 +91,10 @@ figures without their hardware, build, workload, affinity and run-spread metadat
 See [benchmark methodology](docs/benchmark-methodology.md) and
 [release/required-check setup](docs/releasing.md). Nightly results are non-gating;
 release workflows build static Linux artifacts and create drafts only.
+
+## TLS integration checks
+
+Run `bash scripts/e2e_tls.sh` to repeat the full end-to-end suite with mTLS and
+core connection authentication. OpenSSL is required. The script creates and
+deletes temporary certificates; logs and benchmark smoke results remain under
+`target/e2e-tls/`. See [TLS and trust](docs/tls-trust.md) for configuration.

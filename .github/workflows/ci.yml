@@ -104,6 +104,10 @@ jobs:
       - run: bash scripts/gen_proto.sh && bash scripts/e2e.sh
         env:
           E2E_LOG_DIR: ${{ runner.temp }}/e2e
+      - name: TLS/mTLS listeners and authenticated core e2e
+        run: bash scripts/e2e_tls.sh
+        env:
+          E2E_LOG_DIR: ${{ runner.temp }}/e2e-tls
       - name: Benchmark smoke and static-artifact verifier tests
         run: |
           python3 -m unittest discover -s tests/release -v
@@ -117,6 +121,11 @@ jobs:
             ${{ runner.temp }}/benchmark-smoke/*.md
             ${{ runner.temp }}/benchmark-smoke/*.log
             ${{ runner.temp }}/benchmark-smoke/*.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-tls-logs
+          path: ${{ runner.temp }}/e2e-tls
       - uses: actions/upload-artifact@v7
         if: always()
         with:

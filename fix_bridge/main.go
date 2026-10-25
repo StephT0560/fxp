@@ -62,6 +62,7 @@ import (
 	"go_gateway/logging"
 	"go_gateway/protobuf"
 	"go_gateway/symbolconfig"
+	"go_gateway/tlsconfig"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -84,6 +85,18 @@ func main() {
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
+	manager, err := tlsconfig.ServerFromEnv()
+	if err != nil {
+		log.Fatalf("TLS configuration: %v", err)
+	}
+	upstream, err := tlsconfig.ClientFromEnv("FXP_GATEWAY_")
+	if err != nil {
+		log.Fatalf("gateway TLS configuration: %v", err)
+	}
+	if _, err = upstream.Config(); err != nil {
+		log.Fatalf("gateway TLS configuration: %v", err)
+	}
+	go manager.Watch(ctx, time.Second)
 	configCheck := session.NewSession(nil, "", nil)
 	if err := configCheck.ConfigureSchedule(); err != nil {
 		log.Fatalf("FIX schedule: %v", err)
@@ -103,7 +116,7 @@ func main() {
 		log.Fatalf("FIX session store: %v", err)
 	}
 
-	listener, err := net.Listen("tcp", *listenAddr)
+	listener, err := manager.Listen(*listenAddr)
 	if err != nil {
 		log.Fatalf("failed to listen on %s: %v", *listenAddr, err)
 	}
@@ -250,6 +263,9 @@ func acceptFIXClientsContext(ctx context.Context, listener net.Listener, maxConn
 					<-slots
 					_ = conn.Close()
 				}()
+				if err := tlsconfig.Handshake(ctx, conn, 10*time.Second); err != nil {
+					return
+				}
 				handle(conn)
 			}(conn)
 		default:

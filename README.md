@@ -455,7 +455,7 @@ fxp/
 - [ ] `OrderCancelRequest` / `OrderCancelReplaceRequest` full round-trip in simulation
 - [x] Release build benchmarks
 - [x] CI/CD pipeline (GitHub Actions: `.github/workflows/ci.yml`)
-- [ ] TLS support (infrastructure exists in proto; not yet wired)
+- [x] Optional TLS/mTLS listeners and authenticated core connections
 - [x] FIX 4.x bridge (inbound FIX → FXP translation layer)
 
 ---
@@ -554,3 +554,36 @@ Tagged [release.yml](.github/workflows/release.yml) builds static Linux amd64 an
 arm64 core/gateway/bridge archives, SHA256SUMS and CycloneDX inventories, and
 attaches them to a draft for manual review. Manual workflow runs build artifacts
 only. See [required checks and repository configuration](docs/releasing.md).
+
+### TLS and core trust
+
+Plaintext remains the development default. Gateway TCP/WebSocket and FIX listeners
+warn when bound outside loopback without TLS. Enable TLS and require it in deployed
+services; JWT/FIX authentication remains required. The core always binds
+`127.0.0.1:8080`; set the same distinct token on core and gateway to admit only
+trusted forwarding connections. The bridge reaches the core through the gateway.
+See [deployment, reload and client examples](docs/tls-trust.md) and the
+[trust model](SECURITY.md#trust-model).
+
+| Variable | Default | Applies to / behavior |
+|---|---|---|
+| `FXP_TLS_CERT_FILE` / `FXP_TLS_KEY_FILE` | unset | Gateway and bridge server certificate/key PEM; both required to enable TLS 1.2–1.3 |
+| `FXP_TLS_CLIENT_CA_FILE` | unset | Gateway and bridge: require and verify client certificates against this PEM CA bundle |
+| `FXP_TLS_REQUIRED` | `false` | Gateway and bridge refuse startup without TLS; malformed booleans fail startup |
+| `FXP_CORE_AUTH_TOKEN` | unset | Core and gateway only: optional shared connection token, maximum 1024 UTF-8 bytes; use a random secret distinct from JWT |
+| `FXP_GATEWAY_TLS` | `false` | Bridge enables verified TLS to the gateway |
+| `FXP_GATEWAY_TLS_CA_FILE` | system roots | Bridge's trusted gateway CA bundle |
+| `FXP_GATEWAY_TLS_CERT_FILE` / `FXP_GATEWAY_TLS_KEY_FILE` | unset | Bridge's optional upstream mTLS identity |
+| `FXP_GATEWAY_TLS_SERVER_NAME` | dial host | Bridge's verified upstream server name |
+| `FXP_CLIENT_TLS` | `false` | Go TCP/WS clients, benchmark and Python FIX client enable verified TLS |
+| `FXP_CLIENT_TLS_CA_FILE` | system roots | Tool clients' trusted server CA bundle |
+| `FXP_CLIENT_TLS_CERT_FILE` / `FXP_CLIENT_TLS_KEY_FILE` | unset | Tool clients' optional mTLS identity |
+| `FXP_CLIENT_TLS_SERVER_NAME` | dial host | Tool clients' verified server name |
+
+Server and bridge settings are exposed in Compose; tool-only `FXP_CLIENT_*` settings
+are for host clients. Compose mounts `./certs:/etc/fxp/certs:ro`; configure container
+paths and ensure UID 10001 can read the key. Certificate/key/client-CA file contents
+are checked every second and new connections use the last valid snapshot.
+`bash scripts/e2e_tls.sh` exercises all listeners with mTLS, live certificate
+rotation, authenticated core forwarding, the full FIX/order/restart checks and the
+benchmark smoke scenarios. Test certificates are temporary and deleted on exit.

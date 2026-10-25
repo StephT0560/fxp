@@ -2,8 +2,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"go_gateway/protobuf"
+	"go_gateway/tlsconfig"
 	"net"
 	"strings"
 	"sync"
@@ -229,5 +231,28 @@ func TestClosedLoopRefreshesDeadlineForHealthyLongPhases(t *testing.T) {
 	}
 	if r.Ack.TotalCount() != 10 || r.Fill.TotalCount() != 10 {
 		t.Fatalf("incomplete long phase: %d %d", r.Ack.TotalCount(), r.Fill.TotalCount())
+	}
+}
+
+func TestBenchmarkArtifactsOmitTLSMaterialPaths(t *testing.T) {
+	cfg := config{TLS: tlsconfig.ClientOptions{Enabled: true, CAFile: "/private/ca.pem", CertFile: "/private/client.pem", KeyFile: "/private/key.pem", ServerName: "localhost"}}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "/private/") {
+		t.Fatal("benchmark artifact discloses certificate/key paths")
+	}
+	var result struct {
+		TLS struct {
+			Enabled bool `json:"enabled"`
+			MTLS    bool `json:"mtls"`
+		} `json:"tls"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.TLS.Enabled || !result.TLS.MTLS {
+		t.Fatal("transport metadata missing", string(raw))
 	}
 }

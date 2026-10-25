@@ -27,6 +27,7 @@ import sys
 import json
 import os
 import socket
+import ssl
 import struct
 import time
 import argparse
@@ -36,6 +37,45 @@ from datetime import datetime, timezone
 
 # Password(554) sent on Logon; must match the bridge's FXP_FIX_CREDENTIALS.
 FIX_PASSWORD = os.environ.get('FXP_FIX_PASSWORD', '')
+
+def _env_bool(name):
+    value = os.environ.get(name, '').lower()
+    if value in ('', 'false', 'f', '0'):
+        return False
+    if value in ('true', 't', '1'):
+        return True
+    raise ValueError(f'{name} must be a boolean')
+
+
+TLS_OPTIONS = {
+    'enabled': _env_bool('FXP_CLIENT_TLS'),
+    'ca': os.environ.get('FXP_CLIENT_TLS_CA_FILE', ''),
+    'cert': os.environ.get('FXP_CLIENT_TLS_CERT_FILE', ''),
+    'key': os.environ.get('FXP_CLIENT_TLS_KEY_FILE', ''),
+    'server_name': os.environ.get('FXP_CLIENT_TLS_SERVER_NAME', ''),
+}
+
+
+def connect_socket(host, port):
+    opts = TLS_OPTIONS
+    context = None
+    if opts['enabled']:
+        context = ssl.create_default_context(cafile=opts['ca'] or None)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        if bool(opts['cert']) != bool(opts['key']):
+            raise ValueError('TLS client certificate and key must both be configured')
+        if opts['cert']:
+            context.load_cert_chain(opts['cert'], opts['key'])
+    elif any(opts[k] for k in ('ca', 'cert', 'key', 'server_name')):
+        raise ValueError('TLS client settings require --tls')
+    raw = socket.create_connection((host, port), timeout=5)
+    if context is None:
+        return raw
+    try:
+        return context.wrap_socket(raw, server_hostname=opts['server_name'] or host)
+    except Exception:
+        raw.close()
+        raise
 
 SOH = '\x01'
 PASS = '✅'
@@ -172,7 +212,7 @@ class FIXSession:
         self._thread = None
 
     def connect(self):
-        self.sock = socket.create_connection((self.host, self.port), timeout=5)
+        self.sock = connect_socket(self.host, self.port)
         self._thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._thread.start()
 
@@ -1227,7 +1267,14 @@ def main():
                     help='Print all sent/received messages')
     ap.add_argument('--password', default=FIX_PASSWORD,
                     help='Logon Password(554) (default: $FXP_FIX_PASSWORD)')
+    ap.add_argument('--tls', action=argparse.BooleanOptionalAction, default=TLS_OPTIONS['enabled'])
+    ap.add_argument('--tls-ca', default=TLS_OPTIONS['ca'])
+    ap.add_argument('--tls-cert', default=TLS_OPTIONS['cert'])
+    ap.add_argument('--tls-key', default=TLS_OPTIONS['key'])
+    ap.add_argument('--tls-server-name', default=TLS_OPTIONS['server_name'])
     args = ap.parse_args()
+    TLS_OPTIONS.update(enabled=args.tls, ca=args.tls_ca, cert=args.tls_cert,
+                       key=args.tls_key, server_name=args.tls_server_name)
     FIX_PASSWORD = args.password
 
     if args.test in DURABLE_PHASES:

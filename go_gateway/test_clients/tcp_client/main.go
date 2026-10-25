@@ -3,18 +3,23 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"net"
+	"os"
 	"strconv"
 	"time"
 
 	"go_gateway/protobuf"
 	"go_gateway/test_clients/devjwt"
+	"go_gateway/tlsconfig"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -51,14 +56,25 @@ func readFramedMessage(conn net.Conn) ([]byte, error) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
+	options, err := tlsconfig.ClientFromEnv("FXP_CLIENT_")
+	if err != nil {
+		log.Fatal(err)
+	}
+	options.Flags(flag.CommandLine)
+	address := flag.String("address", tcpAddress, "gateway TCP address")
+	flag.Parse()
+
 	// Secret must match FXP_JWT_SECRET on the server.
 	// For dev, hardcode here. In production, read from env or a secrets store.
-	jwtSecret := "dev-secret-change-in-production"
+	jwtSecret := os.Getenv("FXP_JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret-change-in-production"
+	}
 	traderID := "TCPTrader"
 	sessionID := "tcp-session-" + strconv.Itoa(rand.Intn(100000))
 
 	log.Println("🔌 Connecting to TCP Server...")
-	conn, err := net.Dial("tcp", tcpAddress)
+	conn, err := options.Dial(context.Background(), *address, 5*time.Second)
 	if err != nil {
 		log.Fatalf("❌ TCP connection failed: %v", err)
 	}
@@ -69,12 +85,18 @@ func main() {
 	token := devjwt.Generate(jwtSecret, traderID)
 	log.Printf("🔑 Generated JWT for %s (session: %s)", traderID, sessionID)
 
+	encryption := protobuf.EncryptionType_NONE
+	if tlsconfig.Version(conn) == tls.VersionTLS13 {
+		encryption = protobuf.EncryptionType_TLS_1_3
+	} else if tlsconfig.Version(conn) == tls.VersionTLS12 {
+		encryption = protobuf.EncryptionType_TLS_1_2
+	}
 	logon := &protobuf.FXPMessage{
 		Payload: &protobuf.FXPMessage_Logon{
 			Logon: &protobuf.Logon{
 				Token:          token,
 				SessionId:      sessionID,
-				EncryptionType: protobuf.EncryptionType_TLS_1_3,
+				EncryptionType: encryption,
 				Timestamp:      timestamppb.Now(),
 			},
 		},
