@@ -108,6 +108,10 @@ jobs:
         run: bash scripts/e2e_tls.sh
         env:
           E2E_LOG_DIR: ${{ runner.temp }}/e2e-tls
+      - name: CI gate regression tests
+        run: |
+          python3 -m pip install PyYAML==6.0.3
+          python3 -m unittest discover -s tests/ci -v
       - name: Benchmark smoke and static-artifact verifier tests
         run: |
           python3 -m unittest discover -s tests/release -v
@@ -184,3 +188,17 @@ jobs:
           pr_comment: false
           breaking: ${{ github.event_name == 'pull_request' }}
           breaking_against: "${{ github.event.repository.clone_url }}#branch=${{ github.base_ref }},subdir=fxp_core/proto"
+
+  # Keep this name stable: the main ruleset requires only ci-success.
+  ci-success:
+    name: ci-success
+    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require every dependency to succeed
+        env:
+          # go is the combined matrix result; no leg may continue-on-error.
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: printf '%s' "$NEEDS_JSON" | python3 scripts/ci_success.py

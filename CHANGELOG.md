@@ -154,3 +154,7 @@ cut a release yet, so everything is under Unreleased.
   authentication/resend/gap handling, gateway limits.
 - Critical: FIFO within a price level, `order_lookup` bookkeeping, order
   ownership checks, FIX BodyLength, single MsgSeqNum counter.
+
+### Repository automation (round 4 Low #3)
+- Add a stable, fail-closed `ci-success` required check over all CI jobs,
+  including both Go matrix legs; PR checks need no private secrets.

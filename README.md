@@ -587,3 +587,10 @@ are checked every second and new connections use the last valid snapshot.
 `bash scripts/e2e_tls.sh` exercises all listeners with mTLS, live certificate
 rotation, authenticated core forwarding, the full FIX/order/restart checks and the
 benchmark smoke scenarios. Test certificates are temporary and deleted on exit.
+
+### Required CI check
+
+PRs (including Dependabot) run CI with read-only repository permissions and no
+private secrets. Require the stable `ci-success` check on `main`; it fails if
+any dependency fails, is cancelled, or is skipped, including either Go matrix
+leg. See [repository settings](docs/repo-settings.md) for the manual ruleset.
