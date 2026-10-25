@@ -203,3 +203,31 @@ func TestRejectClosesTransportToUnblockOpenLoopSender(t *testing.T) {
 		t.Fatal("rejected receiver left the sender blocked until the phase deadline")
 	}
 }
+
+func TestClosedLoopRefreshesDeadlineForHealthyLongPhases(t *testing.T) {
+	client, server := net.Pipe()
+	defer func() { _ = client.Close(); _ = server.Close() }()
+	go func() {
+		for i := 0; i < 10; i++ {
+			m, err := readFramed(server)
+			if err != nil {
+				return
+			}
+			time.Sleep(40 * time.Millisecond)
+			for _, et := range []protobuf.ExecutionType{protobuf.ExecutionType_EXEC_NEW, protobuf.ExecutionType_EXEC_FILLED} {
+				if sendFramed(server, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_ExecutionReport{ExecutionReport: &protobuf.ExecutionReport{OrderId: m.GetNewOrder().OrderId, ExecutionType: et, OrderStatus: protobuf.OrderStatus_ORDER_FILLED}}}) != nil {
+					return
+				}
+			}
+		}
+	}()
+	// Total duration is >400ms, but every response arrives well within 250ms.
+	c := config{Mode: "closed", Orders: 10, Timeout: 250 * time.Millisecond, Quantity: 1}
+	r, err := runClientPhase(client, c, "TEST", "long-closed", time.Now(), 10)
+	if err != nil {
+		t.Fatalf("timely closed-loop responses incorrectly timed out: %v", err)
+	}
+	if r.Ack.TotalCount() != 10 || r.Fill.TotalCount() != 10 {
+		t.Fatalf("incomplete long phase: %d %d", r.Ack.TotalCount(), r.Fill.TotalCount())
+	}
+}

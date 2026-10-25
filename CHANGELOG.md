@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refresh closed-loop benchmark response deadlines per send so healthy long phases do not expire midstream; preserve the intended-time deadline for open-loop runs (#3 review).
+
 - Abort blocked benchmark senders immediately when the receiver rejects/fails, retaining the original receiver error instead of waiting out the phase deadline (#3 verification).
 
 - Preserve both sender and joined-reader errors on failed benchmark writes; regression coverage prevents silently losing receiver diagnostics (#3 verification).

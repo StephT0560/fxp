@@ -262,6 +262,13 @@ func runClientPhase(conn net.Conn, c config, symbol, prefix string, start time.T
 		if wait := time.Until(intended); wait > 0 {
 			time.Sleep(wait)
 		}
+		// Closed loop has no predetermined phase duration. Give each new
+		// send its own response window rather than expiring a healthy long run.
+		if c.Mode == "closed" {
+			if err := conn.SetDeadline(time.Now().Add(c.Timeout)); err != nil {
+				return fail(err)
+			}
+		}
 		lag := time.Since(intended).Nanoseconds()
 		if lag > result.MaxSendLag {
 			result.MaxSendLag = lag

@@ -31,7 +31,10 @@ steady-state capacity estimate. It does not apply an additional synthetic HDR
 
 `--mode closed` allows one outstanding ACK per connection. Its start time is the
 actual next permitted send; no open-loop/queueing claim is made. `--rate` is
-ignored in this mode. Paired orders may overlap until both final fills arrive.
+ignored in this mode. Its deadline refreshes for each send; a healthy phase may
+last longer than the response timeout. Open mode retains its fixed deadline
+relative to the intended end of the phase. Paired orders may overlap until both
+final fills arrive.
 A completed separate warmup phase on the same connections precedes measurement.
 Each repetition reconnects and completes its own warmup; default **5**
 repetitions. All counts are exact, warmup samples are excluded and run summary
