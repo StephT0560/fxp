@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go_gateway/protobuf"
 	"go_gateway/test_clients/devjwt"
+	"go_gateway/test_clients/tradefeed"
 	"go_gateway/tlsconfig"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -138,9 +139,10 @@ func main() {
 	log.Println("📡 Subscribed to Market Data for BTC/USD!")
 
 	// ── Step 3: Listen for server messages ────────────────────────────────────
+	tracker := &tradefeed.Tracker{}
 	go func() {
 		for {
-			processWebSocketMessages(conn)
+			processWebSocketMessages(conn, tracker)
 		}
 	}()
 
@@ -197,7 +199,7 @@ func sendRandomOrder(conn *websocket.Conn, traderID string) {
 	_ = conn.WriteMessage(websocket.BinaryMessage, orderData)
 }
 
-func processWebSocketMessages(conn *websocket.Conn) {
+func processWebSocketMessages(conn *websocket.Conn, tracker *tradefeed.Tracker) {
 	_, message, err := conn.ReadMessage()
 	if err != nil {
 		log.Printf("❌ Failed to receive WebSocket message: %v", err)
@@ -220,6 +222,14 @@ func processWebSocketMessages(conn *websocket.Conn) {
 	case *protobuf.FXPMessage_MarketDataIncremental:
 		update := payload.MarketDataIncremental
 		log.Printf("📡 Market Data Update → Symbol: %s | Changes: %+v", update.Symbol, update.Changes)
+	case *protobuf.FXPMessage_TradeCaptureReport:
+		trade := payload.TradeCaptureReport
+		if gap, expected := tracker.Observe(trade.Symbol, trade.Seq); gap {
+			log.Printf("SEQ GAP symbol=%s expected=%d got=%d", trade.Symbol, expected, trade.Seq)
+		}
+		log.Printf("TradeCaptureReport: symbol=%s seq=%d price=%d qty=%d aggressor=%s auction=%t",
+			trade.Symbol, trade.Seq, trade.TradePrice, trade.TradeQuantity,
+			trade.AggressorSide.String(), trade.IsAuction)
 	case *protobuf.FXPMessage_LogonAck:
 		// Already handled in main — log it if it appears unexpectedly
 		log.Printf("ℹ️ LogonAck received in message loop: accepted=%v", payload.LogonAck.Accepted)
