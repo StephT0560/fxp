@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MIT
+# Requires Compose >=2.24.4 for !override. Layer on docker-compose.dev.yml.
+services:
+  core:
+    ports: !override
+      - 127.0.0.1:3000:3000
+    environment:
+      FXP_SYMBOL_CONFIG: /etc/fxp/config/symbols.demo.csv
+  gateway:
+    environment:
+      FXP_GW_TCP_ADDR: 127.0.0.1:8082
+      FXP_GW_WS_ADDR: 127.0.0.1:8081
+      FXP_SYMBOL_CONFIG: /etc/fxp/config/symbols.demo.csv
+  bridge:
+    # FIX is not part of this local browser demo. Enable explicitly if needed.
+    profiles: !override [fix]
+  demo_api:
+    image: fxp-demo:local
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    init: true
+    network_mode: service:core
+    depends_on:
+      core:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    profiles: [demo]
+    stop_grace_period: 10s
+    environment:
+      FXP_DEMO_ADDR: 0.0.0.0:3000
+      FXP_DEMO_ORIGIN: http://127.0.0.1:3000
+      FXP_ALLOW_PLAINTEXT: 'true'
+      FXP_DEMO_GATEWAY_WS_URL: ws://127.0.0.1:8081/ws
+      FXP_SIM_GATEWAY_ADDR: 127.0.0.1:8082
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set FXP_JWT_SECRET}
+      FXP_JWT_ISSUER: ${FXP_JWT_ISSUER:-fxp-dev}
+      FXP_JWT_AUDIENCE: ${FXP_JWT_AUDIENCE:-fxp-gateway}
+      FXP_JWT_KID: ${FXP_JWT_KID:-}
+      FXP_DEMO_TOKEN_TTL_SEC: ${FXP_DEMO_TOKEN_TTL_SEC:-900}
+      FXP_DEMO_TOKEN_RATE_PER_MIN: ${FXP_DEMO_TOKEN_RATE_PER_MIN:-10}
+      FXP_SYMBOL_CONFIG: /etc/fxp/config/symbols.demo.csv
+    volumes:
+      - ./config:/etc/fxp/config:ro
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:3000/healthz]
+      interval: 2s
+      timeout: 2s
+      retries: 20

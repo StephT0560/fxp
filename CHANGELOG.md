@@ -7,6 +7,17 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Local console BFF
+- Add the `demo_api` Go module: demo users/symbol rules, short-lived JWTs via
+  the shared signer with per-IP issuance limits, same-origin byte-transparent
+  WebSocket proxy, supervised simulator start/status/stop and bounded redacted
+  logs, static assets with SPA fallback or a placeholder, and security headers.
+- Add `Dockerfile.demo`, the private-port Compose demo overlay, `make demo` /
+  `make demo-down`, random private env-file credentials and shared demo symbols.
+- Add real core/gateway/BFF integration, proxy and supervision tests, and the
+  required `demo-api` CI job. Hosted/UI/multiplexing work remains out of scope.
+- See [console setup and API](docs/console/README.md).
+
 ### Simulator credentials and transport (C2)
 - Trading-day Logons now sign with the environment's `FXP_JWT_SECRET`, using
   the shared JWT helper for issuer/audience/key id. Missing or short secrets

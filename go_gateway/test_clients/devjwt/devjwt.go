@@ -28,6 +28,19 @@ const (
 // and defaults as the gateway); every token gets a fresh jti.
 // In production the client receives a token from your identity provider.
 func Generate(secret, traderID string) string {
+	return generate(secret, traderID, 24*time.Hour)
+}
+
+// GenerateWithTTL reuses the test-client signer with a caller-selected lifetime.
+// Callers enforce their own policy (the console caps this at fifteen minutes).
+func GenerateWithTTL(secret, traderID string, ttl time.Duration) (string, error) {
+	if ttl < time.Second || ttl > 24*time.Hour {
+		return "", fmt.Errorf("JWT lifetime must be between one second and 24 hours")
+	}
+	return generate(secret, traderID, ttl), nil
+}
+
+func generate(secret, traderID string, ttl time.Duration) string {
 	head := map[string]string{"alg": "HS256", "typ": "JWT"}
 	if kid := os.Getenv("FXP_JWT_KID"); kid != "" {
 		head["kid"] = kid
@@ -42,7 +55,7 @@ func Generate(secret, traderID string) string {
 			"jti": newJTI(),
 			"iat": now.Unix(),
 			"nbf": now.Unix(),
-			"exp": now.Add(24 * time.Hour).Unix(),
+			"exp": now.Add(ttl).Unix(),
 		}),
 	)
 	signingInput := header + "." + payload

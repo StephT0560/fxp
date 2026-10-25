@@ -204,10 +204,47 @@ jobs:
           breaking: ${{ github.event_name == 'pull_request' }}
           breaking_against: "${{ github.event.repository.clone_url }}#branch=${{ github.base_ref }},subdir=fxp_core/proto"
 
+  demo-api:
+    name: demo-api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: demo_api/go.mod
+          cache-dependency-path: "**/go.sum"
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fxp_core
+      - run: bash scripts/gen_proto.sh
+      - name: Format, vet, race, staticcheck, vulnerabilities
+        working-directory: demo_api
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race -count=1 ./...
+          go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Real core, gateway and BFF integration
+        run: bash scripts/demo_api_smoke.sh
+      - name: Compose demo build, private ports and health
+        run: |
+          make demo
+          curl --fail http://127.0.0.1:3000/healthz
+          python3 scripts/demo_compose_check.py
+      - name: Stop demo
+        if: always()
+        run: make demo-down
+
   # Keep this name stable: the main ruleset requires only ci-success.
   ci-success:
     name: ci-success
-    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto]
+    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto, demo-api]
     if: always()
     runs-on: ubuntu-latest
     steps:

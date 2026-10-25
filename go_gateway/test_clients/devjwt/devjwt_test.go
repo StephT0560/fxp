@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGenerateEmitsValidationClaims(t *testing.T) {
@@ -32,5 +33,13 @@ func TestGenerateEmitsValidationClaims(t *testing.T) {
 	}
 	if c["iss"] != DefaultIssuer || c["aud"] != DefaultAudience {
 		t.Errorf("iss/aud = %v/%v", c["iss"], c["aud"])
+	}
+}
+
+func TestGenerateWithTTLValidation(t *testing.T) {
+	for _, ttl := range []time.Duration{0, -time.Second, 25 * time.Hour} {
+		if _, err := GenerateWithTTL("test", "demo:alice", ttl); err == nil {
+			t.Fatal("invalid JWT lifetime accepted")
+		}
 	}
 }
