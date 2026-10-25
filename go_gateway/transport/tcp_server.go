@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"go_gateway/diagnostics"
 	"log"
 	"log/slog"
 	"net"
@@ -136,6 +137,7 @@ func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 			log.Println("⚠️ FXPMessage has no payload")
 			continue
 		}
+		diagnostics.Message("gateway_receive", msg)
 		HandleFXPMessageAuthenticated(clientConn, msg, &sessionID)
 		if !authed && sessionID != "" {
 			authed = true
@@ -156,14 +158,12 @@ func SendOrderToRust(clientConn net.Conn, orderData []byte) {
 		return
 	}
 	orderID := order.NewOrder.OrderId
-	encoded, err := proto.Marshal(msg)
+	frame, err := marshalOrderFrame(msg)
 	if err != nil {
 		log.Printf("❌ SendOrderToRust: re-encode failed: %v", err)
 		return
 	}
-	frame := make([]byte, 4+len(encoded))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
-	copy(frame[4:], encoded)
+
 	slog.Debug("registered order to TCP client", "order_id", orderID)
 	SendFramedToCore(clientConn, frame, orderID, order.NewOrder.Sender, false)
 }

@@ -21,9 +21,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	hdr "github.com/HdrHistogram/hdrhistogram-go"
+	"go_gateway/diagnostics"
 	"go_gateway/protobuf"
 	"go_gateway/symbolconfig"
 	"go_gateway/test_clients/devjwt"
@@ -36,6 +38,7 @@ const histogramMax = int64(24 * time.Hour)
 
 type config struct {
 	TLS         tlsconfig.ClientOptions `json:"tls"`
+	Subscribers int                     `json:"market_data_subscribers"`
 	Pacer       string                  `json:"pacer"`
 	Mode        string                  `json:"mode"`
 	Address     string                  `json:"gateway"`
@@ -70,6 +73,9 @@ func validate(c config) error {
 	}
 	if c.Mode != "open" && c.Mode != "closed" {
 		return errors.New("mode must be open or closed")
+	}
+	if c.Subscribers < 0 || c.Subscribers > 1024 {
+		return errors.New("subscribers must be 0..1024")
 	}
 	if c.Concurrency < 1 || c.Concurrency > 1024 || c.Orders < 2 || c.Orders > 10_000_000 || c.Orders%2 != 0 || c.Warmup < 2 || c.Warmup > 10_000_000 || c.Warmup%2 != 0 || c.Repetitions < 1 || c.Repetitions > 100 || c.Timeout <= 0 || c.Timeout > time.Hour {
 		return errors.New("require 1..1024 connections, even orders/warmup in 2..10000000, 1..100 repetitions, timeout in (0,1h]")
@@ -241,6 +247,7 @@ func runClientPhase(conn net.Conn, c config, symbol, prefix string, start time.T
 			}
 			stamp := value.(sendStamp)
 			now := time.Now()
+			diagnostics.Message("client_receive", m)
 			latency := now.Sub(stamp.intended).Nanoseconds()
 			if latency < 1 {
 				latency = 1
@@ -319,6 +326,7 @@ func runClientPhase(conn net.Conn, c config, symbol, prefix string, start time.T
 		}
 		oid := prefix + "-" + strconv.Itoa(i)
 		pending.Store(oid, sendStamp{intended, actual})
+		diagnostics.Event("client_send", oid)
 		side := protobuf.OrderSide_BUY
 		if i%2 != 0 {
 			side = protobuf.OrderSide_SELL
@@ -362,19 +370,33 @@ func summarize(h *hdr.Histogram) quantiles {
 }
 
 type repetition struct {
-	Index           int       `json:"index"`
-	Orders          int64     `json:"orders"`
-	ElapsedNS       int64     `json:"elapsed_ns"`
-	OrdersPerSecond float64   `json:"orders_per_second"`
-	MaxSendLag      int64     `json:"max_send_lag_ns"`
-	Ack             quantiles `json:"ack"`
-	SendLag         quantiles `json:"send_lag"`
-	AckAfterSend    quantiles `json:"ack_after_send"`
-	Fill            quantiles `json:"fill"`
+	MarketDataUpdates int64     `json:"market_data_updates_received"`
+	Index             int       `json:"index"`
+	Orders            int64     `json:"orders"`
+	ElapsedNS         int64     `json:"elapsed_ns"`
+	OrdersPerSecond   float64   `json:"orders_per_second"`
+	MaxSendLag        int64     `json:"max_send_lag_ns"`
+	Ack               quantiles `json:"ack"`
+	SendLag           quantiles `json:"send_lag"`
+	AckAfterSend      quantiles `json:"ack_after_send"`
+	Fill              quantiles `json:"fill"`
 }
 
 func runRepetition(c config, index int) (repetition, error) {
 	nonce := fmt.Sprintf("%d-%d", time.Now().UnixNano(), index)
+	var mdUpdates atomic.Int64
+	var subscribers []net.Conn
+	var mdReaders sync.WaitGroup
+	mdErrors := make(chan error, c.Subscribers)
+	var closing atomic.Bool
+	defer func() {
+		closing.Store(true)
+		for _, conn := range subscribers {
+			_ = conn.Close()
+		}
+		mdReaders.Wait()
+	}()
+
 	conns := make([]net.Conn, 0, c.Concurrency)
 	defer func() {
 		for _, conn := range conns {
@@ -427,6 +449,59 @@ func runRepetition(c config, index int) (repetition, error) {
 	if _, _, err := run("warmup", c.Warmup); err != nil {
 		return repetition{}, fmt.Errorf("warmup: %w", err)
 	}
+	for i := 0; i < c.Subscribers; i++ {
+		conn, err := connect(c, 10000+i, nonce)
+		if err != nil {
+			return repetition{}, err
+		}
+		subscribers = append(subscribers, conn)
+		symbols := []string{}
+		seen := map[string]bool{}
+		for id := 0; id < c.Concurrency; id++ {
+			symbol := symbolFor(c, id)
+			if !seen[symbol] {
+				seen[symbol] = true
+				symbols = append(symbols, symbol)
+			}
+		}
+		if err = sendFramed(conn, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: &protobuf.MarketDataRequest{Symbols: symbols}}}); err != nil {
+			return repetition{}, err
+		}
+		// The completed warmup creates every symbol. Wait for each subscription
+		// snapshot before measuring, otherwise the first repetition can have no
+		// subscribers while subsequent repetitions fan out.
+		for range symbols {
+			snapshot, err := readFramed(conn)
+			if err != nil {
+				return repetition{}, err
+			}
+			if snapshot.GetMarketDataSnapshot() == nil {
+				return repetition{}, errors.New("expected subscription snapshot")
+			}
+		}
+		_ = conn.SetDeadline(time.Time{})
+		mdReaders.Add(1)
+		go func() {
+			defer mdReaders.Done()
+			for {
+				m, err := readFramed(conn)
+				if err != nil {
+					if !closing.Load() {
+						mdErrors <- err
+					}
+					return
+				}
+				if m.GetMarketDataIncremental() != nil {
+					mdUpdates.Add(1)
+				}
+				if m.GetErrorMessage() != nil {
+					mdErrors <- errors.New(m.GetErrorMessage().ErrorMessage)
+					return
+				}
+			}
+		}()
+	}
+
 	r, elapsed, err := run("measured", c.Orders)
 	if err != nil {
 		return repetition{}, err
@@ -435,7 +510,12 @@ func runRepetition(c config, index int) (repetition, error) {
 	if r.Ack.TotalCount() != orders || r.Fill.TotalCount() != orders {
 		return repetition{}, errors.New("incomplete histogram counts")
 	}
-	return repetition{index, orders, elapsed.Nanoseconds(), float64(orders) / elapsed.Seconds(), r.MaxSendLag, summarize(r.Ack), summarize(r.SendLag), summarize(r.AckAfterSend), summarize(r.Fill)}, nil
+	select {
+	case err := <-mdErrors:
+		return repetition{}, fmt.Errorf("market-data reader: %w", err)
+	default:
+	}
+	return repetition{mdUpdates.Load(), index, orders, elapsed.Nanoseconds(), float64(orders) / elapsed.Seconds(), r.MaxSendLag, summarize(r.Ack), summarize(r.SendLag), summarize(r.AckAfterSend), summarize(r.Fill)}, nil
 }
 
 type statistic struct {
@@ -548,6 +628,11 @@ func markdown(c config, env map[string]string, summary map[string]statistic) str
 	return b.String()
 }
 func run() error {
+	stopDiagnostics, err := diagnostics.Start()
+	if err != nil {
+		return err
+	}
+	defer stopDiagnostics()
 	options, err := tlsconfig.ClientFromEnv("FXP_CLIENT_")
 	if err != nil {
 		return err
@@ -556,6 +641,7 @@ func run() error {
 	c := config{}
 	var jsonPath, markdownPath string
 	var qty int
+	flag.IntVar(&c.Subscribers, "subscribers", 0, "additional authenticated market-data readers; zero disables fan-out fixture")
 	flag.StringVar(&c.Pacer, "pacer", "sleep", "open-loop pacing: sleep, busy-spin or hybrid (100us spin window)")
 	flag.StringVar(&c.Mode, "mode", "open", "open: fixed intended schedule; closed: wait for each ACK")
 	flag.StringVar(&c.Address, "address", "127.0.0.1:8082", "TCP gateway")

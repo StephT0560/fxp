@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"go_gateway/diagnostics"
 	"go_gateway/logging"
 	"go_gateway/startup"
 	"go_gateway/tlsconfig"
@@ -18,6 +19,11 @@ import (
 
 func main() {
 	logging.Setup()
+	stopDiagnostics, diagnosticErr := diagnostics.Start()
+	if diagnosticErr != nil {
+		log.Fatalf("diagnostics: %v", diagnosticErr)
+	}
+	defer stopDiagnostics()
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	ctx, cancel := context.WithCancel(signalCtx)

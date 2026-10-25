@@ -644,6 +644,14 @@ are checked every second and new connections use the last valid snapshot.
 rotation, authenticated core forwarding, the full FIX/order/restart checks and the
 benchmark smoke scenarios. Test certificates are temporary and deleted on exit.
 
+### Optional local profiling
+
+Diagnostics are off by default and add no wire fields. `FXP_HOP_TRACE` selects a
+local CLOCK_MONOTONIC hop-event file on core/gateway/bridge; `FXP_PROFILE_DIR`
+selects Go CPU/alloc/block/mutex files; `FXP_TRACE_FILE` selects a Go runtime trace.
+See [profiling instrumentation](docs/performance-r4-instrumentation.md) for
+measurement boundaries, file handling, CPU pinning and the runner.
+
 ### Required CI check
 
 PRs (including Dependabot) run CI with read-only repository permissions and no
