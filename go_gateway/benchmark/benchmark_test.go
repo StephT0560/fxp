@@ -2,8 +2,11 @@
 package main
 
 import (
+	"errors"
 	"go_gateway/protobuf"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -137,5 +140,38 @@ func TestClosedLoopWaitsForCommonStartAndEachAcknowledgment(t *testing.T) {
 	first, second := <-observed, <-observed
 	if first.Before(start) || second.Sub(first) < 20*time.Millisecond {
 		t.Fatalf("closed-loop schedule violated: %s %s", first.Sub(start), second.Sub(first))
+	}
+}
+
+// Writer failure must join the receiver and retain both failure diagnostics.
+type failingConnection struct {
+	net.Conn
+	done chan struct{}
+	once sync.Once
+}
+
+func (c *failingConnection) Write([]byte) (int, error) { return 0, errors.New("writer sentinel") }
+func (c *failingConnection) Read([]byte) (int, error) {
+	<-c.done
+	return 0, errors.New("reader sentinel")
+}
+func (c *failingConnection) Close() error { c.once.Do(func() { close(c.done) }); return c.Conn.Close() }
+func TestSendFailureJoinsReaderAndRetainsBothErrors(t *testing.T) {
+	a, b := net.Pipe()
+	defer func() { _ = b.Close() }()
+	c := &failingConnection{Conn: a, done: make(chan struct{})}
+	defer func() { _ = c.Close() }()
+	done := make(chan error, 1)
+	go func() {
+		_, err := runClientPhase(c, config{Mode: "open", Rate: 1000, Timeout: time.Second, Quantity: 1}, "TEST", "failure", time.Now(), 2)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "writer sentinel") || !strings.Contains(err.Error(), "reader sentinel") {
+			t.Fatalf("lost failure detail: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sender did not join its receiver")
 	}
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve both sender and joined-reader errors on failed benchmark writes; regression coverage prevents silently losing receiver diagnostics (#3 verification).
+
 - Supersede historical performance claims with recorded corrected measurements and raw artifacts: reusable FIX encode is faster than FXP in this run; publish five-run live endpoint spreads and full caveats (#3).
 
 - Add non-gating nightly/manual benchmark artifacts, functional harness smoke coverage, and tag-triggered static Linux amd64/arm64 builds with checksums, CycloneDX inventories and draft-only releases (#3).

@@ -239,7 +239,11 @@ func runClientPhase(conn net.Conn, c config, symbol, prefix string, start time.T
 	}()
 	// Every return joins the reader. Closing the connection on failure unblocks
 	// both directions; failed/incomplete runs never produce success percentiles.
-	fail := func(err error) (phaseResult, error) { _ = conn.Close(); <-received; return result, err }
+	fail := func(err error) (phaseResult, error) {
+		_ = conn.Close()
+		readerErr := <-received
+		return result, errors.Join(err, readerErr)
+	}
 	if wait := time.Until(start); wait > 0 {
 		time.Sleep(wait)
 	}
