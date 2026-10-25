@@ -65,7 +65,8 @@ repository root with ports 8080–8083 free:
 
 ```bash
 python3 -m unittest discover -s tests/quickfix -v
-python3 scripts/quickfix_acceptance.py
+python3 scripts/quickfix_acceptance.py --compat default
+python3 scripts/quickfix_acceptance.py --compat quickfix
 ```
 
 The script builds the three services, fetches QuickFIX C++ v1.15.1 at pinned
@@ -73,14 +74,15 @@ commit `6908dc8c1084eeb7af7f322d35216e9965684489`, and runs all 59 FIX44
 server definitions through its official POSIX Ruby runner. It owns and stops
 its service processes. A fresh bridge/store is used for each definition.
 `--source /path/to/pinned/quickfix` reuses a verified checkout; `--no-build`
-reuses current binaries. `--only NAME.def` is for diagnosis and never establishes
+reuses current normal and separate fixture binaries. `--only NAME.def` is for diagnosis and never establishes
 a complete-suite result. The normal `quickfix-acceptance` CI job runs the full
 suite on PRs. See [adapter and allow-list rules](tests/quickfix/README.md).
 
 Review every expected failure individually. Preserve meaningful assertions;
 do not add a runner crash or timeout to the allow-list to make CI pass. Local
-baseline: 28 passed, 31 allow-listed failures, 0 unexpected failures / runner
-errors, 59 definitions. This is a regression gate, not certification.
+baselines: default 45 passed / 14 allow-listed, preset 57 / 2, both with 0
+unexpected failures / runner errors across 59 definitions. The compile-gated
+echo fixture supplies the upstream application behavior, not matching execution. This is a regression gate, not certification.
 
 ## Benchmark and release maintenance
 

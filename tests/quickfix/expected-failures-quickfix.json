@@ -1,0 +1,4 @@
+{
+  "14a_BadField.def": "Legacy parser/dictionary policy: after the valid Reject for undefined tag 999, noncanonical zero/negative tag syntax is ignored as garbled rather than receiving Reject(371=0/-1). User tags >=5000 remain allowed by the default dictionary policy. The later assertions are not claimed to pass.",
+  "21_RepeatingGroupSpecifierWithValueOfZero.def": "Out of scope: valid SecurityDefinition (35=d) with a zero-count group reaches the application handler, which returns BusinessMessageReject(380=3) instead of the upstream SecurityDefinition echo. No SecurityDefinition implementation is claimed."
+}

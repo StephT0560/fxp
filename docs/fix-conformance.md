@@ -104,25 +104,70 @@ ownership. Gateway namespacing continues to prevent cross-owner ID collisions.
 
 ## QuickFIX acceptance baseline
 
-The normal PR job `quickfix-acceptance` runs all 59 pinned QuickFIX C++ FIX44
-server definitions using the official POSIX Ruby runner. Observed full local
-baseline: **28 passed, 31 allow-listed failures, 0 unexpected failures and
-0 runner errors**. See [runner, adapter, and result details](../tests/quickfix/README.md)
-and the [per-definition allow-list](../tests/quickfix/expected-failures.json).
+The CI matrix runs all 59 definitions in each policy, using an explicitly
+opted-in, compile-gated loopback echo fixture. Results: **45 strict passes / 14
+allow-listed / 0 unexpected** under default policy, and **57 / 2 / 0** under the
+QuickFIX preset. The two common exclusions are `14a_BadField.def` (legacy invalid
+tag syntax/default user-tag policy) and `21` (SecurityDefinition). Default policy
+adds seven Logon-silence differences, four fatal-close differences and one
+heartbeat-expiry Logout difference. Exact grouped names and the qualifications
+for TCP-close timing are in [the runner guide](../tests/quickfix/README.md).
+No remaining allow-list entry is blocked on a missing-quantity echo fixture.
 
-Remaining unsupported compatibility policies include the QuickFIX test echo
-application, silent Logon rejection, reversed third-party routing headers,
-buffering high-sequence administrative messages, exact heartbeat/TestReqID
-conventions, and waiting for the peer's Logout after fatal protocol errors.
-The last policy can produce a TCP reset when the peer sends its Logout after
-FXP has closed. These cases are explicit limitations, not passing conformance
-claims. Header order, enums, datatypes, repeating groups, resets and status have
-separate focused regressions that do not depend on an application echo.
+The echo fixture is absent from production builds and requires build tag
+`quickfix_fixture`, `-test-fixture`, `FXP_FIX_TEST_FIXTURE=quickfix`, actual and
+literal loopback, and no TLS/core token. It warns at startup, inserts quantity 1
+only for absent OrderQty, and preserves existing invalid fields for validation.
+It echoes validated orders without execution; it does not certify venue
+application behavior. Normal missing/invalid quantity rejection remains intact.
+The fixture uses fixed TestReqID TEST and fresh ephemeral sequences between
+connections, consistent with the upstream test application's assumptions.
 
-TradeCaptureReport, SecurityDefinition, initiator mode and TLS are unchanged
-and remain out of scope. No production certification rating is asserted by
-this change. In particular, a green acceptance gate means no regressions
-against its explicit baseline, not that every upstream definition passes.
+Production session fixes reverse OnBehalfOf/DeliverTo CompID, SubID and
+LocationID, plus sender/target SubID and LocationID, on immediate session replies;
+primary authenticated session CompIDs are preserved. Empty routes are omitted
+and each reply uses its own triggering request (no route leakage to later or
+asynchronous replies). Replayed application frames retain their stored routing.
+High-sequence admin/application messages are buffered until sequence recovery,
+then dispatched once through normal validation. Limits are 64 messages, 256 KiB
+of field storage accounting, and a sequence distance of 4096; overflow closes the
+session. GapFill discards covered messages and explicit reset clears the buffer.
+Repeated low-sequence ResendRequests are validated and served again without
+advancing input or output sequence state or executing application requests.
+PossDup timestamp rejects retain RefMsgType/RefTagID; an accuracy error is fatal.
+
+Heartbeat monitoring starts after Logon with the negotiated interval, avoiding a
+sleep based on the pre-Logon default. Pending TestRequests suppress additional
+idle heartbeats; the matching ID is still required. Production IDs remain unique.
+
+## Session policy configuration
+
+Defaults remain explanatory Logout for Logon failure and immediate close after
+fatal Reject/Logout. The default heartbeat expiry still sends diagnostic Logout.
+No preset changes authentication, TLS requirements or dictionary validation.
+
+- `FXP_FIX_COMPAT=default` (or unset): current policies.
+- `FXP_FIX_COMPAT=quickfix`: silent Logon failures, bounded waiting for the peer's
+  Logout after fatal errors, and silent close for an unanswered TestRequest
+  (definition 6's terminal expectation).
+- `FXP_FIX_SILENT_LOGON_FAILURES=true|false`: explicit override of Logon policy.
+- `FXP_FIX_WAIT_PEER_LOGOUT=true|false`: explicit override of fatal-close waiting.
+- `FXP_FIX_LOGOUT_TIMEOUT` (existing, default `5s`): wait bound; a nonpositive
+  configured timeout uses the five-second safety bound for fatal-error waiting.
+
+Malformed preset/boolean values fail startup. During fatal-error waiting,
+application messages are discarded; only the authenticated peer's Logout ends
+the wait early. A timer always bounds the wait, including when the peer never
+responds. The strict preset's heartbeat-timeout silent close does not wait for
+an already-unresponsive peer. Both policy booleans can also be enabled directly
+without changing the default diagnostic heartbeat-expiry policy.
+
+Compose exposes these production policy settings; `FXP_FIX_TEST_FIXTURE` stays
+hard-disabled and images contain only the normal binary. Existing deployments
+need no configuration change. To opt in, set `FXP_FIX_COMPAT=quickfix` and restart
+the bridge; use the explicit booleans if counterparties prefer mixed policies.
+This work does not implement SecurityDefinition, TradeCaptureReport, initiator
+mode, pegs, or the `35=H`/`35=AE` edge reply changes.
 
 Store reset and session release share one critical section, preventing late
 callbacks from advancing newly reset sequences. If scheduled archiving fails,

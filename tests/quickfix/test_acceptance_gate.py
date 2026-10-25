@@ -19,6 +19,15 @@ class GateTest(unittest.TestCase):
         self.assertFalse(acceptance.classify({'b': False}, {'b': ''})['ok'])
     def test_runner_errors_cannot_be_allowlisted(self):
         self.assertFalse(acceptance.classify({'b': False}, {'b': 'unsupported'}, ['b'])['ok'])
+    def test_policy_baselines_are_separate_and_reasoned(self):
+        default = acceptance.load_allowlist('default')
+        strict = acceptance.load_allowlist('quickfix')
+        self.assertLess(set(strict), set(default))
+        self.assertEqual(set(strict), {'14a_BadField.def', '21_RepeatingGroupSpecifierWithValueOfZero.def'})
+        for baseline in (default, strict):
+            self.assertTrue(all(reason.strip() for reason in baseline.values()))
+        self.assertNotIn('ReverseRoute.def', default)
+        self.assertNotIn('RejectResentMessage.def', default)
     def test_zero_tests_never_pass(self):
         self.assertFalse(acceptance.classify({}, {})['ok'])
 if __name__ == '__main__': unittest.main()
