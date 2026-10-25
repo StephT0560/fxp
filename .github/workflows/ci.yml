@@ -114,6 +114,7 @@ jobs:
           python3 -m unittest discover -s tests/ci -v
           python3 -m unittest discover -s tests/compose -v
           python3 -m unittest discover -s tests/security -v
+          python3 -m unittest discover -s tests -p "test_*.py" -v
       - name: Default secure Compose build and smoke
         run: bash scripts/compose_check.sh
       - name: Benchmark smoke and static-artifact verifier tests

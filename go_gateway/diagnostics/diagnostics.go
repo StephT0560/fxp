@@ -19,7 +19,6 @@ import (
 
 type sink struct {
 	sync.Mutex
-	file   *os.File
 	writer *bufio.Writer
 }
 
@@ -81,7 +80,7 @@ func Start() (func(), error) {
 		if err != nil {
 			return fail(err)
 		}
-		s := &sink{file: f, writer: bufio.NewWriterSize(f, 256*1024)}
+		s := &sink{writer: bufio.NewWriterSize(f, 256*1024)}
 		active.Store(s)
 		closers = append(closers, func() { active.Store(nil); s.Lock(); defer s.Unlock(); _ = s.writer.Flush(); _ = f.Close() })
 	}

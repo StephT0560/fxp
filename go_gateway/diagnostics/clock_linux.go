@@ -1,7 +1,6 @@
 //go:build linux
 
 // SPDX-License-Identifier: MIT
-//
 package diagnostics
 
 import (

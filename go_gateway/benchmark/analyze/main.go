@@ -25,12 +25,12 @@ func analyze(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	z, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
 	}
-	defer z.Close()
+	defer func() { _ = z.Close() }()
 	var data struct {
 		Runs  []run  `json:"runs"`
 		Error string `json:"error"`
