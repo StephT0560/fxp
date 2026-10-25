@@ -4,7 +4,7 @@ import argparse, gzip, json, os, pathlib, resource, signal, socket, subprocess, 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
 p.add_argument('--output', default='benchmarks/round4')
-p.add_argument('--suite', choices=['pacing','capacity','hops','profiles','coverage','fanout','pacer-traces','rust-profiles','ab'], required=True)
+p.add_argument('--suite', choices=['pacing','capacity','hops','profiles','coverage','fanout','pacer-traces','rust-profiles','ab','fix-capacity','fix-below'], required=True)
 p.add_argument('--core-binary',default=str(ROOT/'fxp_core/target/release/fxp_core'))
 p.add_argument('--perf-binary')
 p.add_argument('--dhat',action='store_true')
@@ -61,7 +61,7 @@ def scenario(name,mode,c,rate,symbols,pacer='sleep',hops=False,profiles=False,fi
         if hops: env['FXP_HOP_TRACE']=str(out/f'{name}-client-hops.txt')
         if profiles and mode=='open':env['FXP_TRACE_FILE']=str(out/f'{name}-client.trace')
         if fix_mode is not None:
-            cmd=['taskset','-c','2','python3',str(ROOT/'scripts/bench_fix.py'),'--concurrency',str(c),'--output',str(out/f'{name}.json')]
+            cmd=['taskset','-c','2','python3',str(ROOT/'scripts/bench_fix.py'),'--concurrency',str(c),'--output',str(out/f'{name}.json'),'--mode',mode,'--rate',str(rate),'--orders',str(orders)]
         else:cmd += ['--subscribers',str(subscribers)]
         usage_before=resource.getrusage(resource.RUSAGE_CHILDREN)
         result=subprocess.run(cmd,cwd=ROOT,env=env,capture_output=True,text=True)
@@ -94,6 +94,11 @@ if a.suite=='pacing':
 elif a.suite=='hops':
     for name,mode,c in [('open-c1','open',1),('open-c10','open',10),('closed-c1','closed',1)]:
         scenario('hops-'+name,mode,c,1000,'single' if c==1 else 'spread',hops=True)
+elif a.suite=='fix-capacity':
+    for rate in [1000,2000,5000,10000,20000]:
+        scenario(f'fix-open-r{rate}','open',10,rate//10,'single',fix_mode='async',orders=rate//10*5)
+elif a.suite=='fix-below':
+    scenario('profile-fix-below-knee','open',10,200,'single',fix_mode='async',orders=1000,profiles=True)
 elif a.suite=='fanout':
     for n in [0,10,100]:scenario(f'fanout-{n}','closed',10,1000,'single',subscribers=n)
 elif a.suite=='pacer-traces':
