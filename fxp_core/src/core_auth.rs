@@ -17,6 +17,9 @@ impl CoreAuth {
         if token.as_ref().is_some_and(|s| s.len() > MAX_TOKEN) {
             return Err("FXP_CORE_AUTH_TOKEN exceeds 1024 bytes");
         };
+        if token.as_ref().is_some_and(|s| s.len() < 24) {
+            return Err("FXP_CORE_AUTH_TOKEN must contain at least 24 bytes when set");
+        }
         Ok(Self {
             token: token.map(|s| Arc::from(s.into_bytes())),
         })
@@ -62,10 +65,16 @@ impl CoreAuth {
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
+    #[test]
+    fn rejects_short_configured_tokens() {
+        assert!(CoreAuth::new(Some("x".repeat(23))).is_err());
+        assert!(CoreAuth::new(Some("x".repeat(24))).is_ok());
+        assert!(CoreAuth::new(Some(String::new())).is_ok());
+    }
     #[tokio::test]
     async fn required_token_rejects_wrong_and_accepts_valid_without_echo() {
-        for provided in ["wrong-private-value", "correct-private-value"] {
-            let auth = CoreAuth::new(Some("correct-private-value".into())).unwrap();
+        for provided in ["wrong-private-value", "correct-private-value-long"] {
+            let auth = CoreAuth::new(Some("correct-private-value-long".into())).unwrap();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let mut client = TcpStream::connect(listener.local_addr().unwrap())
                 .await
@@ -81,7 +90,7 @@ mod tests {
             client.write_all(provided.as_bytes()).await.unwrap();
             let mut ack = [0u8; 1];
             let accepted = client.read_exact(&mut ack).await.is_ok();
-            assert_eq!(accepted, provided == "correct-private-value");
+            assert_eq!(accepted, provided == "correct-private-value-long");
             if accepted {
                 assert_eq!(ack, [1])
             };
@@ -90,7 +99,7 @@ mod tests {
     }
     #[tokio::test]
     async fn ordinary_fxp_header_is_rejected_before_sender_can_be_read() {
-        let auth = CoreAuth::new(Some("not-logged".into())).unwrap();
+        let auth = CoreAuth::new(Some("not-logged-secret-value-long".into())).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut client = TcpStream::connect(listener.local_addr().unwrap())
             .await

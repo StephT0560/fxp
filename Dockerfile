@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: MIT
 # Multi-stage build for fxp_core, go_gateway and fix_bridge.
 #   docker build -t fxp .
@@ -11,7 +12,9 @@ ARG PROTOC_VERSION
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \
     && rm -rf /var/lib/apt/lists/*
-RUN case "${TARGETARCH:-amd64}" in \
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca CURL_CA_BUNDLE=/run/secrets/proxy_ca CARGO_HTTP_CAINFO=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
+    case "${TARGETARCH:-amd64}" in \
         amd64) arch=x86_64 ;; \
         arm64) arch=aarch_64 ;; \
         *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
@@ -26,21 +29,29 @@ COPY --from=protoc /opt/protoc /opt/protoc
 ENV PATH="/opt/protoc/bin:${PATH}"
 WORKDIR /src/fxp_core
 COPY fxp_core/ ./
-RUN cargo build --release --locked --bin fxp_core
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca CURL_CA_BUNDLE=/run/secrets/proxy_ca CARGO_HTTP_CAINFO=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
+    cargo build --release --locked --bin fxp_core
 
 FROM golang:1.26-bookworm AS go-build
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 COPY --from=protoc /opt/protoc /opt/protoc
 ENV PATH="/opt/protoc/bin:/go/bin:${PATH}" CGO_ENABLED=0
 WORKDIR /src
 COPY go.work ./
 COPY go_gateway/go.mod go_gateway/go.sum go_gateway/
 COPY fix_bridge/go.mod fix_bridge/go.sum fix_bridge/
-RUN cd go_gateway && go mod download && cd ../fix_bridge && go mod download
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca CURL_CA_BUNDLE=/run/secrets/proxy_ca CARGO_HTTP_CAINFO=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
+    cd go_gateway && go mod download && cd ../fix_bridge && go mod download
 COPY fxp_core/proto/ fxp_core/proto/
 COPY scripts/gen_proto.sh scripts/
 COPY go_gateway/ go_gateway/
 COPY fix_bridge/ fix_bridge/
-RUN bash scripts/gen_proto.sh \
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca CURL_CA_BUNDLE=/run/secrets/proxy_ca CARGO_HTTP_CAINFO=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
+    bash scripts/gen_proto.sh \
     && mkdir -p /out \
     && (cd go_gateway && go build -trimpath -o /out/go_gateway .) \
     && (cd fix_bridge && go build -trimpath -o /out/fix_bridge .)

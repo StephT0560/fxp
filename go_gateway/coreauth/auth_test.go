@@ -10,7 +10,7 @@ import (
 )
 
 func TestTokenHandshakeAndRedactedFailure(t *testing.T) {
-	for _, token := range []string{"correct-secret", "wrong-secret"} {
+	for _, token := range []string{"correct-secret-at-least-24-bytes", "wrong-secret-at-least-24-bytes"} {
 		client, server := net.Pipe()
 		done := make(chan struct{})
 		go func() {
@@ -27,14 +27,14 @@ func TestTokenHandshakeAndRedactedFailure(t *testing.T) {
 			if _, err := io.ReadFull(server, data); err != nil {
 				return
 			}
-			if string(data) == "correct-secret" {
+			if string(data) == "correct-secret-at-least-24-bytes" {
 				_, _ = server.Write([]byte{1})
 			}
 		}()
 		err := Authenticate(client, token)
 		_ = client.Close()
 		<-done
-		if (err == nil) != (token == "correct-secret") {
+		if (err == nil) != (token == "correct-secret-at-least-24-bytes") {
 			t.Fatalf("handshake result: %v", err)
 		}
 		if err != nil && strings.Contains(err.Error(), token) {

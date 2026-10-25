@@ -4,3 +4,10 @@ bin
 fix_store
 **/*.log
 go_gateway/protobuf/*.pb.go
+
+# Never send deployment secrets or fixtures into a build context
+.env
+.env.*
+!.env.example
+certs
+work

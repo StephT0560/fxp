@@ -96,3 +96,89 @@ plaintext to a TLS listener, CA rotation and retention of invalid replacements.
 Asymmetric JWT/JWKS remains a design discussion: a future change would need issuer
 and audience enforcement, an explicit algorithm allow-list, bounded key caching,
 rotation overlap and fail-closed unknown-key behavior. It is not implemented here.
+
+## Breaking configuration migration (round 4 #2)
+
+Native gateway listeners now default to `127.0.0.1:8082` (TCP) and
+`127.0.0.1:8081` (WebSocket). The bridge defaults to `127.0.0.1:8083`.
+Use `FXP_GW_TCP_ADDR`, `FXP_GW_WS_ADDR`, and `FXP_FIX_ADDR` for explicit binds;
+the bridge's `-addr` flag takes precedence. A plaintext non-loopback bind,
+including IPv4/IPv6 wildcards, refuses startup. To deliberately accept that
+risk, set **`FXP_ALLOW_PLAINTEXT=true`**: each external plaintext listener logs an
+INSECURE warning on every startup. Only literal `true`/`false` are accepted.
+This override does not bypass TLS-required mode or secret validation.
+Loopback plaintext remains available without an override. TLS-configured
+non-loopback listeners need no plaintext override.
+
+`FXP_JWT_SECRET` and a configured `FXP_JWT_PREVIOUS_SECRET` must contain at least
+**24 UTF-8 bytes**; a nonempty `FXP_CORE_AUTH_TOKEN` must contain **24–1024 bytes**
+in both core and gateway. Empty tokens still disable core auth in native/dev
+mode. The 24-byte floor preserves the existing 31-byte loopback E2E fixture;
+it is a length check, not an entropy estimate. Generate independent random keys
+with `openssl rand -hex 32` for deployment. Gateway/bridge validate secrets at
+startup; they do not fall back to a built-in key. The known
+`dev-secret-change-in-production` key (current or previous) is forbidden when
+any listener is non-loopback, including with TLS or the plaintext override.
+Hostnames are conservatively treated as non-loopback for this default-key check;
+use literal loopback IPs for local development.
+
+For an existing deployment: rotate undersized keys/tokens, stop all three
+processes, install trusted certificates, set explicit desired bind addresses,
+and restart with matching core/gateway tokens and matching JWT/FIX credentials.
+Update clients for verified TLS/mTLS. Tokens signed with a replaced JWT key
+must be reissued (or use a sufficiently long previous key for a planned rotation).
+The core-auth handshake and wire schema are unchanged; there is no token grace
+period. Native loopback users with sufficiently long keys need no TLS changes.
+
+### Secure Compose and explicit development profile
+
+`docker compose up --build` is now the secure path: TLS is required, the bridge's
+upstream verifies TLS, client certificates are required by default, and Compose
+requires a nonempty `FXP_CORE_AUTH_TOKEN` as well as JWT/FIX credentials.
+The config bind is now `/etc/fxp/config`, a sibling of the certificate mount;
+update existing `FXP_SYMBOL_CONFIG` paths (for example to
+`/etc/fxp/config/symbols.example.csv`). This avoids nesting the certificate bind
+inside a read-only parent bind, which prevents container startup on some runtimes.
+The default certificate paths are under `/etc/fxp/certs`, mounted read-only from
+`FXP_CERTS_DIR` (default `./certs`). `FXP_CERT_GID` (default 1000) adds the host
+certificate group to UID 10001; it does not change the application UID.
+
+For disposable local certificates, run `make dev-certs` and set `FXP_CERT_GID`
+to `id -g`. The helper keeps the CA private key owner-only, grants group read to
+server/client keys, and never makes private keys world-readable. Certificates
+expire after two days. Production needs managed certificates and restricted key
+ownership; development CA/client private keys must not be distributed together
+with a production server. `.env`, `certs/`, and scratch output are excluded from
+Git and the Docker build context.
+
+The explicit alternative is:
+
+```sh
+docker compose -f docker-compose.dev.yml --profile dev up --build
+```
+
+All three dev services log an **INSECURE DEVELOPMENT** banner on every startup.
+This profile disables TLS/mTLS (including bridge → gateway verification), sets
+`FXP_ALLOW_PLAINTEXT=true`, and empties the core token even if the host has one.
+JWT and FIX authentication still apply and require explicit credentials; the
+known dev JWT is still rejected on container wildcard listeners. Host-published
+ports bind only `127.0.0.1`. Traffic, JWTs and FIX passwords can be intercepted;
+any process in the shared container network namespace can impersonate traders
+at the unauthenticated core. Do not use this profile on a shared/untrusted host
+or for production. It uses a separate Compose file because required-variable
+interpolation also evaluates inactive profiles in the secure file. Stop one
+stack before starting the other; their published ports overlap.
+
+For repeatable verification, `bash scripts/compose_check.sh` builds a disposable
+secure stack (`--no-build` reuses a prebuilt image), checks mTLS on TCP/WS/FIX plus a WebSocket upgrade, and crosses a
+FIX order through gateway/core; it then removes its own containers/volumes and
+throwaway certificates. `scripts/compose_smoke.py` can check an already-running
+stack using exported credentials and host certificate paths; `--dev` selects the
+development profile explicitly.
+
+Behind an HTTPS-inspecting build proxy, the Dockerfile accepts an optional
+BuildKit secret `proxy_ca` containing the trusted CA bundle. Pass it through
+`docker build --secret id=proxy_ca,src=/path/to/combined-ca-bundle` (or Compose
+build secrets). It is mounted only during network build steps and never copied
+into the image. `--build-arg GOPROXY=...` selects an allowed module source;
+verification remains enabled. Neither option changes runtime TLS trust.

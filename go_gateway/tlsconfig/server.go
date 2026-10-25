@@ -38,6 +38,11 @@ func ServerFromEnv() (*Server, error) {
 			return nil, errors.New("FXP_TLS_REQUIRED must be a boolean")
 		}
 	}
+	if value := os.Getenv("FXP_ALLOW_PLAINTEXT"); value != "" {
+		if value != "true" && value != "false" {
+			return nil, errors.New("FXP_ALLOW_PLAINTEXT must be true or false")
+		}
+	}
 	return NewServer(ServerOptions{os.Getenv("FXP_TLS_CERT_FILE"), os.Getenv("FXP_TLS_KEY_FILE"), os.Getenv("FXP_TLS_CLIENT_CA_FILE"), required})
 }
 func NewServer(o ServerOptions) (*Server, error) {
@@ -143,7 +148,16 @@ func (s *Server) Listen(addr string) (net.Listener, error) {
 		return tls.NewListener(ln, s.Config()), nil
 	}
 	if a, ok := ln.Addr().(*net.TCPAddr); !ok || !a.IP.IsLoopback() {
-		slog.Warn("plaintext listener on a non-loopback address; configure TLS or FXP_TLS_REQUIRED=true", "address", ln.Addr().String())
+		if os.Getenv("FXP_ALLOW_PLAINTEXT") != "true" {
+			_ = ln.Close()
+			return nil, errors.New("refusing plaintext non-loopback listener: configure TLS or explicitly set FXP_ALLOW_PLAINTEXT=true")
+		}
+		// This deliberate security downgrade must be visible even at ERROR level.
+		logger := slog.Default()
+		if !logger.Enabled(context.Background(), slog.LevelWarn) {
+			logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+		}
+		logger.Warn("INSECURE: FXP_ALLOW_PLAINTEXT=true permits plaintext non-loopback traffic; credentials and orders are exposed", "address", ln.Addr().String())
 	}
 	return ln, nil
 }

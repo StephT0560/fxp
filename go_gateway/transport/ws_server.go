@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go_gateway/protobuf"
+	"go_gateway/startup"
 	"go_gateway/tlsconfig"
 
 	"github.com/gorilla/websocket"
@@ -62,7 +63,7 @@ func RunWebSocketServer(ctx context.Context) error {
 	return RunWebSocketServerWithTLS(ctx, manager)
 }
 func RunWebSocketServerWithTLS(ctx context.Context, manager *tlsconfig.Server) error {
-	listener, err := manager.Listen(":8081")
+	listener, err := manager.Listen(startup.Address("FXP_GW_WS_ADDR", "127.0.0.1:8081"))
 	if err != nil {
 		return err
 	}

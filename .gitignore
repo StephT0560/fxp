@@ -39,3 +39,7 @@ fix_store/
 
 # Local TLS deployment material; never commit private keys.
 /certs/
+
+# Local deployment secrets
+.env
+work/

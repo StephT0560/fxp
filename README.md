@@ -235,14 +235,41 @@ There is no compaction, replication or exactly-once client delivery. Disabling
 the flag does not migrate state; re-enabling an old log restores its history.
 See [the persistence design and rollout guide](docs/gtc-persistence.md).
 
+Secure local Compose quickstart (breaking defaults: TLS/mTLS and core auth):
+
 ```bash
-export FXP_JWT_SECRET="$(openssl rand -hex 32)"
-export FXP_FIX_CREDENTIALS="FIRM01:$(openssl rand -hex 16)"
-docker compose up --build
-# WebSocket :8081, FXP TCP :8082, FIX 4.4 :8083 (core :8080 stays private)
+cp .env.example .env
+# Fill .env with independent random JWT/core values (openssl rand -hex 32),
+# FXP_FIX_CREDENTIALS=FIRM01:<random password>, and FXP_CERT_GID from id -g.
+make dev-certs
+docker compose up --build -d --wait
+# Export your .env values for the host smoke client (do not print credentials):
+set -a; . ./.env; set +a
+python3 scripts/compose_smoke.py
 ```
 
-The multi-stage [`Dockerfile`](Dockerfile) builds all three binaries into one image; [`docker-compose.yml`](docker-compose.yml) runs core, gateway and bridge from it and keeps the FIX session store in the `fix_store` volume. Compose refuses to start without `FXP_JWT_SECRET` and `FXP_FIX_CREDENTIALS`; other variables from the tables below can be added to the `environment:` blocks.
+`make dev-certs` creates throwaway two-day certificates for local use. Use managed
+certificates and restricted key access for production. The default stack requires
+client certificates, verifies bridge→gateway TLS, and requires a matching core
+token. The core port stays private. See [.env.example](.env.example).
+
+Explicit insecure local development (still fill JWT/FIX credentials in `.env`):
+
+```bash
+# If the secure stack is running, stop it first using its populated .env:
+# docker compose down
+docker compose -f docker-compose.dev.yml --profile dev up --build
+# Logs an INSECURE DEVELOPMENT banner. No TLS, no core token; host ports
+# are loopback-only. JWT and FIX authentication still apply.
+```
+
+The dev file deliberately overrides TLS and empties the core token, even if
+present in `.env`. Traffic and credentials are exposed and local processes with
+core access can impersonate traders. It is unsuitable for production/shared
+hosts. Separate files avoid secure required-variable interpolation in inactive
+profiles. Full [migration notes and certificate permissions](docs/tls-trust.md#breaking-configuration-migration-round-4-2)
+explain this breaking change. `bash scripts/compose_check.sh` runs a disposable
+secure build and smoke check with generated credentials.
 
 ### 6. Run the trading day simulation
 
@@ -354,7 +381,7 @@ the simulation read the same variables when minting.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FXP_JWT_SECRET` | (required) | Current HS256 key |
+| `FXP_JWT_SECRET` | (required) | Current HS256 key, minimum 24 bytes; known dev key forbidden on non-loopback binds |
 | `FXP_JWT_KID` | unset | `kid` of the current key; tokens without `kid` always use the current key |
 | `FXP_JWT_PREVIOUS_KID` / `FXP_JWT_PREVIOUS_SECRET` | unset | Previous key, still accepted for tokens carrying this `kid` during a rotation |
 | `FXP_JWT_ISSUER` | `fxp-dev` | Required `iss` |
@@ -518,7 +545,7 @@ same symbol scales. FIX execution reports and market data use those scales.
 
 | Variable | Default | Components | Meaning |
 |---|---|---|---|
-| `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/symbols.example.csv` or another file under the mounted `config/` directory |
+| `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/config/symbols.example.csv` or another file under the mounted `config/` directory |
 
 Price-only amendments retain STP-restated totals even below entry quantity
 minimums; explicit new totals still undergo lot/min/max validation.
@@ -557,9 +584,10 @@ only. See [required checks and repository configuration](docs/releasing.md).
 
 ### TLS and core trust
 
-Plaintext remains the development default. Gateway TCP/WebSocket and FIX listeners
-warn when bound outside loopback without TLS. Enable TLS and require it in deployed
-services; JWT/FIX authentication remains required. The core always binds
+Native listeners default to loopback, where plaintext remains available.
+Non-loopback plaintext refuses startup unless `FXP_ALLOW_PLAINTEXT=true`.
+Compose defaults to required TLS/mTLS and core authentication; JWT/FIX
+authentication remains required. The core always binds
 `127.0.0.1:8080`; set the same distinct token on core and gateway to admit only
 trusted forwarding connections. The bridge reaches the core through the gateway.
 See [deployment, reload and client examples](docs/tls-trust.md) and the
@@ -567,10 +595,15 @@ See [deployment, reload and client examples](docs/tls-trust.md) and the
 
 | Variable | Default | Applies to / behavior |
 |---|---|---|
+| `FXP_ALLOW_PLAINTEXT` | `false` | Explicitly permit non-loopback plaintext, with a startup warning; does not bypass TLS-required or secret policy |
+| `FXP_GW_TCP_ADDR` / `FXP_GW_WS_ADDR` | native `127.0.0.1:8082` / `127.0.0.1:8081`; Compose `0.0.0.0` at those ports | Gateway listener binds |
+| `FXP_FIX_ADDR` | native `127.0.0.1:8083`; Compose `0.0.0.0:8083` | FIX bind; `-addr` overrides |
+| `FXP_CERTS_DIR` | `./certs` | Host certificate directory for Compose and `make dev-certs` |
+| `FXP_CERT_GID` | `1000` | Secure Compose supplementary group for read-only certificate access; set to host certificate group |
 | `FXP_TLS_CERT_FILE` / `FXP_TLS_KEY_FILE` | unset | Gateway and bridge server certificate/key PEM; both required to enable TLS 1.2–1.3 |
 | `FXP_TLS_CLIENT_CA_FILE` | unset | Gateway and bridge: require and verify client certificates against this PEM CA bundle |
-| `FXP_TLS_REQUIRED` | `false` | Gateway and bridge refuse startup without TLS; malformed booleans fail startup |
-| `FXP_CORE_AUTH_TOKEN` | unset | Core and gateway only: optional shared connection token, maximum 1024 UTF-8 bytes; use a random secret distinct from JWT |
+| `FXP_TLS_REQUIRED` | native `false`; secure Compose `true` | Gateway and bridge refuse startup without TLS; malformed booleans fail startup |
+| `FXP_CORE_AUTH_TOKEN` | unset | Core and gateway only: optional natively, required in secure Compose; shared token, 24–1024 UTF-8 bytes when nonempty; use a random secret distinct from JWT |
 | `FXP_GATEWAY_TLS` | `false` | Bridge enables verified TLS to the gateway |
 | `FXP_GATEWAY_TLS_CA_FILE` | system roots | Bridge's trusted gateway CA bundle |
 | `FXP_GATEWAY_TLS_CERT_FILE` / `FXP_GATEWAY_TLS_KEY_FILE` | unset | Bridge's optional upstream mTLS identity |

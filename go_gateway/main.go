@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"go_gateway/logging"
+	"go_gateway/startup"
 	"go_gateway/tlsconfig"
 	"go_gateway/transport"
 	"log"
@@ -26,6 +27,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("TLS configuration: %v", err)
 	}
+	if err := startup.ValidateSecrets(startup.Address("FXP_GW_TCP_ADDR", "127.0.0.1:8082"), startup.Address("FXP_GW_WS_ADDR", "127.0.0.1:8081")); err != nil {
+		log.Fatalf("security configuration: %v", err)
+	}
 	go manager.Watch(ctx, time.Second)
 	var wg sync.WaitGroup
 	serverErrors := make(chan error, 2)
@@ -40,11 +44,13 @@ func main() {
 		serverErrors <- transport.RunTCPServerWithTLS(ctx, manager)
 	}()
 
+	failed := false
 	log.Println("🚀 Go API Gateway is running...")
 	select {
 	case <-ctx.Done():
 	case err := <-serverErrors:
 		if err != nil {
+			failed = true
 			log.Printf("gateway server stopped: %v", err)
 		}
 		cancel()
@@ -54,8 +60,11 @@ func main() {
 	close(serverErrors)
 	for err := range serverErrors {
 		if err != nil {
+			failed = true
 			log.Printf("gateway server stopped: %v", err)
-			os.Exit(1)
 		}
+	}
+	if failed {
+		os.Exit(1)
 	}
 }

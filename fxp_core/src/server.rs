@@ -3294,7 +3294,7 @@ mod core_auth_tests {
         for supplied in [
             None,
             Some("wrong-private-token"),
-            Some("correct-private-token"),
+            Some("correct-private-token-long"),
         ] {
             let router = SymbolRouter::new(None);
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3319,7 +3319,7 @@ mod core_auth_tests {
                     rx.clone(),
                     rx,
                     wtx,
-                    CoreAuth::new(Some("correct-private-token".into())).unwrap(),
+                    CoreAuth::new(Some("correct-private-token-long".into())).unwrap(),
                 )
                 .with_subscriber(subscriber),
             );
@@ -3327,7 +3327,7 @@ mod core_auth_tests {
                 client.write_all(MAGIC).await.unwrap();
                 client.write_u16(token.len() as u16).await.unwrap();
                 client.write_all(token.as_bytes()).await.unwrap();
-                if token == "correct-private-token" {
+                if token == "correct-private-token-long" {
                     let mut ack = [0u8; 1];
                     client.read_exact(&mut ack).await.unwrap();
                     assert_eq!(ack, [1]);
@@ -3352,7 +3352,7 @@ mod core_auth_tests {
                 tokio::time::timeout(Duration::from_secs(2), client.read_exact(&mut prefix))
                     .await
                     .unwrap();
-            if supplied == Some("correct-private-token") {
+            if supplied == Some("correct-private-token-long") {
                 assert!(reply.is_ok());
                 assert_eq!(router.symbols().await, vec!["AUTH"]);
             } else {
@@ -3365,7 +3365,7 @@ mod core_auth_tests {
                 task.abort()
             }
             let logs = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
-            assert!(!logs.contains("correct-private-token"));
+            assert!(!logs.contains("correct-private-token-long"));
             assert!(!logs.contains("wrong-private-token"));
         }
     }
@@ -3377,7 +3377,7 @@ mod core_auth_tests {
             SymbolRouter::new(None),
             std::future::pending(),
             Duration::from_secs(1),
-            crate::core_auth::CoreAuth::new(Some("secret".into())).unwrap(),
+            crate::core_auth::CoreAuth::new(Some("secret-value-at-least-24-bytes".into())).unwrap(),
         )
         .await;
         assert_eq!(
