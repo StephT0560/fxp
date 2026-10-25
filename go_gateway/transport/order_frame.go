@@ -7,14 +7,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// marshalOrderFrame is the existing two-buffer path, isolated for A/B profiling.
+// marshalOrderFrame is a single-buffer candidate for A/B profiling.
 func marshalOrderFrame(msg *protobuf.FXPMessage) ([]byte, error) {
-	encoded, err := proto.Marshal(msg)
+	frame, err := (proto.MarshalOptions{}).MarshalAppend(make([]byte, 4, 4+proto.Size(msg)), msg)
 	if err != nil {
 		return nil, err
 	}
-	frame := make([]byte, 4+len(encoded))
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(encoded)))
-	copy(frame[4:], encoded)
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(frame)-4))
 	return frame, nil
 }
