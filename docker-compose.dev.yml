@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: MIT
+# Explicit insecure development profile; run with -f and --profile dev.
+services:
+  core:
+    image: fxp:local
+    restart: unless-stopped
+    build: .
+    command:
+    - sh
+    - -ec
+    - 'echo ''INSECURE DEVELOPMENT: plaintext traffic and no core authentication''
+      >&2; exec fxp_core'
+    init: true
+    stop_grace_period: 15s
+    environment:
+    - RUST_LOG=${RUST_LOG:-info}
+    - FXP_SYMBOL_CONFIG
+    - FXP_SESSION_SCHEDULE
+    - FXP_EVENT_LOG
+    - FXP_STP_DEFAULT
+    - FXP_SYMBOLS
+    - FXP_MAX_SYMBOLS
+    - FXP_SHUTDOWN_TIMEOUT_SEC=${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
+    - FXP_CORE_AUTH_TOKEN=
+    volumes:
+    - core_store:/data/core_store
+    - ./config:/etc/fxp:ro
+    ports:
+    - 127.0.0.1:8081:8081
+    - 127.0.0.1:8082:8082
+    - 127.0.0.1:8083:8083
+    healthcheck:
+      test:
+      - CMD
+      - /usr/local/bin/core_healthcheck
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    profiles:
+    - dev
+  gateway:
+    image: fxp:local
+    restart: unless-stopped
+    command:
+    - sh
+    - -ec
+    - 'echo ''INSECURE DEVELOPMENT: plaintext traffic and no core authentication''
+      >&2; exec go_gateway'
+    init: true
+    stop_grace_period: 15s
+    network_mode: service:core
+    depends_on:
+      core:
+        condition: service_healthy
+    environment:
+      FXP_TLS_CERT_FILE: ''
+      FXP_TLS_KEY_FILE: ''
+      FXP_TLS_CLIENT_CA_FILE: ''
+      FXP_TLS_REQUIRED: 'false'
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set FXP_JWT_SECRET}
+      FXP_JWT_KID: ${FXP_JWT_KID:-}
+      FXP_CORE_AUTH_TOKEN: ''
+      FXP_JWT_PREVIOUS_KID: ${FXP_JWT_PREVIOUS_KID:-}
+      FXP_JWT_PREVIOUS_SECRET: ${FXP_JWT_PREVIOUS_SECRET:-}
+      FXP_JWT_ISSUER: ${FXP_JWT_ISSUER:-}
+      FXP_JWT_AUDIENCE: ${FXP_JWT_AUDIENCE:-}
+      FXP_JWT_LEEWAY_SEC: ${FXP_JWT_LEEWAY_SEC:-}
+      FXP_JWT_REPLAY_CACHE: ${FXP_JWT_REPLAY_CACHE:-}
+      FXP_GW_WS_ALLOWED_ORIGINS: ${FXP_GW_WS_ALLOWED_ORIGINS:-}
+      FXP_GW_CLIENT_QUEUE: ${FXP_GW_CLIENT_QUEUE:-8192}
+      FXP_GW_MD_QUEUE: ${FXP_GW_MD_QUEUE:-4096}
+      FXP_LOG_LEVEL: ${FXP_LOG_LEVEL:-info}
+      FXP_SHUTDOWN_TIMEOUT_SEC: ${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
+      FXP_ALLOW_PLAINTEXT: 'true'
+      FXP_GW_TCP_ADDR: 0.0.0.0:8082
+      FXP_GW_WS_ADDR: 0.0.0.0:8081
+    volumes: []
+    profiles:
+    - dev
+  bridge:
+    image: fxp:local
+    restart: unless-stopped
+    command:
+    - sh
+    - -ec
+    - 'echo ''INSECURE DEVELOPMENT: plaintext traffic and no core authentication''
+      >&2; exec fix_bridge'
+    init: true
+    stop_grace_period: 15s
+    network_mode: service:core
+    depends_on:
+      gateway:
+        condition: service_started
+    environment:
+      FXP_TLS_CERT_FILE: ''
+      FXP_TLS_KEY_FILE: ''
+      FXP_TLS_CLIENT_CA_FILE: ''
+      FXP_TLS_REQUIRED: 'false'
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set FXP_JWT_SECRET}
+      FXP_GATEWAY_TLS: 'false'
+      FXP_GATEWAY_TLS_CA_FILE: ''
+      FXP_GATEWAY_TLS_CERT_FILE: ''
+      FXP_GATEWAY_TLS_KEY_FILE: ''
+      FXP_GATEWAY_TLS_SERVER_NAME: ''
+      FXP_JWT_KID: ${FXP_JWT_KID:-}
+      FXP_JWT_ISSUER: ${FXP_JWT_ISSUER:-}
+      FXP_JWT_AUDIENCE: ${FXP_JWT_AUDIENCE:-}
+      FXP_SYMBOL_CONFIG: ${FXP_SYMBOL_CONFIG:-}
+      FXP_FIX_CREDENTIALS: ${FXP_FIX_CREDENTIALS:?set FXP_FIX_CREDENTIALS}
+      FXP_FIX_STORE_DIR: /data/fix_store
+      FXP_FIX_STORE_FSYNC: ${FXP_FIX_STORE_FSYNC:-strict}
+      FXP_FIX_DICTIONARY_STRICT: ${FXP_FIX_DICTIONARY_STRICT:-false}
+      FXP_FIX_START_TIME: ${FXP_FIX_START_TIME:-}
+      FXP_FIX_END_TIME: ${FXP_FIX_END_TIME:-}
+      FXP_FIX_START_DAY: ${FXP_FIX_START_DAY:-}
+      FXP_FIX_END_DAY: ${FXP_FIX_END_DAY:-}
+      FXP_FIX_TIME_ZONE: ${FXP_FIX_TIME_ZONE:-UTC}
+      FXP_FIX_RESET_ON_LOGON: ${FXP_FIX_RESET_ON_LOGON:-false}
+      FXP_FIX_RESET_ON_LOGOUT: ${FXP_FIX_RESET_ON_LOGOUT:-false}
+      FXP_FIX_RESET_ON_DISCONNECT: ${FXP_FIX_RESET_ON_DISCONNECT:-false}
+      FXP_LOG_LEVEL: ${FXP_LOG_LEVEL:-info}
+      FXP_SHUTDOWN_TIMEOUT_SEC: ${FXP_SHUTDOWN_TIMEOUT_SEC:-5}
+      FXP_ALLOW_PLAINTEXT: 'true'
+      FXP_FIX_ADDR: 0.0.0.0:8083
+    volumes:
+    - fix_store:/data/fix_store
+    - ./config:/etc/fxp:ro
+    profiles:
+    - dev
+volumes:
+  core_store: null
+  fix_store: null

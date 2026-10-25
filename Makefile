@@ -41,3 +41,11 @@ lint:
 clean:
 	cd fxp_core && cargo clean
 	rm -rf bin target
+
+.PHONY: dev-certs
+FXP_CERTS_DIR ?= certs
+dev-certs:
+	bash scripts/gen_test_certs.sh "$(FXP_CERTS_DIR)"
+	chmod 750 "$(FXP_CERTS_DIR)"
+	chmod 640 "$(FXP_CERTS_DIR)"/*.crt "$(FXP_CERTS_DIR)/server.key" "$(FXP_CERTS_DIR)/client.key"
+	@echo "Set FXP_CERT_GID=$$(id -g) for container access to these disposable certificates."
