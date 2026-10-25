@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve STP-restated totals and reserve caps on price-only amendments; validate lot/min/max only on explicit new quantities (#1, review regression).
+
 - Keep unused market/stop-market limit prices and non-stop trigger fields out of symbol tick validation (#1, review regression).
 
 - Document the deferred Stage C pegged-order design and its required acceptance tests (#1).

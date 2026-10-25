@@ -26,8 +26,10 @@ Unlisted symbols keep scale 2, tick 1 (0.01), lot/minimum 1 and maximum
 unused price fields on market and stop-market orders retain their ignored
 semantics. Positive active prices must be tick multiples; order
 total quantity must be within min/max and a lot multiple. Replace uses the same
-rules before changing the book; zero change fields retain their existing
-meaning. Invalid replaces leave the original order intact. Matching permits
+rules before changing the book when a new total is explicitly supplied;
+zero quantity retains the live total without reapplying entry lot/min/max rules,
+including after STP restates it below the minimum. Zero change fields retain
+their existing meaning. Invalid replaces leave the original order intact. Matching permits
 fills below the minimum order size; the minimum applies to order entry, not
 individual trades. Quantities and display slices remain integer units.
 

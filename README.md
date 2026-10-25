@@ -545,6 +545,9 @@ same symbol scales. FIX execution reports and market data use those scales.
 |---|---|---|---|
 | `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/symbols.example.csv` or another file under the mounted `config/` directory |
 
+Price-only amendments retain STP-restated totals even below entry quantity
+minimums; explicit new totals still undergo lot/min/max validation.
+
 Unused market-order limit prices and unused non-stop trigger fields are ignored
 by core tick validation. Active limit/trigger prices still require tick alignment.
 

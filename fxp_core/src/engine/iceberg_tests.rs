@@ -310,3 +310,52 @@ fn symbol_tick_rules_ignore_unused_market_and_stop_limit_prices() {
         fxp::ExecutionType::ExecRejected as i32
     );
 }
+
+#[test]
+fn price_only_replace_preserves_stp_restated_quantity_below_entry_minimum() {
+    for display in [0, 20] {
+        let mut e = engine().with_symbol_rules(crate::symbol_config::SymbolRules {
+            lot_size: 10,
+            min_quantity: 20,
+            ..Default::default()
+        });
+        e.new_order(order("B", fxp::OrderSide::Sell, 30, display), 1);
+        let mut taker = order("SELF", fxp::OrderSide::Buy, 20, 0);
+        taker.sender = "seller".into();
+        taker.stp_mode = fxp::SelfTradePrevention::DecrementAndCancel as i32;
+        let out = e.new_order(taker, 1);
+        let restated = reports(&out)
+            .into_iter()
+            .find(|r| {
+                r.order_id == "B" && r.execution_type == fxp::ExecutionType::ExecRestated as i32
+            })
+            .expect("STP restatement");
+        assert_eq!(restated.order_quantity, 10);
+        let mut r = replace("B", "R");
+        r.new_price = 105;
+        let out = e.cancel_replace(r);
+        let report = reports(&out)
+            .into_iter()
+            .find(|r| r.execution_type == fxp::ExecutionType::ExecReplaced as i32)
+            .expect("price-only replace accepted");
+        assert_eq!(report.order_quantity, 10);
+        assert_eq!(report.display_quantity, display);
+        // Explicitly entered totals and floors are still validated.
+        let mut r = replace("R", "BAD");
+        r.new_quantity = 10;
+        let out = e.cancel_replace(r);
+        assert_eq!(
+            reports(&out)[0].execution_type,
+            fxp::ExecutionType::ExecRejected as i32
+        );
+        if display > 0 {
+            let mut r = replace("R", "BADFLOOR");
+            r.new_display_quantity = Some(display);
+            let out = e.cancel_replace(r);
+            assert_eq!(
+                reports(&out)[0].execution_type,
+                fxp::ExecutionType::ExecRejected as i32
+            );
+        }
+    }
+}

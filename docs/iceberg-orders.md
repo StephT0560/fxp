@@ -46,7 +46,10 @@ Replacement always loses priority, including reductions and display-only changes
 The new OrderQty is the new **total** including previous cumulative fills; it must
 exceed CumQty. No quantity change retains total leaves. The old slice and reserve
 are removed, then total minus CumQty is re-entered with a fresh displayed slice.
-An omitted MaxFloor keeps the cap; explicit `111=0` / optional
+Price-only amendments preserve existing STP-restated totals, even below entry
+minima, and retain a cap that now exceeds the restated total; a fresh slice is
+still clamped to leaves. Explicit new totals and display caps are validated
+against current entry constraints. An omitted MaxFloor keeps the cap; explicit `111=0` / optional
 `new_display_quantity=0` disables reserve. Invalid replacements leave the original
 slice, reserve and priority intact. Changing an iceberg to IOC/FOK or auction TIF
 is rejected even if the replacement disables reserve; cancel and enter a new
