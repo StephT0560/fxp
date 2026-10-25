@@ -22,3 +22,13 @@ func TestTrackerObservesSequencesPerSymbol(t *testing.T) {
 		t.Fatalf("post-gap A sequence = (%v, %d), want (false, 5)", gap, expected)
 	}
 }
+
+func TestTrackerUsesFirstObservedSequenceAsBaseline(t *testing.T) {
+	var tracker Tracker
+	if gap, expected := tracker.Observe("A", 9); gap || expected != 9 {
+		t.Fatalf("first observed A sequence = (%v, %d), want (false, 9)", gap, expected)
+	}
+	if gap, expected := tracker.Observe("A", 10); gap || expected != 10 {
+		t.Fatalf("next A sequence = (%v, %d), want (false, 10)", gap, expected)
+	}
+}
