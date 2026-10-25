@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Document the deferred Stage C pegged-order design and its required acceptance tests (#1).
+
 - Restore CI compatibility after the merged Criterion/prost-build upgrades: use standard-library black_box and scope a Zlib license exception to foldhash 0.1.5 (#1 verification).
 
 - Add opt-in limit reserve orders, displayed-only depth, FIFO replenishment, cumulative reports, reserve-aware STP/FOK and deterministic replay (additive wire v2.4, #1).

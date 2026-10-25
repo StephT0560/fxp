@@ -545,7 +545,7 @@ same symbol scales. FIX execution reports and market data use those scales.
 |---|---|---|---|
 | `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/symbols.example.csv` or another file under the mounted `config/` directory |
 
-## Reserve orders
+## Reserve and pegged orders
 
 Limit DAY/GTC/GTD orders can opt into reserve using FIX MaxFloor (111) or native
 `display_quantity`; zero keeps fully displayed behavior. Only the current slice
@@ -556,3 +556,7 @@ Iceberg IOC/FOK, stops and full-auction schedules are rejected. Ordinary IOC/FOK
 orders can consume reserve with the existing STP policy. See the complete
 [iceberg contract](docs/iceberg-orders.md) and [symbol precision](docs/symbol-config.md).
 
+
+Pegged orders (Stage C) are deferred; the [design note](docs/pegged-orders.md)
+specifies references, cycles, priority, caps, interactions and acceptance tests.
+They are not enabled by this change.
