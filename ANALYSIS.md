@@ -2,6 +2,7 @@
 
 **Repository:** https://github.com/StephT0560/fxp, analyzed at `main` @ `5334383` (merge of PR #22). That is 82 commits after round 3's `61c3d03`: PRs #17–#22 plus 8 Dependabot bumps (prost 0.14, criterion 0.8, actions v7). 148 files changed, +25.6k / −1.8k lines.
 **Scope:** Read-only, with the same parameters as rounds 1–3. Nothing on `main` was changed and no PR was opened. Proposed tests and probes ran in scratch copies. Earlier reports are in this branch's history: round 1 `f0d310c`, round 2 `12b1809`, round 3 `07b2c46`.
+**Update (re-check after the user's follow-up):** `main` is still `5334383`. PRs #6, #7 and #8 had already been merged before this round, so the code and test results below are unchanged. Only Low #3 and the branch-hygiene note were refreshed.
 **Environment:** same VM. Ubuntu 22.04 KVM (kernel 6.8.0-1061-aws), 8 vCPU Intel Xeon, 31 GiB. rustc 1.97.1, Go go1.26.10, protoc 25.3, Python 3.10.12.
 
 ---
@@ -32,11 +33,11 @@ Also new: bounded slow-consumer backpressure in core and gateway, symbol admissi
 |---|---|---|
 | 1 | Medium | **QuickFIX conformance is 28/59 strict.** Most of the 31 allow-listed cases are fixture assumptions (QuickFIX's echo application sends orders with no `OrderQty`), so the session check named in the file often never runs. A handful are real gaps: no `OnBehalfOf`/`DeliverTo` routing reversal, no buffering of out-of-order admin messages, and a repeated low-sequence ResendRequest is rejected |
 | 2 | Medium | **Secure transport and core auth are off by default.** `FXP_TLS_REQUIRED=false` and an empty `FXP_CORE_AUTH_TOKEN` are the defaults, including in `docker-compose.yml`. JWTs and FIX passwords cross the wire in plaintext unless an operator opts in. Plaintext on a non-loopback address only logs a warning |
-| 3 | Low | Three Dependabot merges (#6, #7, #8) landed on `main` with failing CI (fixed later in PR #20 by `38fd351`). Branch protection can't be read with this token (HTTP 403) and there are no rulesets, so required checks don't appear to be enforced |
+| 3 | Low | **Required checks aren't enforced on `main`.** Dependabot PRs #6, #7 and #8 were merged on 2026-10-25 while their CI runs were failing; `main` was fixed later by `38fd351` (PR #20). On re-check, those PRs were already merged, there are no commits after `5334383`, and `HEAD` is green, so nothing is broken now. The gap is the process: there are still 0 rulesets, and branch protection can't be read with this token (HTTP 403) |
 | 4 | Low | `massCancelRoutes` (`go_gateway/transport/pool.go:268-297`) has no timeout and no per-connection cleanup, unlike `statusRoutes`. If the core never answers, the entries leak and keep closed connections referenced |
 | 5 | Low | FIX edge replies: `35=H` for an unknown or another owner's order gets `35=j` (FIX 4.4 expects `35=8 150=I 39=8`). `35=AE` is dictionary-validated before the unsupported-type check, so it gets a misleading `35=3 "Required tag missing"` |
 | 6 | Low | README drift: the roadmap still lists auctions, live stop triggering and cancel/replace as unchecked (all three are done). The test-count table (163 / 49 / 123) is stale (193 / 69 / 125). "GTC orders are not persisted" contradicts the `FXP_EVENT_LOG` section |
-| 7 | Info | Pegged orders are not implemented (design doc only). Old P09 test is still stale. 6 merged Dependabot branches still on the remote. No tags or releases yet. Single maintainer |
+| 7 | Info | Pegged orders are not implemented (design doc only). Old P09 test is still stale. 3 merged Dependabot branches still on the remote. No tags or releases yet. Single maintainer |
 
 **Updated readiness (my judgement):** matching engine **8.5/10** (7.5 in R3), FIX bridge **8/10** for counterparty certification (7 in R3), gateway **8.5/10** (7.5 in R3). What remains is secure-by-default configuration, conformance edge cases and governance, not engine correctness.
 
@@ -243,7 +244,7 @@ As the README now says, **a reused-buffer FIX encoder beats protobuf encode.** F
 
 **Original known gaps:** auctions, seqnum persistence and CI/CD stay closed (R3). CI/CD is now stronger: the QuickFIX gate, TLS e2e, a nightly non-gating benchmark, and a release workflow producing static amd64/arm64 builds with checksums and a CycloneDX SBOM as draft releases. Hosted CI is green on `HEAD`.
 
-**Governance gap:** red Dependabot merges reached `main` (runs `40157351581`, `40157088928` and `40156896237` failed). Enable branch protection or a ruleset requiring the 7 CI jobs, and prefer Dependabot grouping or auto-merge only on green.
+**Governance gap:** red Dependabot merges reached `main` (runs `40157351581`, `40157088928` and `40156896237` failed). Enable branch protection or a ruleset requiring the 7 CI jobs, and prefer Dependabot grouping or auto-merge only on green. Re-merging the PRs doesn't close this; a ruleset does: Settings → Rules → Rulesets → target `main` → require status checks `rust`, `cargo-deny`, `go (go_gateway)`, `go (fix_bridge)`, `e2e`, `quickfix-acceptance`, `proto`, and block force pushes.
 
 **Docs vs code (Low #6):**
 - README roadmap: "Opening/closing auction batch matching", "Stop/StopLimit trigger on live last-trade-price feed" and "`OrderCancelRequest`/`OrderCancelReplaceRequest` full round-trip" are still unchecked, but all three are implemented and e2e-tested.
@@ -254,7 +255,7 @@ As the README now says, **a reused-buffer FIX encoder beats protobuf encode.** F
 
 **Hygiene:**
 - ✅ MIT license with SPDX headers, the QuickFIX license preserved for the vendored dictionary, `SECURITY.md` with a trust-model table, CHANGELOG, CONTRIBUTING, `deny.toml` and Dependabot.
-- ⚠ 6 merged Dependabot branches are still on the remote. There are no tags or releases yet ("only latest `main` is supported").
+- ⚠ 3 merged Dependabot branches are still on the remote (`criterion-0.8.2`, `prost-build-0.14.4`, `setup-go-7`), down from 6. Turning on "Automatically delete head branches" prevents this. There are no tags or releases yet ("only latest `main` is supported").
 - The old 6.6 MB `go_gateway/bench` binary is still in history (optional purge).
 - Single maintainer (3 author identities, 160 commits, plus 8 from Dependabot). Bus factor 1.
 
