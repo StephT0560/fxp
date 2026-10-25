@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 use crate::fxp;
 use prost::Message;
 use prost_types::Timestamp;
