@@ -6,7 +6,6 @@ import (
 	"go_gateway/protobuf"
 	"google.golang.org/protobuf/proto"
 	"io"
-	"net"
 	"testing"
 	"time"
 )
@@ -20,17 +19,23 @@ func TestStatusOwnerBindingAndIndependentRoutes(t *testing.T) {
 	}
 	srv, cli := routedPipes(t)
 
-	other, peer := net.Pipe()
+	other, peer := routedPipes(t)
 	defer func() { _ = other.Close() }()
 	defer func() { _ = peer.Close() }()
-	key := registerStatusRoute(srv, req)
+	key, err := registerStatusRoute(srv, req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req2 := proto.Clone(req).(*protobuf.OrderStatusRequest)
 	req2.RequestId = "same"
-	key2 := registerStatusRoute(other, req2)
+	key2, err := registerStatusRoute(other, req2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if key == key2 {
 		t.Fatal("same request id must not collide across sessions")
 	}
-	defer removeStatusRoute(key2)
+	defer pendingRequests.get(key2, "TRADER", true)
 	before := orderRoute{conn: other, owner: "TRADER"}
 	orderClientMap.Store(namespacedOrderID("TRADER", "O1"), before)
 	defer orderClientMap.Delete(namespacedOrderID("TRADER", "O1"))

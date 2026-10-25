@@ -2,67 +2,25 @@
 package transport
 
 import (
-	"fmt"
 	"go_gateway/protobuf"
 	"google.golang.org/protobuf/proto"
-	"sync"
-	"sync/atomic"
 	"time"
 )
 
-type statusRoute struct {
-	conn            any
-	owner, original string
-	timer           *time.Timer
+func statusReject(owner, id, reason string) *protobuf.FXPMessage {
+	return &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderStatusResponse{OrderStatusResponse: &protobuf.OrderStatusResponse{RequestId: id, Sender: owner, RejectReason: reason, Complete: true}}}
 }
-
-var statusRoutes struct {
-	sync.Mutex
-	pending map[string]*statusRoute
-}
-var statusSerial atomic.Uint64
-
-func registerStatusRoute(conn any, req *protobuf.OrderStatusRequest) string {
-	key := fmt.Sprintf("status-%d", statusSerial.Add(1))
-	r := &statusRoute{conn: conn, owner: req.Sender, original: req.RequestId}
-	statusRoutes.Lock()
-	defer statusRoutes.Unlock()
-	if statusRoutes.pending == nil {
-		statusRoutes.pending = map[string]*statusRoute{}
-	}
-	statusRoutes.pending[key] = r
-	r.timer = time.AfterFunc(30*time.Second, func() {
-		statusRoutes.Lock()
-		old := statusRoutes.pending[key]
-		delete(statusRoutes.pending, key)
-		statusRoutes.Unlock()
-		if old != nil {
-			_ = writeFXPMessage(old.conn, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderStatusResponse{OrderStatusResponse: &protobuf.OrderStatusResponse{RequestId: old.original, Sender: old.owner, RejectReason: "order status timeout", Complete: true}}})
-		}
-	})
-	return key
-}
-func removeStatusRoute(key string) {
-	statusRoutes.Lock()
-	if r := statusRoutes.pending[key]; r != nil {
-		r.timer.Stop()
-		delete(statusRoutes.pending, key)
-	}
-	statusRoutes.Unlock()
-}
-func clearStatusRoutes(conn any) {
-	statusRoutes.Lock()
-	for key, r := range statusRoutes.pending {
-		if r.conn == conn {
-			r.timer.Stop()
-			delete(statusRoutes.pending, key)
-		}
-	}
-	statusRoutes.Unlock()
+func registerStatusRoute(conn any, req *protobuf.OrderStatusRequest) (string, error) {
+	owner, id := req.Sender, req.RequestId
+	return registerPending(&pendingRequest{conn: conn, owner: owner, original: id, kind: "order status", reject: func(reason string) *protobuf.FXPMessage { return statusReject(owner, id, reason) }}, 30*time.Second)
 }
 func forwardStatusRequest(conn any, msg *protobuf.FXPMessage) {
 	req := msg.GetOrderStatusRequest()
-	key := registerStatusRoute(conn, req)
+	key, err := registerStatusRoute(conn, req)
+	if err != nil {
+		_ = writeFXPMessage(conn, statusReject(req.Sender, req.RequestId, err.Error()))
+		return
+	}
 	cloned := proto.Clone(msg).(*protobuf.FXPMessage)
 	cloned.GetOrderStatusRequest().RequestId = key
 	raw, err := proto.Marshal(cloned)
@@ -70,23 +28,17 @@ func forwardStatusRequest(conn any, msg *protobuf.FXPMessage) {
 		err = writeToCore(frameBytes(raw))
 	}
 	if err != nil {
-		removeStatusRoute(key)
-		_ = writeFXPMessage(conn, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderStatusResponse{OrderStatusResponse: &protobuf.OrderStatusResponse{RequestId: req.RequestId, Sender: req.Sender, RejectReason: "core unavailable", Complete: true}}})
+		if r := pendingRequests.get(key, req.Sender, true, "order status"); r != nil {
+			_ = writeFXPMessage(r.conn, r.reject("core unavailable"))
+		}
 	}
 }
 func routeStatusResponse(msg *protobuf.FXPMessage) {
 	rep := msg.GetOrderStatusResponse()
-	statusRoutes.Lock()
-	r := statusRoutes.pending[rep.RequestId]
-	if r == nil || r.owner != rep.Sender {
-		statusRoutes.Unlock()
+	r := pendingRequests.get(rep.RequestId, rep.Sender, rep.Complete || rep.RejectReason != "", "order status")
+	if r == nil {
 		return
 	}
-	if rep.Complete {
-		r.timer.Stop()
-		delete(statusRoutes.pending, rep.RequestId)
-	}
-	statusRoutes.Unlock()
 	cloned := proto.Clone(msg).(*protobuf.FXPMessage)
 	out := cloned.GetOrderStatusResponse()
 	out.RequestId = r.original

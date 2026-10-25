@@ -56,7 +56,7 @@ func registerClientWriter(conn any) *clientWriter {
 }
 
 func unregisterClientWriter(conn any) {
-	clearStatusRoutes(conn)
+	pendingRequests.clear(conn)
 	if value, ok := clientWriters.LoadAndDelete(conn); ok {
 		value.(*clientWriter).stop()
 	}
@@ -97,6 +97,7 @@ func (w *clientWriter) stop() {
 func (w *clientWriter) forceStop() {
 	w.stopOnce.Do(func() {
 		close(w.stopped)
+		pendingRequests.clear(w.conn)
 		closeConn(w.conn)
 	})
 }
@@ -178,6 +179,7 @@ func (w *clientWriter) run() {
 					return
 				}
 			default:
+				pendingRequests.clear(w.conn)
 				closeConn(w.conn)
 				clientWriters.CompareAndDelete(w.conn, w)
 				return

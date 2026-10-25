@@ -7,6 +7,22 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Round 4 low findings
+- Refresh implemented roadmap items, event-log persistence wording and repository
+  layout; replace stale test totals with CI links. Reconcile native/Compose
+  defaults in configuration tables. P09 already uses `run_stop_cascade` on main;
+  retain and verify that regression rather than delete valid drain-helper unit
+  tests (#6 / stale-test review).
+- Return indistinguishable rejected status ExecutionReports for unknown/foreign
+  single-order queries (`35=8`, `150=I`, `39=8`, `103=5`), without notifying the
+  real owner. Unsupported/unknown application types are business-rejected before
+  body dictionary checks; supported types retain full validation (#5).
+- Bound pending gateway mass-cancel/status requests with a shared 4096-entry
+  tracker, configurable mass-cancel timeout (`FXP_GW_MASS_CANCEL_TIMEOUT_SEC`,
+  default 30s), stopped timers and disconnect/writer cleanup. Timeout rejects
+  retain client metadata; unique internal IDs prevent late/reused-ID misrouting.
+  Timeout does not roll back possible core cancellations (#4).
+
 ### FIX conformance (round 4 Medium #1)
 - Add a separately compiled, explicitly enabled loopback-only QuickFIX echo
   fixture, absent from production binaries. Only missing quantity is supplied;

@@ -16,6 +16,31 @@ ResendRequest where applicable to recover critical FIX session output. A
 market-data consumer should treat updates as best-effort and resubscribe or
 request a fresh snapshot after reconnecting.
 
+## Pending mass-cancel and status requests
+
+The gateway shares one pending-request tracker for mass cancel and order status,
+with a fixed **4096-entry aggregate cap** across all clients and both kinds.
+A request rejected at the cap is not forwarded to the core. Both responses use
+fresh internal correlation IDs; original client IDs are restored only on the
+requester's response. Sender and response kind must match, so duplicate client
+IDs, late replies, and foreign-owner replies cannot consume another request.
+Cancel-on-disconnect requests have no client route and their aggregate reports
+are dropped, as before; individual order cancellations keep their normal routes.
+
+`FXP_GW_MASS_CANCEL_TIMEOUT_SEC` defaults to **30 seconds**. Values must be
+integers from 1 through 86400; invalid values log a warning and fall back to 30.
+Expiry removes the entry and sends `OrderMassCancelReport` with the original
+request metadata and `reject_reason="mass cancel timeout"`. Status retains its
+fixed 30-second deadline. Success, forwarding failure, disconnect, writer
+failure and completed shutdown draining remove entries and stop their timers.
+Registration racing a stopped/draining client is rejected. Timer callbacks retain
+only the internal key/tracker, not the connection.
+
+**A timeout is a missing confirmation, not a rollback.** The core may already
+have canceled orders, or may finish later. Reconcile order state before retrying;
+a late aggregate report is dropped rather than delivered to a newer request
+that reused the same client ID. Individual execution reports remain independent.
+
 ## Symbol admission
 
 `FXP_SYMBOLS` is an optional comma-separated allow-list. Values are trimmed;
@@ -73,6 +98,7 @@ application-level shutdown after Docker sends SIGTERM.
 | --- | --- | --- |
 | `FXP_SHUTDOWN_TIMEOUT_SEC` | `5` | Graceful-shutdown deadline for core, gateway, and bridge |
 | `FXP_GW_CLIENT_QUEUE` | `8192` | Per-client critical output queue |
+| `FXP_GW_MASS_CANCEL_TIMEOUT_SEC` | `30` | Mass-cancel confirmation deadline, 1–86400 seconds; shared pending cap is 4096; timeout does not undo core actions |
 | `FXP_GW_MD_QUEUE` | `4096` | Per-client best-effort market-data queue |
 | `FXP_SYMBOLS` | unset | Optional comma-separated symbol allow-list |
 | `FXP_MAX_SYMBOLS` | unset | Optional positive limit on newly admitted symbols |

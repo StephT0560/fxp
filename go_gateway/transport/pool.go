@@ -265,37 +265,6 @@ func frameBytes(raw []byte) []byte {
 	return frame
 }
 
-// massCancelRoutes queues, per (owner, client_request_id), the connections
-// waiting for an OrderMassCancelReport. Cancel-on-disconnect requests have
-// no route; their reports are dropped.
-var (
-	massCancelMu     sync.Mutex
-	massCancelRoutes = map[[2]string][]any{}
-)
-
-func pushMassCancelRoute(owner, requestID string, conn any) {
-	massCancelMu.Lock()
-	defer massCancelMu.Unlock()
-	key := [2]string{owner, requestID}
-	massCancelRoutes[key] = append(massCancelRoutes[key], conn)
-}
-
-func popMassCancelRoute(owner, requestID string) any {
-	massCancelMu.Lock()
-	defer massCancelMu.Unlock()
-	key := [2]string{owner, requestID}
-	queue := massCancelRoutes[key]
-	if len(queue) == 0 {
-		return nil
-	}
-	if len(queue) == 1 {
-		delete(massCancelRoutes, key)
-	} else {
-		massCancelRoutes[key] = queue[1:]
-	}
-	return queue[0]
-}
-
 // ── poolReader ────────────────────────────────────────────────────────────────
 
 // poolReader is the only reader of one pool connection, for its whole life.
@@ -430,14 +399,7 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		}
 
 	case *protobuf.FXPMessage_OrderMassCancelReport:
-		rep := payload.OrderMassCancelReport
-		conn := popMassCancelRoute(rep.Sender, rep.ClientRequestId)
-		if conn == nil {
-			slog.Debug("mass cancel report without requester", "sender", rep.Sender, "affected", rep.TotalAffected)
-			return
-		}
-		encoded, _ := proto.Marshal(msg)
-		deliverReport(conn, encoded, "mass-cancel:"+rep.ClientRequestId)
+		routeMassCancelResponse(msg)
 
 	case *protobuf.FXPMessage_MarketDataIncremental:
 		slog.Debug("MarketDataIncrementalUpdate received", "symbol", payload.MarketDataIncremental.Symbol)
