@@ -20,7 +20,7 @@ class GateTests(unittest.TestCase):
         self.assertNotIn('continue-on-error', jobs['go'])
 
     def test_only_all_success_passes(self):
-        jobs = ['rust', 'cargo-deny', 'go', 'e2e', 'quickfix-acceptance', 'proto']
+        jobs = ['rust', 'cargo-deny', 'go', 'e2e', 'quickfix-acceptance', 'proto', 'demo-api']
         script = ROOT / 'scripts/ci_success.py'
         def check(results):
             return subprocess.run(['python3', str(script)], input=json.dumps(results),

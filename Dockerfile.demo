@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1
+# SPDX-License-Identifier: MIT
+# Local console BFF and simulator; build UI assets only when web/ exists.
+
+ARG PROTOC_VERSION=25.3
+
+FROM debian:bookworm-slim AS protoc
+ARG PROTOC_VERSION
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca CURL_CA_BUNDLE=/run/secrets/proxy_ca CARGO_HTTP_CAINFO=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
+    case "${TARGETARCH:-amd64}" in \
+        amd64) arch=x86_64 ;; \
+        arm64) arch=aarch_64 ;; \
+        *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLo /tmp/protoc.zip \
+        "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${arch}.zip" \
+    && unzip -q /tmp/protoc.zip -d /opt/protoc \
+    && rm /tmp/protoc.zip
+
+FROM node:22-bookworm-slim AS web-build
+WORKDIR /src
+COPY . .
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
+    if [ -f web/package.json ]; then cd web && npm ci && npm run build; else mkdir -p web/dist; fi
+
+FROM golang:1.26-bookworm AS api-build
+COPY --from=protoc /opt/protoc /opt/protoc
+ENV PATH="/opt/protoc/bin:/go/bin:${PATH}" CGO_ENABLED=0
+WORKDIR /src
+COPY go.work ./
+COPY go_gateway/ go_gateway/
+COPY demo_api/ demo_api/
+COPY fix_bridge/go.mod fix_bridge/go.sum fix_bridge/
+COPY fxp_core/proto/ fxp_core/proto/
+COPY scripts/gen_proto.sh scripts/
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
+    bash scripts/gen_proto.sh \
+    && (cd demo_api && go build -trimpath -o /out/demo_api .) \
+    && (cd go_gateway && go build -trimpath -o /out/simday ./simulation)
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --home-dir /data --create-home fxp
+COPY --from=api-build /out/demo_api /usr/local/bin/demo_api
+COPY --from=api-build /out/simday /usr/local/bin/simday
+COPY --from=web-build /src/web/dist /app/web/dist
+COPY config/ /etc/fxp/config/
+USER fxp
+WORKDIR /app
+ENV FXP_DEMO_STATIC_DIR=/app/web/dist FXP_DEMO_SIM_BINARY=/usr/local/bin/simday
+EXPOSE 3000
+CMD ["demo_api"]

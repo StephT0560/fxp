@@ -43,3 +43,7 @@ fix_store/
 # Local deployment secrets
 .env
 work/
+
+# Local demo credentials and BFF build output
+.env.demo
+/demo_api/demo_api
