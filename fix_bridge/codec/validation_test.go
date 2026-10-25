@@ -163,3 +163,42 @@ func TestAllowedUserFieldsStillRejectEmptyAndDuplicate(t *testing.T) {
 		}
 	}
 }
+
+func TestDictionaryMonthYearSyntax(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{
+		{"202610", true}, {"20261031", true}, {"202610w1", true}, {"202610w5", true},
+		{"202610xx", false}, {"20261000", false}, {"20261032", false}, {"20260230", false}, {"202610w0", false}, {"202610w6", false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			v := DefaultDictionary.Validate(validationMessage(t, "D", append(validOrder(), Field{200, tc.value})...), false)
+			if tc.valid && v != nil {
+				t.Fatal(v)
+			}
+			if !tc.valid && (v == nil || v.Reason != "6" || v.Tag != 200) {
+				t.Fatalf("malformed MONTHYEAR: %+v", v)
+			}
+		})
+	}
+}
+func TestDictionaryIntegerAndBooleanRejectReasons(t *testing.T) {
+	for _, tc := range []struct {
+		typ    string
+		fields []Field
+		reason string
+		tag    int
+	}{
+		{"4", []Field{{36, "2"}, {123, "X"}}, "5", 123},
+		{"4", []Field{{36, "+2"}}, "6", 36},
+		{"V", []Field{{262, "R"}, {263, "0"}, {264, "0"}, {267, "-1"}, {146, "1"}, {55, "MSFT"}}, "5", 267},
+	} {
+		t.Run(tc.typ+tc.reason, func(t *testing.T) {
+			v := DefaultDictionary.Validate(validationMessage(t, tc.typ, tc.fields...), false)
+			if v == nil || v.Reason != tc.reason || v.Tag != tc.tag {
+				t.Fatalf("got %+v want %s for tag %d", v, tc.reason, tc.tag)
+			}
+		})
+	}
+}

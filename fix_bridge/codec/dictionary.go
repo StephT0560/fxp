@@ -274,6 +274,17 @@ func (d *Dictionary) Validate(m *Message, strict bool) *ValidationError {
 		if !validType(def.Type, f.Value) {
 			return d.failure(f.Tag, "6", "Incorrect data format for value")
 		}
+		switch def.Type {
+		case "BOOLEAN":
+			if f.Value != "Y" && f.Value != "N" {
+				return d.failure(f.Tag, "5", "Value is incorrect (out of range)")
+			}
+		case "LENGTH", "SEQNUM", "NUMINGROUP", "DAYOFMONTH":
+			n, _ := strconv.ParseInt(f.Value, 10, 64)
+			if n < 0 {
+				return d.failure(f.Tag, "5", "Value is incorrect (out of range)")
+			}
+		}
 		if len(def.Values) > 0 {
 			values := []string{f.Value}
 			if strings.HasPrefix(def.Type, "MULTIPLE") {
@@ -378,8 +389,11 @@ func (d *Dictionary) scope(tags []Field, pos int, rules []*rule, group, strict b
 func validType(typ, v string) bool {
 	switch typ {
 	case "INT", "LENGTH", "SEQNUM", "NUMINGROUP", "DAYOFMONTH":
-		n, e := strconv.ParseInt(v, 10, 64)
-		return e == nil && (typ == "INT" || n >= 0)
+		if !isDigits(strings.TrimPrefix(v, "-")) {
+			return false
+		}
+		_, e := strconv.ParseInt(v, 10, 64)
+		return e == nil
 	case "PRICE", "AMT", "QTY", "FLOAT", "PRICEOFFSET", "PERCENTAGE":
 		decimal := strings.TrimPrefix(v, "-")
 		dots, digits := 0, 0
@@ -400,7 +414,7 @@ func validType(typ, v string) bool {
 	case "CHAR":
 		return len(v) == 1
 	case "BOOLEAN":
-		return v == "Y" || v == "N"
+		return len(v) == 1
 	case "UTCTIMESTAMP":
 		_, e := time.Parse("20060102-15:04:05.999999999", v)
 		return e == nil
@@ -414,7 +428,16 @@ func validType(typ, v string) bool {
 		if len(v) != 6 && len(v) != 8 {
 			return false
 		}
-		_, e := time.Parse("200601", v[:6])
+		if _, e := time.Parse("200601", v[:6]); e != nil {
+			return false
+		}
+		if len(v) == 6 {
+			return true
+		}
+		if v[6] == 'w' {
+			return v[7] >= '1' && v[7] <= '5'
+		}
+		_, e := time.Parse("20060102", v)
 		return e == nil
 	}
 	return true

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix malformed MONTHYEAR acceptance and Boolean/integer reject classification introduced by dictionary validation (#2).
+
 - Freeze/reset released FIX session state atomically and preserve old messages/sequences when scheduled archiving fails (#2).
 
 - Stabilize the existing gateway reconnect fixture with a TCP half-close, preserving complete-frame and single-reader assertions (#2 verification).
