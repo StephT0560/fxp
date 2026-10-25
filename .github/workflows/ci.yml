@@ -110,6 +110,41 @@ jobs:
           name: e2e-logs
           path: ${{ runner.temp }}/e2e
 
+  quickfix-acceptance:
+    name: quickfix-acceptance
+    needs: [rust, go]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fxp_core
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go_gateway/go.mod
+          cache-dependency-path: "**/go.sum"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - run: python3 -m unittest discover -s tests/quickfix -v
+      - run: python3 scripts/quickfix_acceptance.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quickfix-acceptance
+          path: |
+            target/quickfix-acceptance/*.log
+            target/quickfix-acceptance/results.json
+
   proto:
     name: proto
     runs-on: ubuntu-latest

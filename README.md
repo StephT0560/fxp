@@ -88,7 +88,7 @@ Auction price selection maximizes volume, minimizes imbalance, prefers the refer
 
 ---
 
-## Proto Schema (v2.2)
+## Proto Schema (v2.3)
 
 Full institutional-grade message coverage:
 
@@ -106,7 +106,7 @@ ErrorMessage            — structured error responses
 OrderMassCancelRequest / OrderMassCancelReport — owner-scoped mass cancel
 ```
 
-Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
 **TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
@@ -317,8 +317,8 @@ The FIX 4.4 bridge (`fix_bridge`, port 8083) handles these inbound messages:
 | `G` | OrderCancelReplaceRequest | ✅ |
 | `V` | MarketDataRequest (snapshot, subscribe, unsubscribe) | ✅ |
 | `q` | OrderMassCancelRequest (`530=7` all orders, `530=1` by symbol; optional `54`) | ✅ answered with `35=r` (531/532/533); other 530 values rejected with `531=0 532=0` |
-| `H` | OrderStatusRequest | ❌ BusinessMessageReject (`35=j`, `380=3`) |
-| any other application type | e.g. `AF`, `AD` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
+| `H`, `AF` | OrderStatusRequest / OrderMassStatusRequest | ✅ owner-scoped snapshots, including retained terminal orders; mass types 1 (symbol) and 7 (all) |
+| any other application type | e.g. `AD`, `c` | ❌ BusinessMessageReject (`35=j`, `380=3`) |
 
 Outbound: ExecutionReport (`8`, ExecType `D` = restated by decrement-and-cancel STP), OrderCancelReject (`9`), OrderMassCancelReport (`r`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`), BusinessMessageReject (`j`) plus the session messages.
 
@@ -343,7 +343,7 @@ and a `seqnums` file replaced atomically on every change.
 | `FXP_FIX_STORE_MAX_MESSAGES` | `100000` | Outbound messages retained for resend; older ones are answered with SequenceReset-GapFill |
 
 A second Logon for a session that is already logged on is rejected. Session
-schedules / daily reset are not implemented; use `ResetSeqNumFlag=Y` (141=Y).
+schedules and reset policies are optional; see [FIX conformance](docs/fix-conformance.md).
 
 ### Gateway authentication
 
@@ -372,10 +372,10 @@ Counts observed at this revision:
 
 | Suite | Test count |
 |---|---:|
-| `fxp_core` (`cargo test`) | 64 unit tests |
-| `go_gateway` (`go test ./...`) | 29 top-level tests |
-| `fix_bridge` (`go test ./...`) | 82 top-level tests |
-| Python FIX E2E client (`scripts/e2e.sh`) | 14 scenarios, 34 reported checks, plus 4 durable-session checks across a bridge restart |
+| `fxp_core` (`cargo test`) | 163 unit tests |
+| `go_gateway` (`go test ./...`) | 49 top-level tests |
+| `fix_bridge` (`go test ./...`) | 123 top-level tests |
+| Python FIX E2E client (`scripts/e2e.sh`) | 69 main checks, plus cancel-on-disconnect and restart/persistence checks |
 
 ---
 
@@ -441,7 +441,7 @@ fxp/
 │   ├── benches/
 │   │   └── encoding_benchmark.rs  Criterion benchmarks vs FIX and SBE
 │   └── proto/
-│       └── fxp.proto            Protocol schema v2.2
+│       └── fxp.proto            Protocol schema v2.3
 │
 ├── go_gateway/                  Go gateway
 │   ├── logging/                 slog setup (FXP_LOG_LEVEL), shared with fix_bridge
@@ -488,3 +488,46 @@ fxp/
 ## License
 
 MIT
+### FIX session schedule configuration
+
+All settings are optional. See [FIX conformance](docs/fix-conformance.md) for boundaries and archival behavior.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FXP_FIX_DICTIONARY_STRICT` | `false` | Reject undeclared user-defined tags (>=5000); standard tags always validated |
+| `FXP_FIX_START_TIME` / `FXP_FIX_END_TIME` | unset | Local `HH:MM:SS` window; both required to enable |
+| `FXP_FIX_START_DAY` / `FXP_FIX_END_DAY` | unset | Full weekday names; both enable a weekly window |
+| `FXP_FIX_TIME_ZONE` | `UTC` | IANA timezone |
+| `FXP_FIX_RESET_ON_LOGON` | `false` | Reset on authenticated Logon; requires inbound sequence 1 |
+| `FXP_FIX_RESET_ON_LOGOUT` | `false` | Reset after Logout |
+| `FXP_FIX_RESET_ON_DISCONNECT` | `false` | Reset after a logged-on connection ends |
+
+### FIX conformance
+
+The bridge loads the pinned QuickFIX FIX 4.4 XML dictionary at startup, with
+[documented venue extensions](fix_bridge/codec/spec/README.md). It validates
+required tags, membership, datatypes, enums, duplicates and repeating-group
+counts/order; invalid messages receive Reject(3) with 371/372/373. See
+[conformance details](docs/fix-conformance.md). Unsupported application message types
+remain BusinessMessageReject(j). Dictionary validation changes an invalid
+Side enum from an ExecutionReport rejection to session Reject reason 5.
+
+Order status replies use ExecutionReport `150=I`, `17=0`, the current `39`,
+and original cumulative/leaves quantities. Queries do not redirect fills.
+Single status echoes OrdStatusReqID(790); mass status echoes 584 and includes
+911/912 count/final markers. Unknown/foreign IDs and empty mass results get
+BusinessMessageReject (`380=1`). See [status retention and consistency](docs/fix-conformance.md#order-status).
+
+The CI `quickfix-acceptance` job runs 59 pinned QuickFIX v1.15.1 FIX44 server
+definitions with its official POSIX runner. Observed local result: **28 passed,
+31 failed and explicitly allow-listed, 0 unexpected failures / runner errors**.
+The [per-case reasons](tests/quickfix/expected-failures.json) preserve unsupported
+features and policy differences; this is a regression gate, not certification.
+See [runner/adapter details](tests/quickfix/README.md) and the command in
+[CONTRIBUTING.md](CONTRIBUTING.md#quickfix-fix44-acceptance).
+
+Status batches are bounded by both 64 reports and the gateway's 1 MiB frame
+limit, so large valid order identifiers cannot disconnect the core pool.
+Dictionary `MONTHYEAR` accepts only real dates or weeks 1–5; invalid Boolean
+values and negative nonnegative-integer fields use Reject reason 5, while
+malformed integer syntax uses reason 6.

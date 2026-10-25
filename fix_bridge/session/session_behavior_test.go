@@ -103,7 +103,14 @@ func (p *peer) frame(msgType string, seq int, kv ...string) []byte {
 	}
 	for _, f := range codec.RequiredFields[msgType] {
 		if tag := strconv.Itoa(f.Tag); !given[tag] {
-			kv = append(kv, tag, "1")
+			value := "1"
+			switch f.Tag {
+			case codec.TagTransactTime:
+				value = time.Now().UTC().Format(fixTimeLayout)
+			case codec.TagMDEntryType:
+				value = "0"
+			}
+			kv = append(kv, tag, value)
 		}
 	}
 	return p.exactFrame(msgType, seq, kv...)
@@ -111,9 +118,15 @@ func (p *peer) frame(msgType string, seq int, kv ...string) []byte {
 
 func (p *peer) exactFrame(msgType string, seq int, kv ...string) []byte {
 	b := codec.NewBuilder(msgType, p.sender, p.target, seq)
-	for i := 0; i+1 < len(kv); i += 2 {
-		tag, _ := strconv.Atoi(kv[i])
-		b.Set(tag, kv[i+1])
+	// Optional StandardHeader fields belong before the application body.
+	for _, header := range []bool{true, false} {
+		for i := 0; i+1 < len(kv); i += 2 {
+			tag, _ := strconv.Atoi(kv[i])
+			isHeader := tag == 43 || tag == 122 || tag == 52 || tag == 49 || tag == 56 || tag == 34
+			if isHeader == header {
+				b.Set(tag, kv[i+1])
+			}
+		}
 	}
 	return b.Build()
 }
@@ -704,5 +717,60 @@ func TestPossDupMalformedOrigSendingTimeRejected(t *testing.T) {
 	}
 	if p.h.appCount() != 0 {
 		t.Fatal("malformed PossDup reached the handler")
+	}
+}
+
+func TestDictionaryMissingAndEmptyIdentityAreNotCompIDMismatch(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprint(empty), func(t *testing.T) {
+			p := newPeer(t)
+			p.logon()
+			body := "35=0\x0134=2\x0149=CLIENT\x0152=" + time.Now().UTC().Format(fixTimeLayout) + "\x01"
+			reason := "1"
+			if empty {
+				body += "56=\x01"
+				reason = "4"
+			}
+			p.write(rawSessionWire(body))
+			r := p.expect(codec.MsgTypeReject)
+			if r.Get(373) != reason || r.Get(371) != "56" || r.Get(372) != "0" {
+				t.Fatalf("wrong reject: %+v", r.Fields)
+			}
+			p.sendSeq("1", 3, "112", "probe")
+			p.expect(codec.MsgTypeHeartbeat)
+		})
+	}
+}
+func rawSessionWire(body string) []byte {
+	prefix := fmt.Sprintf("8=FIX.4.4\x019=%d\x01%s", len(body), body)
+	sum := 0
+	for _, c := range []byte(prefix) {
+		sum += int(c)
+	}
+	return []byte(fmt.Sprintf("%s10=%03d\x01", prefix, sum%256))
+}
+
+func TestSequenceResetModeIgnoresZeroMsgSeqNum(t *testing.T) {
+	p := newPeer(t)
+	p.logon()
+	p.sendSeq("4", 0, "36", "25")
+	p.sendSeq("1", 25, "112", "after-reset")
+	if m := p.expect(codec.MsgTypeHeartbeat); m.Get(112) != "after-reset" {
+		t.Fatal(m.Fields)
+	}
+}
+
+func TestResetModeStillUsesDictionaryAndRefMsgType(t *testing.T) {
+	p := newPeer(t)
+	p.logon()
+	p.sendSeq("4", 0, "36", "not-a-sequence")
+	r := p.expect(codec.MsgTypeReject)
+	if r.Get(373) != "6" || r.Get(371) != "36" || r.Get(372) != "4" {
+		t.Fatalf("invalid reset: %+v", r.Fields)
+	}
+	p.sendSeq("4", 0, "36", "1")
+	r = p.expect(codec.MsgTypeReject)
+	if r.Get(373) != "5" || r.Get(372) != "4" {
+		t.Fatalf("backward reset: %+v", r.Fields)
 	}
 }

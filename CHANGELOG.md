@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Bound mass-status batches by encoded bytes as well as report count to prevent core-pool disconnects on large valid orders (#2).
+
+- Fix malformed MONTHYEAR acceptance and Boolean/integer reject classification introduced by dictionary validation (#2).
+
+- Freeze/reset released FIX session state atomically and preserve old messages/sequences when scheduled archiving fails (#2).
+
+- Stabilize the existing gateway reconnect fixture with a TCP half-close, preserving complete-frame and single-reader assertions (#2 verification).
+
+- Gate PRs on all 59 pinned QuickFIX FIX44 server definitions, with a documented per-case expected-failure baseline and explicit runner/result validation (#2).
+
+- Bind recycled terminal status IDs to their newly accepted owner, preserving owner isolation at the trusted core boundary (#2).
+
+- Keep empty-value and duplicate checks enabled for permitted user-defined FIX fields (#2).
+
+- Enforce MsgType as the third wire field and validate Reset-mode dictionary fields while ignoring its sequence number (#2).
+
+- Complete header/trailer ordering and FIX decimal lexical checks; distinguish missing/empty CompIDs from authenticated identity mismatches (#2).
+
+- Additive protocol v2.3 owner-scoped order status (FIX H/AF), terminal-history snapshots and independent batched query routing (#2).
+
+- Pinned FIX44 XML dictionary validation with reject diagnostics, group validation and optional strict user-tag validation (#2).
+
+- Optional FIX daily/weekly schedules, timezone-aware boundaries, archived durable resets and reset-on-logon/logout/disconnect policies (#2).
+
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The project has not
 cut a release yet, so everything is under Unreleased.

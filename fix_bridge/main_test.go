@@ -390,7 +390,7 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	go send(codec.MsgTypeNewOrderSingle,
 		codec.TagClOrdID, "O3", codec.TagSymbol, "MSFT", codec.TagSide, "Z",
 		codec.TagOrderQty, "10", codec.TagOrdType, "2", codec.TagPrice, "10.00", codec.TagTransactTime, "20260101-00:00:00")
-	if m := next(); m.MsgType() != codec.MsgTypeExecutionReport || m.Get(codec.TagExecType) != codec.ExecTypeRejected || m.Get(codec.TagText) == "" {
+	if m := next(); m.MsgType() != codec.MsgTypeReject || m.Get(codec.TagSessionRejectReason) != "5" || m.Get(codec.TagRefTagID) != "54" {
 		t.Fatalf("unknown Side reject: 35=%s 150=%s 58=%s", m.MsgType(), m.Get(codec.TagExecType), m.Get(codec.TagText))
 	}
 	go send(codec.MsgTypeOrderCancelRequest, codec.TagClOrdID, "C1", codec.TagOrigClOrdID, "O1", codec.TagSymbol, "MSFT", codec.TagSide, "1",
@@ -401,8 +401,8 @@ func TestOrdersWithoutGatewayAreRejected(t *testing.T) {
 	go send(codec.MsgTypeOrderStatusRequest, codec.TagClOrdID, "Q1", codec.TagSymbol, "MSFT", codec.TagSide, "1")
 	if m := next(); m.MsgType() != codec.MsgTypeBusinessMessageReject || m.Get(codec.TagRefMsgType) != "H" ||
 		m.Get(codec.TagRefSeqNum) != strconv.Itoa(seq) ||
-		m.Get(codec.TagBusinessRejectReason) != codec.BusinessRejectReasonUnsupportedMsgType ||
-		m.Get(codec.TagText) != "Unsupported MsgType H (OrderStatusRequest); supported: D, F, G, V, q" {
+		m.Get(codec.TagBusinessRejectReason) != "0" ||
+		m.Get(codec.TagText) != "gateway not connected" {
 		t.Fatalf("unsupported type: 35=%s 45=%s 372=%s 380=%s 58=%q", m.MsgType(), m.Get(codec.TagRefSeqNum),
 			m.Get(codec.TagRefMsgType), m.Get(codec.TagBusinessRejectReason), m.Get(codec.TagText))
 	}

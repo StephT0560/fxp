@@ -79,6 +79,9 @@ func namespacedOrderID(owner, id string) string {
 // overriding any client-supplied sender, and namespaces their order IDs.
 func bindOwner(msg *protobuf.FXPMessage, traderID string) {
 	switch p := msg.Payload.(type) {
+	case *protobuf.FXPMessage_OrderStatusRequest:
+		p.OrderStatusRequest.Sender = traderID
+		p.OrderStatusRequest.OrderId = namespacedOrderID(traderID, p.OrderStatusRequest.OrderId)
 	case *protobuf.FXPMessage_NewOrder:
 		p.NewOrder.Sender = traderID
 		p.NewOrder.OrderId = namespacedOrderID(traderID, p.NewOrder.OrderId)

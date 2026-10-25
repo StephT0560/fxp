@@ -116,7 +116,13 @@ func TestPoolReconnectKeepsSingleReader(t *testing.T) {
 				b = b[n:]
 			}
 			if g < drops {
-				_ = c.Close()
+				// Deliver every generation's frames before EOF. Closing with
+				// unread heartbeat writes can send RST and discard outbound
+				// bytes, making the exact-frame assertions nondeterministic.
+				// A half-close still forces the pool reader to reconnect.
+				if err := c.(*net.TCPConn).CloseWrite(); err != nil {
+					t.Error(err)
+				}
 			}
 		}
 	}()

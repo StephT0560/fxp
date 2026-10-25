@@ -8,7 +8,7 @@ use crate::order_book::order::{Order, OrderSide, OrderType, Stp, StpMode, TimeIn
 use crate::order_book::order_book::{OrderBook, OrderReject, OrderReplace};
 use crate::order_book::stops::{Execution, StopBook, StopReplace, run_stop_cascade, stop_fires};
 use prost_types::Timestamp;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 pub mod auction;
@@ -20,6 +20,8 @@ mod persistence_tests;
 mod phase_tests;
 mod phases;
 mod session;
+#[cfg(test)]
+mod status_tests;
 #[cfg(test)]
 mod stp_tests;
 use session::expiry_instant;
@@ -174,6 +176,8 @@ pub struct Engine<R, C, I> {
     held_close: HashMap<String, Order>,
     last_indicative: Option<auction::AuctionResult>,
     stp_default: StpMode,
+    status_history: HashMap<String, (String, fxp::ExecutionReport)>,
+    terminal_history: VecDeque<(String, String)>,
 }
 
 impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
@@ -201,6 +205,8 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             held_close: HashMap::new(),
             last_indicative: Some(auction::AuctionResult::default()),
             stp_default: StpMode::None,
+            status_history: HashMap::new(),
+            terminal_history: VecDeque::new(),
         }
     }
     /// Self-trade prevention applied to orders with `STP_UNSPECIFIED`.
@@ -209,17 +215,113 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         self
     }
     pub fn new_order(&mut self, order: fxp::NewOrderSingle, owner: R) -> Vec<Output<R>> {
-        self.process(SymbolMsg::Order(OrderMsg {
+        let id = order.order_id.clone();
+        let sender = order.sender.clone();
+        let outputs = self.process(SymbolMsg::Order(OrderMsg {
             order,
             output_tx: owner,
-        }))
+        }));
+        self.bind_status_owner(&id, sender, &outputs);
+        self.remember_status(&outputs);
+        outputs
     }
     pub fn cancel(&mut self, request: CancelMsg<R>) -> Vec<Output<R>> {
-        self.process(SymbolMsg::Cancel(request))
+        let outputs = self.process(SymbolMsg::Cancel(request));
+        self.remember_status(&outputs);
+        outputs
     }
     pub fn cancel_replace(&mut self, request: CancelReplaceMsg<R>) -> Vec<Output<R>> {
-        self.process(SymbolMsg::CancelReplace(request))
+        let id = request.new_order_id.clone();
+        let sender = request.sender.clone();
+        let outputs = self.process(SymbolMsg::CancelReplace(request));
+        self.bind_status_owner(&id, sender, &outputs);
+        self.remember_status(&outputs);
+        outputs
     }
+    fn bind_status_owner(&mut self, id: &str, sender: String, outputs: &[Output<R>]) {
+        let accepted = outputs
+            .iter()
+            .rev()
+            .find_map(|o| match o {
+                Output::ExecutionReport(_, r) if r.order_id == id => {
+                    Some(r.execution_type != fxp::ExecutionType::ExecRejected as i32)
+                }
+                _ => None,
+            })
+            .unwrap_or(false);
+        if accepted {
+            self.status_history
+                .entry(id.into())
+                .or_insert_with(|| (String::new(), fxp::ExecutionReport::default()))
+                .0 = sender;
+        }
+    }
+    /// Current order snapshots, including a bounded history of 100,000 terminal
+    /// transitions per symbol. Never change live routing or expose other owners.
+    pub fn order_status(&self, sender: &str, id: &str, side: i32) -> Vec<fxp::ExecutionReport> {
+        if sender.is_empty() {
+            return Vec::new();
+        }
+        let mut reports: Vec<_> = self
+            .status_history
+            .iter()
+            .filter(|(key, (owner, r))| {
+                owner == sender
+                    && (id.is_empty() || key.as_str() == id)
+                    && !r.order_id.is_empty()
+                    && (side == 0 || side == r.side)
+            })
+            .map(|(_, (_, r))| fxp::ExecutionReport {
+                execution_type: fxp::ExecutionType::ExecOrderStatus as i32,
+                execution_id: "0".into(),
+                executed_quantity: 0,
+                execution_price: 0,
+                ..r.clone()
+            })
+            .collect();
+        reports.sort_by(|a, b| a.order_id.cmp(&b.order_id));
+        reports
+    }
+    fn remember_status(&mut self, outputs: &[Output<R>]) {
+        for output in outputs {
+            let Output::ExecutionReport(_, report) = output else {
+                continue;
+            };
+            if report.execution_type == fxp::ExecutionType::ExecRejected as i32 {
+                continue;
+            }
+            if let Some((_, current)) = self.status_history.get_mut(&report.order_id) {
+                if current.execution_id == report.execution_id {
+                    continue;
+                }
+                *current = report.clone();
+                if report.leaves_quantity == 0 {
+                    self.terminal_history
+                        .push_back((report.order_id.clone(), report.execution_id.clone()));
+                }
+            }
+            if !report.orig_order_id.is_empty()
+                && report.execution_type == fxp::ExecutionType::ExecReplaced as i32
+                && let Some((_, old)) = self.status_history.get_mut(&report.orig_order_id)
+            {
+                old.order_status = fxp::OrderStatus::OrderReplaced as i32;
+                old.leaves_quantity = 0;
+                self.terminal_history
+                    .push_back((report.orig_order_id.clone(), old.execution_id.clone()));
+            }
+        }
+        while self.terminal_history.len() > 100_000 {
+            let (id, exec) = self.terminal_history.pop_front().expect("terminal history");
+            if self
+                .status_history
+                .get(&id)
+                .is_some_and(|(_, r)| r.execution_id == exec && r.leaves_quantity == 0)
+            {
+                self.status_history.remove(&id);
+            }
+        }
+    }
+
     pub fn mass_cancel(&mut self, request: MassCancelMsg) -> Vec<Output<R>> {
         let mut outputs = self.tick();
         let ts = phases::timestamp(self.clock.now());
@@ -256,6 +358,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         }
         outputs.push(Output::MassCancelCount(targets.len() as u32));
         self.publish_indicative(self.clock.now(), &mut outputs);
+        self.remember_status(&outputs);
         outputs
     }
     pub fn subscribe(&mut self, owner: R) -> Vec<Output<R>> {
@@ -267,7 +370,9 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         outputs
     }
     pub fn tick(&mut self) -> Vec<Output<R>> {
-        self.advance()
+        let outputs = self.advance();
+        self.remember_status(&outputs);
+        outputs
     }
     fn process(&mut self, msg: SymbolMsg<R>) -> Vec<Output<R>> {
         let mut outputs = self.tick();

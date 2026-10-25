@@ -56,6 +56,7 @@ func registerClientWriter(conn any) *clientWriter {
 }
 
 func unregisterClientWriter(conn any) {
+	clearStatusRoutes(conn)
 	if value, ok := clientWriters.LoadAndDelete(conn); ok {
 		value.(*clientWriter).stop()
 	}

@@ -55,6 +55,16 @@ fn persisted_input(
         .unwrap_or_else(|error| persistence_failure(error));
     let at = WallClock.now();
     let result = match msg {
+        Some(SymbolMsg::Status(m)) => {
+            let outputs = journal.tick(symbol, at);
+            if outputs.is_ok() {
+                let reports = journal.engines.get(symbol).map_or_else(Vec::new, |e| {
+                    e.order_status(&m.request.sender, &m.request.order_id, m.request.side)
+                });
+                let _ = m.reply.send(reports);
+            }
+            outputs
+        }
         None => journal.tick(symbol, at),
         Some(SymbolMsg::Order(m)) => journal.apply(symbol, at, Input::New(m.order), m.output_tx),
         Some(SymbolMsg::Subscribe(m)) => journal.apply(symbol, at, Input::Subscribe, m.tx),
@@ -211,7 +221,13 @@ struct MassCancelMsg {
     reply: Option<tokio::sync::oneshot::Sender<u32>>,
 }
 
+struct StatusMsg {
+    request: fxp::OrderStatusRequest,
+    reply: tokio::sync::oneshot::Sender<Vec<fxp::ExecutionReport>>,
+}
+
 enum SymbolMsg {
+    Status(StatusMsg),
     Order(OrderMsg),
     Subscribe(SubscribeMsg),
     Cancel(CancelMsg),
@@ -470,6 +486,16 @@ async fn scheduled_order_book_task(
             match msg {
                 None => engine.tick(),
                 Some(msg) => match msg {
+                    SymbolMsg::Status(m) => {
+                        let outputs = engine.tick();
+                        let reports = engine.order_status(
+                            &m.request.sender,
+                            &m.request.order_id,
+                            m.request.side,
+                        );
+                        let _ = m.reply.send(reports);
+                        outputs
+                    }
                     SymbolMsg::Order(m) => engine.new_order(m.order, m.output_tx),
                     SymbolMsg::Cancel(m) => engine.cancel(EngineCancel {
                         order_id: m.order_id,
@@ -852,6 +878,9 @@ async fn handle_tcp_client_with_shutdown(
                     }
                 }
 
+                Some(fxp::fxp_message::Payload::OrderStatusRequest(request)) => {
+                    order_status(&router, request, &output_tx).await;
+                }
                 Some(fxp::fxp_message::Payload::OrderMassCancel(request)) => {
                     mass_cancel(&router, request, &output_tx).await;
                 }
@@ -921,6 +950,119 @@ fn server_reject(
         side,
         order_quantity,
         auction: false,
+    }
+}
+
+/// Query symbol tasks without rebinding live order routes. Each snapshot is
+/// serialized with that symbol's order/expiry events, including journal replay.
+async fn order_status(router: &SymbolRouter, request: fxp::OrderStatusRequest, out: &OutputTx) {
+    let mut replies = Vec::new();
+    let mut reject = if request.sender.is_empty() || fxp::OrderSide::try_from(request.side).is_err()
+    {
+        "invalid order status request"
+    } else {
+        ""
+    };
+    if reject.is_empty() {
+        let symbols = if request.symbol.is_empty() {
+            router.symbols().await
+        } else {
+            vec![request.symbol.clone()]
+        };
+        for symbol in symbols {
+            if let Some(tx) = router.get_existing(&symbol).await {
+                let (reply, done) = tokio::sync::oneshot::channel();
+                if tx
+                    .send(SymbolMsg::Status(StatusMsg {
+                        request: request.clone(),
+                        reply,
+                    }))
+                    .await
+                    .is_ok()
+                {
+                    replies.push(done);
+                } else {
+                    reject = "symbol unavailable";
+                }
+            }
+        }
+    }
+    let out = out.clone();
+    tokio::spawn(async move {
+        let mut reports = Vec::new();
+        for done in replies {
+            match done.await {
+                Ok(r) => reports.extend(r),
+                Err(_) => reject = "symbol unavailable",
+            }
+        }
+        reports.sort_by(|a, b| (&a.symbol, &a.order_id).cmp(&(&b.symbol, &b.order_id)));
+        if reports.is_empty() && !request.order_id.is_empty() && reject.is_empty() {
+            reject = "Unknown order";
+        }
+        send_order_status(&out, &request, reports, reject);
+    });
+}
+
+const MAX_STATUS_FRAME_BYTES: usize = 1_048_576;
+
+fn status_response_mut(message: &mut fxp::FxpMessage) -> &mut fxp::OrderStatusResponse {
+    let Some(fxp::fxp_message::Payload::OrderStatusResponse(response)) = message.payload.as_mut()
+    else {
+        unreachable!("status envelope")
+    };
+    response
+}
+
+fn send_order_status(
+    out: &OutputTx,
+    request: &fxp::OrderStatusRequest,
+    reports: Vec<fxp::ExecutionReport>,
+    reject: &str,
+) {
+    let mut message = fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::OrderStatusResponse(
+            fxp::OrderStatusResponse {
+                request_id: request.request_id.clone(),
+                sender: request.sender.clone(),
+                reports: Vec::new(),
+                reject_reason: reject.into(),
+                complete: true,
+                total_reports: reports.len() as u32,
+            },
+        )),
+    };
+    for report in reports {
+        status_response_mut(&mut message).reports.push(report);
+        if status_response_mut(&mut message).reports.len() > 64
+            || message.encoded_len() > MAX_STATUS_FRAME_BYTES
+        {
+            let tail = status_response_mut(&mut message)
+                .reports
+                .pop()
+                .expect("just pushed report");
+            if !status_response_mut(&mut message).reports.is_empty() {
+                status_response_mut(&mut message).complete = false;
+                out.try_send_frame(frame_message(&message));
+                status_response_mut(&mut message).reports.clear();
+                status_response_mut(&mut message).complete = true;
+            }
+            status_response_mut(&mut message).reports.push(tail);
+            if message.encoded_len() > MAX_STATUS_FRAME_BYTES {
+                let response = status_response_mut(&mut message);
+                response.reports.clear();
+                response.total_reports = 0;
+                response.reject_reason = "status report exceeds frame limit".into();
+                break;
+            }
+        }
+    }
+    if message.encoded_len() <= MAX_STATUS_FRAME_BYTES {
+        out.try_send_frame(frame_message(&message));
+    } else {
+        // Even the echoed request metadata cannot fit. Disconnect rather than
+        // sending a frame that would desynchronize the pool's reader.
+        out.slow.notify_one();
     }
 }
 
@@ -2957,5 +3099,80 @@ mod shutdown_tests {
             .expect("client did not observe EOF")
             .unwrap();
         assert_eq!(eof, 0);
+    }
+}
+
+#[cfg(test)]
+mod status_frame_tests {
+    use super::*;
+    #[test]
+    fn long_status_reports_stay_within_the_gateway_frame_limit() {
+        let (out, mut frames, _) = ClientTx::channel(128, 1);
+        let reports: Vec<_> = (0..64)
+            .map(|i| fxp::ExecutionReport {
+                order_id: format!("{i}-{}", "x".repeat(32_000)),
+                client_order_id: "y".repeat(32_000),
+                ..Default::default()
+            })
+            .collect();
+        send_order_status(
+            &out,
+            &fxp::OrderStatusRequest {
+                request_id: "request".into(),
+                sender: "owner".into(),
+                ..Default::default()
+            },
+            reports,
+            "",
+        );
+        let mut count = 0;
+        let mut completed = false;
+        while let Ok(frame) = frames.try_recv() {
+            assert!(
+                frame.len() - 4 <= 1_048_576,
+                "status batch exceeded the gateway limit: {} bytes",
+                frame.len() - 4
+            );
+            let message = fxp::FxpMessage::decode(&frame[4..]).unwrap();
+            let Some(fxp::fxp_message::Payload::OrderStatusResponse(response)) = message.payload
+            else {
+                panic!("expected status response")
+            };
+            assert!(!completed, "report after completion");
+            assert_eq!(response.total_reports, 64);
+            assert_eq!(response.request_id, "request");
+            count += response.reports.len();
+            completed = response.complete;
+        }
+        assert_eq!(count, 64);
+        assert!(completed);
+    }
+    #[test]
+    fn oversized_individual_status_report_returns_a_bounded_rejection() {
+        let (out, mut frames, _) = ClientTx::channel(8, 1);
+        send_order_status(
+            &out,
+            &fxp::OrderStatusRequest {
+                request_id: "request".into(),
+                sender: "owner".into(),
+                ..Default::default()
+            },
+            vec![fxp::ExecutionReport {
+                order_id: "x".repeat(MAX_STATUS_FRAME_BYTES),
+                ..Default::default()
+            }],
+            "",
+        );
+        let frame = frames.try_recv().expect("bounded reject");
+        assert!(frame.len() - 4 <= MAX_STATUS_FRAME_BYTES);
+        let message = fxp::FxpMessage::decode(&frame[4..]).unwrap();
+        let Some(fxp::fxp_message::Payload::OrderStatusResponse(response)) = message.payload else {
+            panic!("expected status response")
+        };
+        assert!(response.complete);
+        assert!(response.reports.is_empty());
+        assert_eq!(response.request_id, "request");
+        assert_eq!(response.reject_reason, "status report exceeds frame limit");
+        assert!(frames.try_recv().is_err());
     }
 }

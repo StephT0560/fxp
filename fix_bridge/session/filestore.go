@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -114,6 +115,19 @@ func OpenFileStore(dir string, opts FileStoreOptions) (*FileStore, error) {
 		return nil, err
 	}
 	fs := &FileStore{dir: dir, opts: opts, log: f, index: make(map[int]recordLoc), nextIn: 1, nextOut: 1}
+	if raw, e := os.ReadFile(filepath.Join(dir, "reset.pending")); e == nil {
+		epoch, e := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+		if e == nil {
+			e = fs.finishEpochReset(epoch)
+		}
+		if e != nil {
+			_ = f.Close()
+			return nil, e
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
+		_ = f.Close()
+		return nil, e
+	}
 	maxSeq, err := fs.recover()
 	if err == nil {
 		err = fs.loadSeqNums(maxSeq)

@@ -80,16 +80,23 @@ type Session struct {
 	handler Handler
 
 	// Auth validates Logon credentials; a nil Auth rejects every Logon.
-	Auth Authenticator
+	Auth             Authenticator
+	StrictDictionary bool
 	// Store keeps sent messages for ResendRequest and the sequence numbers.
 	// With a Registry it is replaced at Logon by the session's durable store.
 	Store MessageStore
 	// Registry, if set, supplies the store keyed by (BeginString,
 	// SenderCompID, TargetCompID) so sequence state survives reconnects.
-	Registry      *Registry
-	LogonTimeout  time.Duration
-	LogoutTimeout time.Duration
-	MaxLatency    time.Duration
+	Registry                                       *Registry
+	LogonTimeout                                   time.Duration
+	LogoutTimeout                                  time.Duration
+	MaxLatency                                     time.Duration
+	Schedule                                       *Schedule
+	Now                                            func() time.Time
+	ResetOnLogon, ResetOnLogout, ResetOnDisconnect bool
+	resetAtClose                                   atomic.Bool
+	scheduleEpoch                                  atomic.Int64
+	loggedOn                                       atomic.Bool
 
 	// Identity
 	SenderCompID string // bridge's CompID
@@ -128,6 +135,7 @@ type Session struct {
 func NewSession(conn net.Conn, senderCompID string, handler Handler) *Session {
 	s := &Session{
 		conn:          conn,
+		Now:           time.Now,
 		parser:        codec.NewParser(conn),
 		handler:       handler,
 		Store:         NewMemoryStore(),
@@ -166,10 +174,14 @@ func (s *Session) Run() {
 		if dh, ok := s.handler.(DisconnectHandler); ok {
 			dh.OnDisconnect(s)
 		}
+
 		s.releaseStore()
 	}()
 	go s.writeLoop()
 	go s.heartbeatLoop()
+	if s.Schedule != nil {
+		go s.scheduleLoop()
+	}
 	if s.LogonTimeout > 0 {
 		go s.logonTimeoutLoop()
 	}
@@ -322,7 +334,8 @@ func (s *Session) dispatch(msg *codec.Message) error {
 	msgType := msg.MsgType()
 	state := s.State()
 	seq, err := strconv.Atoi(msg.Get(codec.TagMsgSeqNum))
-	if err != nil || seq <= 0 {
+	ignoreResetSeq := (state == StateLoggedOn || state == StateLoggingOut) && msgType == codec.MsgTypeSequenceReset && msg.Get(codec.TagGapFillFlag) != "Y" && err == nil && seq == 0
+	if err != nil || seq <= 0 && !ignoreResetSeq {
 		if state != StateLoggedOn && state != StateLoggingOut {
 			return s.rejectLogon(msg, "missing or invalid MsgSeqNum (34)")
 		}
@@ -336,13 +349,27 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		return s.handleLogon(msg, seq)
 	}
 
+	if v := codec.DefaultDictionary.ValidateIdentity(msg); v != nil {
+		if seq == s.inSeqNum {
+			if err := s.setInSeq(seq + 1); err != nil {
+				return err
+			}
+		}
+		s.sendRejectRef(seq, v.Tag, msgType, v.Reason, v.Text)
+		return nil
+	}
+
 	if msg.Get(codec.TagSenderCompID) != s.target() || msg.Get(codec.TagTargetCompID) != s.SenderCompID {
-		s.sendReject(seq, codec.RejectCompIDProblem, "CompID problem")
+		s.sendRejectRef(seq, 0, msgType, codec.RejectCompIDProblem, "CompID problem")
 		return fmt.Errorf("CompID problem: 49=%q 56=%q", msg.Get(codec.TagSenderCompID), msg.Get(codec.TagTargetCompID))
 	}
 
 	// SequenceReset-Reset and Logon(141=Y) ignore MsgSeqNum.
 	if msgType == codec.MsgTypeSequenceReset && msg.Get(codec.TagGapFillFlag) != "Y" {
+		if v := codec.DefaultDictionary.Validate(msg, s.StrictDictionary); v != nil {
+			s.sendRejectRef(seq, v.Tag, msgType, v.Reason, v.Text)
+			return nil
+		}
 		s.applyNewSeqNo(msg, seq)
 		return nil
 	}
@@ -390,7 +417,7 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		return nil
 	}
 	if reason, text := s.validateSendingTime(msg); reason != "" {
-		s.sendReject(seq, reason, text)
+		s.sendRejectRef(seq, 0, msgType, reason, text)
 		if reason == codec.RejectSendingTimeAccuracy {
 			s.sendLogout(text)
 			return io.EOF
@@ -398,14 +425,14 @@ func (s *Session) dispatch(msg *codec.Message) error {
 		return nil
 	}
 	if !validMsgType(msgType) {
-		s.sendReject(seq, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
+		s.sendRejectRef(seq, 0, msgType, codec.RejectInvalidMsgType, fmt.Sprintf("invalid MsgType %q", msgType))
 		return nil
 	}
-	if f, missing := codec.MissingRequired(msg); missing {
-		s.sendRejectRef(seq, f.Tag, msgType, codec.RejectRequiredTagMissing,
-			fmt.Sprintf("Required tag missing: %s (%d)", f.Name, f.Tag))
+	if v := codec.DefaultDictionary.Validate(msg, s.StrictDictionary); v != nil {
+		s.sendRejectRef(seq, v.Tag, msgType, v.Reason, v.Text)
 		return nil
 	}
+
 	switch msgType {
 	case codec.MsgTypeLogon:
 		return nil // repeated Logon without reset: nothing to do
@@ -511,7 +538,20 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 		return s.rejectLogon(msg, text)
 	}
 
-	reset := msg.Get(codec.TagResetSeqNumFlag) == "Y"
+	if s.Schedule != nil && !s.Schedule.Contains(s.Now()) {
+		return s.rejectLogon(msg, "Logon outside configured session schedule")
+	}
+	cod := msg.Get(codec.TagCancelOnDisconnect)
+	if cod != "" && cod != "Y" && cod != "N" {
+		return s.rejectLogon(msg, "invalid CancelOnDisconnect (8013); expected Y or N")
+	}
+	if v := codec.DefaultDictionary.Validate(msg, s.StrictDictionary); v != nil {
+		s.SendWithSeq(func(n int) []byte {
+			return codec.NewRejectRef(s.SenderCompID, sender, n, seq, v.Tag, msg.MsgType(), v.Reason, v.Text)
+		})
+		return s.rejectLogon(msg, v.Text)
+	}
+	reset := msg.Get(codec.TagResetSeqNumFlag) == "Y" || s.ResetOnLogon
 	if reset && seq != 1 {
 		return s.rejectLogon(msg, "ResetSeqNumFlag=Y requires MsgSeqNum=1")
 	}
@@ -519,6 +559,12 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 		if err := s.acquireStore(SessionKey{msg.Get(codec.TagBeginString), s.SenderCompID, sender}); err != nil {
 			return s.rejectLogon(msg, err.Error())
 		}
+	}
+	s.sendMu.Lock()
+	scheduleErr := s.advanceSchedule()
+	s.sendMu.Unlock()
+	if scheduleErr != nil {
+		return scheduleErr
 	}
 	if reset {
 		s.resetOutbound()
@@ -528,10 +574,6 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	}
 	if seq < s.inSeqNum {
 		return s.rejectLogon(msg, fmt.Sprintf("MsgSeqNum too low, expecting %d but received %d", s.inSeqNum, seq))
-	}
-	cod := msg.Get(codec.TagCancelOnDisconnect)
-	if cod != "" && cod != "Y" && cod != "N" {
-		return s.rejectLogon(msg, "invalid CancelOnDisconnect (8013); expected Y or N")
 	}
 
 	gap := seq > s.inSeqNum
@@ -559,6 +601,7 @@ func (s *Session) handleLogon(msg *codec.Message, seq int) error {
 	if gap {
 		s.requestResend(seq)
 	}
+	s.loggedOn.Store(true)
 	s.handler.OnLogon(s)
 	return nil
 }
@@ -611,6 +654,23 @@ func (s *Session) acquireStore(key SessionKey) error {
 func (s *Session) releaseStore() {
 	s.sendMu.Lock()
 	s.released = true
+	// Reset and freeze the old session under the same lock. Gateway callbacks
+	// already in flight must not rewrite the fresh store before registry release.
+	if s.loggedOn.Load() && (s.resetAtClose.Load() || s.ResetOnDisconnect) {
+		reset := true
+		if s.Schedule != nil && s.resetAtClose.Load() {
+			if err := s.advanceSchedule(); err != nil {
+				log.Printf("scheduled archive failed; preserving old store: %v", err)
+				reset = false
+			}
+		}
+		if reset {
+			s.Store.Reset()
+			s.inSeqNum = 1
+			s.outSeqNum = 1
+			s.resendTo = 0
+		}
+	}
 	key := s.regKey
 	s.sendMu.Unlock()
 	if key != nil {
@@ -638,6 +698,9 @@ func (s *Session) resetOutbound() {
 }
 
 func (s *Session) handleLogout(msg *codec.Message) error {
+	if s.ResetOnLogout {
+		s.resetAtClose.Store(true)
+	}
 	reason := msg.Get(codec.TagText)
 	log.Printf("[%s] Logout received: %q", s.target(), reason)
 	if s.State() != StateLoggingOut {
@@ -654,6 +717,9 @@ func (s *Session) handleLogout(msg *codec.Message) error {
 
 // Logout initiates a graceful Logout exchange with the peer.
 func (s *Session) Logout(reason string) {
+	if s.ResetOnLogout {
+		s.resetAtClose.Store(true)
+	}
 	s.stateMu.Lock()
 	if s.state != StateLoggedOn {
 		s.stateMu.Unlock()
@@ -754,7 +820,7 @@ func (s *Session) applyNewSeqNo(msg *codec.Message, seq int) {
 		return
 	}
 	if newSeq < s.inSeqNum {
-		s.sendReject(seq, codec.RejectValueIncorrect,
+		s.sendRejectRef(seq, 0, codec.MsgTypeSequenceReset, codec.RejectValueIncorrect,
 			fmt.Sprintf("NewSeqNo %d lower than expected %d", newSeq, s.inSeqNum))
 		return
 	}

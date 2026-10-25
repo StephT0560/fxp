@@ -1,0 +1,13 @@
+<!-- SPDX-License-Identifier: MIT -->
+<profile>
+ <fields>
+  <field number="2362" name="SelfMatchPreventionID" type="STRING"/>
+  <field number="2964" name="SelfMatchPreventionInstruction" type="INT"><value enum="1"/><value enum="2"/><value enum="3"/><value enum="99"/></field>
+  <field number="8013" name="CancelOnDisconnect" type="BOOLEAN"/>
+ </fields>
+ <messages>
+  <message msgtype="D"><field name="SelfMatchPreventionID"/><field name="SelfMatchPreventionInstruction"/></message>
+  <message msgtype="A"><field name="CancelOnDisconnect"/></message>
+ </messages>
+ <required component="Instrument" field="Symbol"/>
+</profile>

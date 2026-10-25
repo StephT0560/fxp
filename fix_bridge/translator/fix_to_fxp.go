@@ -41,6 +41,8 @@ import (
 // Returns an error if required fields are missing or invalid.
 func TranslateFIXtoFXP(msg *codec.Message) (*protobuf.FXPMessage, error) {
 	switch msg.MsgType() {
+	case "H", "AF":
+		return translateStatusRequest(msg)
 	case codec.MsgTypeNewOrderSingle:
 		return translateNewOrder(msg)
 	case codec.MsgTypeOrderCancelRequest:
