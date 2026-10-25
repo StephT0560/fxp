@@ -1,0 +1,6 @@
+# Tick size is an integer number of the symbol's minor units. Defaults apply to unlisted symbols.
+symbol,price_scale,tick_size,lot_size,min_quantity,max_quantity
+P0,0,1,1,1,2147483647
+P2,2,5,10,10,1000000
+P4,4,1,1,1,1000000
+P8,8,1,1,1,1000000

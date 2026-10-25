@@ -176,6 +176,7 @@ pub struct Engine<R, C, I> {
     held_close: HashMap<String, Order>,
     last_indicative: Option<auction::AuctionResult>,
     stp_default: StpMode,
+    symbol_rules: crate::symbol_config::SymbolRules,
     status_history: HashMap<String, (String, fxp::ExecutionReport)>,
     terminal_history: VecDeque<(String, String)>,
 }
@@ -205,6 +206,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             held_close: HashMap::new(),
             last_indicative: Some(auction::AuctionResult::default()),
             stp_default: StpMode::None,
+            symbol_rules: Default::default(),
             status_history: HashMap::new(),
             terminal_history: VecDeque::new(),
         }
@@ -212,6 +214,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
     /// Self-trade prevention applied to orders with `STP_UNSPECIFIED`.
     pub fn with_stp_default(mut self, mode: StpMode) -> Self {
         self.stp_default = mode;
+        self
+    }
+    pub fn with_symbol_rules(mut self, rules: crate::symbol_config::SymbolRules) -> Self {
+        self.symbol_rules = rules;
         self
     }
     pub fn new_order(&mut self, order: fxp::NewOrderSingle, owner: R) -> Vec<Output<R>> {
@@ -382,6 +388,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             self.publish_indicative(self.clock.now(), &mut outputs);
             return outputs;
         }
+        let symbol_rules = self.symbol_rules;
         let phase = self.phase;
         let full_schedule = self.schedule.is_some_and(SessionSchedule::is_full);
         let call_markets = &mut self.call_markets;
@@ -701,6 +708,25 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         }
                         _ => None,
                     };
+                    let invalid = invalid.or_else(|| {
+                        symbol_rules
+                            .validate_quantity(order.quantity as u32)
+                            .err()
+                            .or_else(|| {
+                                if order.price > 0 {
+                                    symbol_rules.validate_price(order.price).err()
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| {
+                                if order.stop_price != 0 {
+                                    symbol_rules.validate_price(order.stop_price).err()
+                                } else {
+                                    None
+                                }
+                            })
+                    });
                     if let Some(reason) = invalid {
                         let ts = Some(Timestamp {
                             seconds: now.seconds,

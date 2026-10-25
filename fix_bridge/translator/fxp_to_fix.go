@@ -27,6 +27,7 @@ package translator
 
 import (
 	"fmt"
+	"go_gateway/symbolconfig"
 	"log/slog"
 	"strconv"
 	"sync/atomic"
@@ -165,11 +166,11 @@ func translateExecutionReport(
 	// Fill-specific fields
 	if rep.ExecutedQuantity > 0 {
 		b.SetInt(codec.TagLastQty, int(rep.ExecutedQuantity))
-		b.Set(codec.TagLastPx, formatFixedPoint(rep.ExecutionPrice))
+		b.Set(codec.TagLastPx, symbolconfig.Current().FormatPrice(rep.Symbol, rep.ExecutionPrice))
 	}
 
 	// Average price (required on every ExecutionReport)
-	b.Set(codec.TagAvgPx, formatFixedPoint(rep.AvgPx))
+	b.Set(codec.TagAvgPx, symbolconfig.Current().FormatPrice(rep.Symbol, rep.AvgPx))
 
 	// Reject reason
 	if rep.RejectReason != "" {
@@ -204,12 +205,12 @@ func translateMarketDataSnapshot(
 	// Repeating group entries use Append so every level is emitted.
 	for _, bid := range snap.BidLevels {
 		b.Append(codec.TagMDEntryType, "0") // Bid
-		b.Append(codec.TagMDEntryPx, formatFixedPoint(bid.Price))
+		b.Append(codec.TagMDEntryPx, symbolconfig.Current().FormatPrice(snap.Symbol, bid.Price))
 		b.Append(codec.TagMDEntrySize, strconv.Itoa(int(bid.Size)))
 	}
 	for _, ask := range snap.AskLevels {
 		b.Append(codec.TagMDEntryType, "1") // Offer
-		b.Append(codec.TagMDEntryPx, formatFixedPoint(ask.Price))
+		b.Append(codec.TagMDEntryPx, symbolconfig.Current().FormatPrice(snap.Symbol, ask.Price))
 		b.Append(codec.TagMDEntrySize, strconv.Itoa(int(ask.Size)))
 	}
 
@@ -254,7 +255,7 @@ func translateMarketDataIncremental(
 		b.Append(codec.TagMDUpdateAction, mapMDUpdateAction(e.change.UpdateType))
 		b.Append(codec.TagMDEntryType, e.entryType)
 		b.Append(codec.TagSymbol, inc.Symbol)
-		b.Append(codec.TagMDEntryPx, formatFixedPoint(e.change.Price))
+		b.Append(codec.TagMDEntryPx, symbolconfig.Current().FormatPrice(inc.Symbol, e.change.Price))
 		b.Append(codec.TagMDEntrySize, strconv.Itoa(int(e.change.Quantity)))
 	}
 
@@ -400,19 +401,7 @@ func mapMDUpdateAction(updateType int32) string {
 
 // formatFixedPoint converts FXP fixed-point cents to a FIX decimal price string.
 // 18542 → "185.42", 18500 → "185.00", 50 → "0.50"
-func formatFixedPoint(cents int64) string {
-	if cents == 0 {
-		return "0.00"
-	}
-	neg := ""
-	if cents < 0 {
-		neg = "-"
-		cents = -cents
-	}
-	dollars := cents / 100
-	c := cents % 100
-	return fmt.Sprintf("%s%d.%02d", neg, dollars, c)
-}
+func formatFixedPoint(value int64) string { return symbolconfig.FormatScale(value, 2) }
 
 // formatProtoTime converts a timestamppb.Timestamp to FIX SendingTime format.
 func formatProtoTime(ts *timestamppb.Timestamp) string {

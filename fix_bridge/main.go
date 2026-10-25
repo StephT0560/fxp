@@ -61,6 +61,7 @@ import (
 
 	"go_gateway/logging"
 	"go_gateway/protobuf"
+	"go_gateway/symbolconfig"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -76,6 +77,9 @@ var (
 
 func main() {
 	logging.Setup()
+	if err := symbolconfig.Configure(os.Getenv("FXP_SYMBOL_CONFIG")); err != nil {
+		log.Fatalf("FXP_SYMBOL_CONFIG: %v", err)
+	}
 	flag.Parse()
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()

@@ -531,3 +531,16 @@ limit, so large valid order identifiers cannot disconnect the core pool.
 Dictionary `MONTHYEAR` accepts only real dates or weeks 1–5; invalid Boolean
 values and negative nonnegative-integer fields use Reject reason 5, while
 malformed integer syntax uses reason 6.
+
+### Symbol tick, precision and quantity configuration
+
+Set `FXP_SYMBOL_CONFIG` on the core and FIX bridge to the same CSV file.
+Unset means the existing defaults: 2 decimal places, one-minor-unit tick,
+lot/minimum 1, maximum 2,147,483,647. See [symbol configuration](docs/symbol-config.md)
+and [example CSV](config/symbols.example.csv). This does not change prices on
+the wire: they remain signed int64 minor units. Native clients must use the
+same symbol scales. FIX execution reports and market data use those scales.
+
+| Variable | Default | Components | Meaning |
+|---|---|---|---|
+| `FXP_SYMBOL_CONFIG` | unset | core, FIX bridge | Validated per-symbol CSV, loaded once at startup; in Compose use `/etc/fxp/symbols.example.csv` or another file under the mounted `config/` directory |

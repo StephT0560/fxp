@@ -248,6 +248,7 @@ struct SymbolRouter {
     persistence: Option<Persistence>,
     allowed_symbols: Option<Arc<HashSet<String>>>,
     max_symbols: Option<usize>,
+    symbol_config: crate::symbol_config::SymbolConfig,
 }
 
 impl SymbolRouter {
@@ -262,6 +263,7 @@ impl SymbolRouter {
             persistence: None,
             allowed_symbols: None,
             max_symbols: None,
+            symbol_config: Default::default(),
         }
     }
 
@@ -340,6 +342,7 @@ impl SymbolRouter {
         map.insert(symbol.to_string(), tx.clone());
         let sym = symbol.to_string();
         let schedule = self.schedule;
+        let rules = self.symbol_config.get(symbol);
         let stp_default = self.stp_default;
         let persistence = self.persistence.clone();
         // Spawn while holding the lock to guarantee the entry is visible
@@ -352,25 +355,28 @@ impl SymbolRouter {
                         .await
                         .expect("test symbol gate closed")
                         .forget();
-                    scheduled_order_book_task(sym, rx, schedule, stp_default, persistence).await;
+                    configured_order_book_task(sym, rx, schedule, stp_default, persistence, rules)
+                        .await;
                 })
             } else {
-                tokio::spawn(scheduled_order_book_task(
+                tokio::spawn(configured_order_book_task(
                     sym,
                     rx,
                     schedule,
                     stp_default,
                     persistence,
+                    rules,
                 ))
             }
         };
         #[cfg(not(test))]
-        let task = tokio::spawn(scheduled_order_book_task(
+        let task = tokio::spawn(configured_order_book_task(
             sym,
             rx,
             schedule,
             stp_default,
             persistence,
+            rules,
         ));
         self.tasks
             .lock()
@@ -447,19 +453,40 @@ async fn order_book_task(symbol: String, rx: mpsc::Receiver<SymbolMsg>) {
     scheduled_order_book_task(symbol, rx, None, StpMode::None, None).await;
 }
 
+#[cfg(test)]
 async fn scheduled_order_book_task(
+    symbol: String,
+    rx: mpsc::Receiver<SymbolMsg>,
+    schedule: Option<SessionSchedule>,
+    stp_default: StpMode,
+    persistence: Option<Persistence>,
+) {
+    configured_order_book_task(
+        symbol,
+        rx,
+        schedule,
+        stp_default,
+        persistence,
+        Default::default(),
+    )
+    .await;
+}
+async fn configured_order_book_task(
     symbol: String,
     mut rx: mpsc::Receiver<SymbolMsg>,
     schedule: Option<SessionSchedule>,
     stp_default: StpMode,
     persistence: Option<Persistence>,
+    rules: crate::symbol_config::SymbolRules,
 ) {
     use crate::engine::{
         CancelMsg as EngineCancel, CancelReplaceMsg as EngineReplace, Engine,
         MassCancelMsg as EngineMassCancel, Output,
     };
     let mut engine = persistence.is_none().then(|| {
-        Engine::new(&symbol, WallClock, GlobalExecIds, schedule).with_stp_default(stp_default)
+        Engine::new(&symbol, WallClock, GlobalExecIds, schedule)
+            .with_stp_default(stp_default)
+            .with_symbol_rules(rules)
     });
     let mut subscribers: Vec<OutputTx> = Vec::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -1187,6 +1214,7 @@ pub async fn start_server(shutdown: impl Future<Output = ()> + Send) -> Result<(
         );
     let mut router = SymbolRouter::new(schedule);
     router.stp_default = stp_default;
+    router.symbol_config = crate::symbol_config::SymbolConfig::load_env()?;
     router.allowed_symbols = allowed_symbols.map(Arc::new);
     router.max_symbols = max_symbols;
     if let Some(path) = std::env::var_os("FXP_EVENT_LOG") {
@@ -1197,9 +1225,14 @@ pub async fn start_server(shutdown: impl Future<Output = ()> + Send) -> Result<(
         let (detached, frame_rx, md_rx) = ClientTx::channel(1, 1);
         drop(frame_rx);
         drop(md_rx);
-        let mut journal =
-            Journal::open(std::path::Path::new(&path), schedule, stp_default, detached)
-                .unwrap_or_else(|error| persistence_failure(error));
+        let mut journal = Journal::open_configured(
+            std::path::Path::new(&path),
+            schedule,
+            stp_default,
+            detached,
+            router.symbol_config.clone(),
+        )
+        .unwrap_or_else(|error| persistence_failure(error));
         let symbols = journal.symbols();
         let at = WallClock.now();
         for symbol in &symbols {

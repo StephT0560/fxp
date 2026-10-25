@@ -4,6 +4,7 @@ pub mod engine;
 mod event_log;
 pub mod order_book;
 pub mod server;
+pub mod symbol_config;
 
 #[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
 pub mod fxp {

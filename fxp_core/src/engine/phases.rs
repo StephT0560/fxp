@@ -409,6 +409,32 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         }
                     }
                 };
+                let reason = reason.or_else(|| {
+                    if c.new_quantity < 0 || c.new_price < 0 || c.new_stop_price < 0 {
+                        return Some("negative replace fields are invalid".into());
+                    }
+                    self.symbol_rules
+                        .validate_quantity(if c.new_quantity == 0 {
+                            state.unwrap().order_qty
+                        } else {
+                            c.new_quantity as u32
+                        })
+                        .err()
+                        .or_else(|| {
+                            if c.new_price > 0 {
+                                self.symbol_rules.validate_price(c.new_price).err()
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| {
+                            if c.new_stop_price > 0 {
+                                self.symbol_rules.validate_price(c.new_stop_price).err()
+                            } else {
+                                None
+                            }
+                        })
+                });
                 if let Some(reason) = reason {
                     out.push(Output::ExecutionReport(
                         c.output_tx.clone(),
