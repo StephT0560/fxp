@@ -1,0 +1,12 @@
+# Shared by core, gateway and demo_api. Minor-unit prices, one-cent ticks.
+symbol,price_scale,tick_size,lot_size,min_quantity,max_quantity
+AAPL,2,1,1,1,2147483647
+MSFT,2,1,1,1,2147483647
+GOOGL,2,1,1,1,2147483647
+AMZN,2,1,1,1,2147483647
+NVDA,2,1,1,1,2147483647
+TSLA,2,1,1,1,2147483647
+META,2,1,1,1,2147483647
+JPM,2,1,1,1,2147483647
+ETH/USD,2,1,1,1,2147483647
+BTC/USD,2,1,1,1,2147483647

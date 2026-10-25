@@ -40,6 +40,7 @@ COPY --from=protoc /opt/protoc /opt/protoc
 ENV PATH="/opt/protoc/bin:/go/bin:${PATH}" CGO_ENABLED=0
 WORKDIR /src
 COPY go.work ./
+COPY demo_api/go.mod demo_api/go.sum demo_api/
 COPY go_gateway/go.mod go_gateway/go.sum go_gateway/
 COPY fix_bridge/go.mod fix_bridge/go.sum fix_bridge/
 RUN --mount=type=secret,id=proxy_ca \

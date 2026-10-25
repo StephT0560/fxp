@@ -3,6 +3,7 @@ go 1.25.0
 toolchain go1.26.10
 
 use (
+	./demo_api
 	./fix_bridge
 	./go_gateway
 )
