@@ -283,3 +283,104 @@ fn iceberg_replay_restores_partial_slice_and_replacement_presence() {
     let mut j = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
     assert_eq!(snapshot(&mut j).bid_levels[0].size, 7);
 }
+
+#[test]
+fn replay_reconstructs_the_per_symbol_trade_sequence() {
+    fn report_trades(outputs: Vec<Output<u32>>) -> Vec<(u64, i64, i32, i32)> {
+        outputs
+            .into_iter()
+            .filter_map(|output| match output {
+                Output::Trade(trade) => Some((
+                    trade.seq,
+                    trade.trade_price,
+                    trade.trade_quantity,
+                    trade.aggressor_side,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn resting_ask() -> fxp::NewOrderSingle {
+        fxp::NewOrderSingle {
+            order_id: "ASK".into(),
+            sender: "seller".into(),
+            symbol: "TEST".into(),
+            price: 100,
+            quantity: 3,
+            side: fxp::OrderSide::Sell as i32,
+            order_type: fxp::OrderType::Limit as i32,
+            time_in_force: fxp::TimeInForce::Gtc as i32,
+            ..Default::default()
+        }
+    }
+
+    fn crossing_bid(id: &str) -> fxp::NewOrderSingle {
+        fxp::NewOrderSingle {
+            order_id: id.into(),
+            sender: "buyer".into(),
+            symbol: "TEST".into(),
+            price: 100,
+            quantity: 1,
+            side: fxp::OrderSide::Buy as i32,
+            order_type: fxp::OrderType::Limit as i32,
+            time_in_force: fxp::TimeInForce::Gtc as i32,
+            ..Default::default()
+        }
+    }
+
+    let dir = TestDir::new();
+    let mut journal = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+    journal
+        .apply("TEST", time(), Input::New(resting_ask()), 1)
+        .unwrap();
+    let first = report_trades(
+        journal
+            .apply("TEST", time(), Input::New(crossing_bid("B1")), 2)
+            .unwrap(),
+    );
+    let second = report_trades(
+        journal
+            .apply("TEST", time(), Input::New(crossing_bid("B2")), 3)
+            .unwrap(),
+    );
+    let mut expected = first;
+    expected.extend(second);
+    assert_eq!(
+        expected.iter().map(|trade| trade.0).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    drop(journal);
+
+    let mut replayed = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+    let replayed_next = report_trades(
+        replayed
+            .apply("TEST", time(), Input::New(crossing_bid("B3")), 4)
+            .unwrap(),
+    );
+    assert_eq!(replayed_next, [(3, 100, 1, fxp::OrderSide::Buy as i32)]);
+    expected.extend(replayed_next);
+    drop(replayed);
+
+    let fresh_dir = TestDir::new();
+    let mut fresh = Journal::open(&fresh_dir.log(), None, StpMode::None, 0).unwrap();
+    fresh
+        .apply("TEST", time(), Input::New(resting_ask()), 1)
+        .unwrap();
+    let mut fresh_sequence = report_trades(
+        fresh
+            .apply("TEST", time(), Input::New(crossing_bid("B1")), 2)
+            .unwrap(),
+    );
+    fresh_sequence.extend(report_trades(
+        fresh
+            .apply("TEST", time(), Input::New(crossing_bid("B2")), 3)
+            .unwrap(),
+    ));
+    fresh_sequence.extend(report_trades(
+        fresh
+            .apply("TEST", time(), Input::New(crossing_bid("B3")), 4)
+            .unwrap(),
+    ));
+    assert_eq!(fresh_sequence, expected);
+}

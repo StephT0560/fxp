@@ -612,6 +612,17 @@ async fn configured_order_book_task(
                         }),
                     );
                 }
+                Output::Trade(trade) => {
+                    if subscribers.is_empty() {
+                        continue;
+                    }
+                    broadcast_md(
+                        &mut subscribers,
+                        frame_message(&fxp::FxpMessage {
+                            payload: Some(fxp::fxp_message::Payload::TradeCaptureReport(trade)),
+                        }),
+                    );
+                }
             }
         }
     }
@@ -3403,5 +3414,231 @@ mod core_auth_tests {
             result.unwrap_err(),
             "core listener must be bound to a loopback address"
         );
+    }
+}
+
+#[cfg(test)]
+mod trade_feed_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn new_order(
+        id: &str,
+        sender: &str,
+        side: fxp::OrderSide,
+        quantity: i32,
+        price: i64,
+    ) -> fxp::NewOrderSingle {
+        fxp::NewOrderSingle {
+            order_id: id.into(),
+            sender: sender.into(),
+            symbol: "TEST".into(),
+            side: side as i32,
+            order_type: fxp::OrderType::Limit as i32,
+            time_in_force: fxp::TimeInForce::Gtc as i32,
+            price,
+            quantity,
+            ..Default::default()
+        }
+    }
+
+    async fn send_order(
+        book: &mpsc::Sender<SymbolMsg>,
+        output: &OutputTx,
+        order: fxp::NewOrderSingle,
+    ) {
+        book.send(SymbolMsg::Order(OrderMsg {
+            order,
+            output_tx: output.clone(),
+        }))
+        .await
+        .unwrap();
+    }
+
+    async fn receive(rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<u8> {
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("timed out waiting for a frame")
+            .expect("frame channel closed")
+    }
+
+    fn decode_trade(frame: &[u8]) -> Option<fxp::TradeCaptureReport> {
+        match fxp::FxpMessage::decode(&frame[4..]).unwrap().payload {
+            Some(fxp::fxp_message::Payload::TradeCaptureReport(trade)) => Some(trade),
+            _ => None,
+        }
+    }
+
+    async fn receive_trades(
+        rx: &mut mpsc::Receiver<Vec<u8>>,
+        count: usize,
+    ) -> Vec<fxp::TradeCaptureReport> {
+        let mut trades = Vec::new();
+        while trades.len() < count {
+            if let Some(trade) = decode_trade(&receive(rx).await) {
+                trades.push(trade);
+            }
+        }
+        trades
+    }
+
+    #[tokio::test]
+    async fn public_trade_frames_never_expose_private_order_fields() {
+        let (book, rx) = mpsc::channel(64);
+        tokio::spawn(order_book_task("TEST".into(), rx));
+        let (subscriber, _, mut md_rx) = ClientTx::channel(32, 32);
+        book.send(SymbolMsg::Subscribe(SubscribeMsg {
+            tx: subscriber.clone(),
+        }))
+        .await
+        .unwrap();
+        let snapshot = receive(&mut md_rx).await;
+        assert!(matches!(
+            fxp::FxpMessage::decode(&snapshot[4..]).unwrap().payload,
+            Some(fxp::fxp_message::Payload::MarketDataSnapshot(_))
+        ));
+
+        let (a1, mut a1_rx, _) = ClientTx::channel(16, 16);
+        let (a2, mut a2_rx, _) = ClientTx::channel(16, 16);
+        let private_values = [
+            "private-order-a1-9c5a",
+            "private-sender-a1-9c5a",
+            "private-client-a1-9c5a",
+            "private-account-a1-9c5a",
+            "private-order-a2-b817",
+            "private-sender-a2-b817",
+            "private-client-a2-b817",
+            "private-account-a2-b817",
+        ];
+        let mut ask = new_order(
+            private_values[0],
+            private_values[1],
+            fxp::OrderSide::Sell,
+            5,
+            100,
+        );
+        ask.client_order_id = private_values[2].into();
+        ask.account = private_values[3].into();
+        send_order(&book, &a1, ask).await;
+        receive(&mut a1_rx).await;
+
+        let mut bid = new_order(
+            private_values[4],
+            private_values[5],
+            fxp::OrderSide::Buy,
+            5,
+            100,
+        );
+        bid.client_order_id = private_values[6].into();
+        bid.account = private_values[7].into();
+        send_order(&book, &a2, bid).await;
+        receive(&mut a2_rx).await;
+        receive(&mut a2_rx).await;
+
+        let mut frames = Vec::new();
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(2), md_rx.recv())
+                .await
+                .expect("timed out waiting for public trade")
+                .expect("market-data channel closed");
+            let trade = decode_trade(&frame);
+            frames.push(frame);
+            if trade.is_some() {
+                let deadline = tokio::time::sleep(Duration::from_millis(25));
+                tokio::pin!(deadline);
+                loop {
+                    tokio::select! {
+                        _ = &mut deadline => break,
+                        next = md_rx.recv() => match next {
+                            Some(frame) => frames.push(frame),
+                            None => break,
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        let sensitive = private_values.map(str::as_bytes);
+        for frame in &frames {
+            for value in sensitive {
+                assert!(
+                    !frame.windows(value.len()).any(|window| window == value),
+                    "public market-data frame exposed {value:?}"
+                );
+            }
+        }
+        let public_trades = frames
+            .iter()
+            .filter_map(|frame| decode_trade(frame))
+            .collect::<Vec<_>>();
+        assert_eq!(public_trades.len(), 1);
+        assert!(
+            public_trades
+                .iter()
+                .all(|trade| { trade.buy_order_id.is_empty() && trade.sell_order_id.is_empty() })
+        );
+    }
+
+    #[tokio::test]
+    async fn dropped_market_data_can_leave_a_trade_sequence_gap() {
+        let (book, rx) = mpsc::channel(64);
+        tokio::spawn(order_book_task("TEST".into(), rx));
+        let (maker, mut maker_rx, _) = ClientTx::channel(16, 16);
+        send_order(
+            &book,
+            &maker,
+            new_order("ASK", "maker", fxp::OrderSide::Sell, 3, 100),
+        )
+        .await;
+        receive(&mut maker_rx).await;
+
+        let (subscriber, _, mut md_rx) = ClientTx::channel(16, 1);
+        book.send(SymbolMsg::Subscribe(SubscribeMsg {
+            tx: subscriber.clone(),
+        }))
+        .await
+        .unwrap();
+        let snapshot = receive(&mut md_rx).await;
+        assert!(matches!(
+            fxp::FxpMessage::decode(&snapshot[4..]).unwrap().payload,
+            Some(fxp::fxp_message::Payload::MarketDataSnapshot(_))
+        ));
+
+        let (buyer1, mut buyer1_rx, _) = ClientTx::channel(16, 16);
+        send_order(
+            &book,
+            &buyer1,
+            new_order("BID1", "buyer1", fxp::OrderSide::Buy, 1, 100),
+        )
+        .await;
+        receive(&mut buyer1_rx).await;
+        receive(&mut buyer1_rx).await;
+        let (buyer2, mut buyer2_rx, _) = ClientTx::channel(16, 16);
+        send_order(
+            &book,
+            &buyer2,
+            new_order("BID2", "buyer2", fxp::OrderSide::Buy, 1, 100),
+        )
+        .await;
+        receive(&mut buyer2_rx).await;
+        receive(&mut buyer2_rx).await;
+
+        assert!(subscriber.md_dropped.load(AtomicOrdering::Relaxed) > 0);
+        let first = receive_trades(&mut md_rx, 1).await;
+        assert_eq!(first.iter().map(|trade| trade.seq).collect::<Vec<_>>(), [1]);
+
+        let (buyer3, mut buyer3_rx, _) = ClientTx::channel(16, 16);
+        send_order(
+            &book,
+            &buyer3,
+            new_order("BID3", "buyer3", fxp::OrderSide::Buy, 1, 100),
+        )
+        .await;
+        receive(&mut buyer3_rx).await;
+        receive(&mut buyer3_rx).await;
+        let third = receive_trades(&mut md_rx, 1).await;
+        assert_eq!(third.iter().map(|trade| trade.seq).collect::<Vec<_>>(), [3]);
+        assert!(subscriber.md_dropped.load(AtomicOrdering::Relaxed) > 0);
     }
 }
