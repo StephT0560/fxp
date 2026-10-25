@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Repeat all measurements after the closed-loop deadline fix and retain the complete initial dataset; latest reused FXP/FIX encode is 149.3/133.8ns and the worst c10 fill tail is 15.630ms (#3 review verification).
+
 - Refresh closed-loop benchmark response deadlines per send so healthy long phases do not expire midstream; preserve the intended-time deadline for open-loop runs (#3 review).
 
 - Abort blocked benchmark senders immediately when the receiver rejects/fails, retaining the original receiver error instead of waiting out the phase deadline (#3 verification).

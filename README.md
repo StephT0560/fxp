@@ -13,9 +13,9 @@ The corrected local NewOrder fixture measurements are:
 
 | Operation | FXP | FIX | SBE |
 |---|---:|---:|---:|
-| Encode, reused buffer / SBE stack | 163.6 ns | 127.9 ns | 29.3 ns |
-| Decode, owned output | 382.5 ns | 1941.6 ns generic tag map | 114.2 ns |
-| Measured encode+decode | 526.0 ns | 2012.5 ns | 120.1 ns |
+| Encode, reused buffer / SBE stack | 149.3 ns | 133.8 ns | 29.6 ns |
+| Decode, owned output | 377.2 ns | 1938.5 ns generic tag map | 110.2 ns |
+| Measured encode+decode | 535.1 ns | 2150.7 ns | 122.1 ns |
 | Fixture size, timestamp/TIF included | 94 B | 164 B | 95 B |
 
 **Reusable FIX encoding is faster than FXP in this run.** Decoder implementations
@@ -387,9 +387,9 @@ warmup and 1000 measured orders per connection per run.
 
 | Scenario | Completed orders/s | ACK p50 / p99 ms | Final-fill p50 / p99 ms |
 |---|---:|---:|---:|
-| open-c1 | 999.3 | 0.778 / 1.465 | 1.320 / 2.406 |
-| open-c10 | 9974.4 | 0.961 / 2.593 | 1.646 / 3.371 |
-| closed-c1 | 4266.0 | 0.206 / 0.392 | 0.338 / 0.744 |
+| open-c1 | 999.7 | 0.777 / 1.537 | 1.337 / 2.466 |
+| open-c10 | 9969.5 | 0.961 / 2.542 | 1.688 / 3.334 |
+| closed-c1 | 3901.1 | 0.226 / 0.453 | 0.353 / 0.809 |
 
 
 Values are medians of per-run statistics; [Benchmark.md](Benchmark.md) includes

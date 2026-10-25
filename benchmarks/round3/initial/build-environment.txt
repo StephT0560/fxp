@@ -1,0 +1,9 @@
+dff2cc33bb86b189ad4ba2cc30ad3fc86f61cca2
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+go version go1.26.10 linux/amd64
+Linux 4a875ddb2be5 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux
+core:93229 pid 93229's current affinity list: 0-4
+gateway:93236 pid 93236's current affinity list: 0-4
+runner:93037 pid 93037's current affinity list: 0-4
+GOMAXPROCS=2 TOKIO_WORKER_THREADS=2 FXP_GW_RATE=2000 FXP_GW_RATE_BURST=4000 RUST_LOG=warn
+Persistence disabled; session schedule unset. Shared host, loopback; no explicit taskset pinning.

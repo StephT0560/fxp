@@ -1,6 +1,6 @@
 # Corrected benchmark results and methodology
 
-Measurements: 2026-10-25, source **`dff2cc33bb86b189ad4ba2cc30ad3fc86f61cca2`**.
+Measurements: 2026-10-25, source **`f0edb3eda1719506366a0835070ddb3cbb52641b`**.
 The previous Windows/round-1/round-2 tables are superseded; they used different
 hardware, incomplete SBE decoding, unequal encoding allocation and actual-send
 latency. Historical reports remain in git history. No speedup claim is carried
@@ -37,24 +37,24 @@ The VM itself is shared; this does not eliminate external contention.
 
 | Operation / implementation | Median ns [95% CI] |
 |---|---:|
-| FXP encode, reused buffer | 163.6 [151.7, 166.7] |
-| FXP encode, fresh allocation | 289.9 [289.5, 291.3] |
-| FIX encode, reusable integer formatter | 127.9 [127.6, 128.2] |
-| FIX encode, allocating format! baseline | 526.0 [525.2, 527.4] |
-| SBE encode, stack | 29.3 [28.7, 31.3] |
-| SBE encode, heap | 35.4 [35.2, 36.9] |
-| FXP decode, owned schema | 382.5 [380.8, 386.4] |
-| FIX decode, owned generic tag map | 1941.6 [1919.2, 1948.8] |
-| SBE decode, owned full fixture | 114.2 [113.0, 120.6] |
-| FXP measured encode+decode | 526.0 [524.5, 527.0] |
-| FIX measured encode+generic-map decode | 2012.5 [2002.3, 2018.4] |
-| SBE measured stack encode+owned decode | 120.1 [119.1, 121.4] |
+| FXP encode, reused buffer | 149.3 [148.9, 149.6] |
+| FXP encode, fresh allocation | 292.5 [291.1, 294.2] |
+| FIX encode, reusable integer formatter | 133.8 [132.8, 134.8] |
+| FIX encode, allocating format! baseline | 535.3 [531.2, 541.1] |
+| SBE encode, stack | 29.6 [29.1, 31.7] |
+| SBE encode, heap | 36.2 [35.8, 36.8] |
+| FXP decode, owned schema | 377.2 [372.6, 385.9] |
+| FIX decode, owned generic tag map | 1938.5 [1928.4, 1947.8] |
+| SBE decode, owned full fixture | 110.2 [109.7, 111.1] |
+| FXP measured encode+decode | 535.1 [532.0, 541.2] |
+| FIX measured encode+generic-map decode | 2150.7 [2141.9, 2172.6] |
+| SBE measured stack encode+owned decode | 122.1 [121.3, 122.4] |
 
 **The reusable FIX encoder is faster than FXP encode in this run**
-(127.9 versus 163.6 ns). The allocating FIX baseline is much slower,
+(133.8 versus 149.3 ns). The allocating FIX baseline is much slower,
 so the old headline based only on format! overstated the advantage. SBE heap
-(35.4 ns) is now slower than stack (29.3 ns); full owned SBE decode
-is 114.2 ns, not the old ~1 ns scalar projection.
+(36.2 ns) is now slower than stack (29.6 ns); full owned SBE decode
+is 110.2 ns, not the old ~1 ns scalar projection.
 Roundtrip rows execute both operations together; they are not sums of medians.
 
 These are **implementation/fixture** timings. FIX decode is a generic owned tag
@@ -83,9 +83,9 @@ Closed c1 waits for each ACK before sending the next order; it is labeled
 
 | Scenario | Orders/run | Orders/s median [min, max] | ACK count/run | Final-fill count/run |
 |---|---:|---:|---:|---:|
-| open-c1 | 1,000 | 999.3 [999.1, 999.8] | 1,000 | 1,000 |
-| open-c10 | 10,000 | 9974.4 [9960.1, 9976.6] | 10,000 | 10,000 |
-| closed-c1 | 1,000 | 4266.0 [4129.6, 4654.8] | 1,000 | 1,000 |
+| open-c1 | 1,000 | 999.7 [999.1, 1000.0] | 1,000 | 1,000 |
+| open-c10 | 10,000 | 9969.5 [9962.2, 9977.3] | 10,000 | 10,000 |
+| closed-c1 | 1,000 | 3901.1 [3578.2, 4435.4] | 1,000 | 1,000 |
 
 All latency cells below show **median of the five per-run values [min, max]**,
 in milliseconds. ACK means EXEC_NEW; fill means terminal ORDER_FILLED. Every
@@ -93,19 +93,31 @@ order contributes one sample to each endpoint; reports are not counted as orders
 
 | Scenario / endpoint | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms |
 |---|---:|---:|---:|---:|---:|
-| open-c1 / ack | 0.778 [0.757, 0.798] | 1.276 [1.248, 1.297] | 1.465 [1.408, 1.519] | 1.920 [1.582, 3.373] | 2.136 [1.612, 4.452] |
-| open-c1 / fill | 1.320 [1.305, 1.360] | 2.169 [2.138, 2.212] | 2.406 [2.388, 2.484] | 2.695 [2.503, 4.522] | 2.929 [2.611, 5.382] |
-| open-c10 / ack | 0.961 [0.901, 0.990] | 1.724 [1.595, 1.812] | 2.593 [1.907, 6.554] | 4.338 [2.669, 13.525] | 6.816 [3.398, 14.721] |
-| open-c10 / fill | 1.646 [1.612, 1.669] | 2.542 [2.486, 2.646] | 3.371 [2.867, 6.853] | 4.649 [3.660, 14.262] | 6.824 [4.176, 14.746] |
-| closed-c1 / ack | 0.206 [0.189, 0.218] | 0.283 [0.256, 0.297] | 0.392 [0.370, 0.419] | 1.217 [0.848, 2.241] | 1.403 [1.258, 3.965] |
-| closed-c1 / fill | 0.338 [0.321, 0.354] | 0.534 [0.462, 0.569] | 0.744 [0.611, 0.761] | 1.455 [0.923, 2.615] | 1.775 [1.660, 4.338] |
+| open-c1 / ack | 0.777 [0.764, 0.796] | 1.281 [1.232, 1.313] | 1.537 [1.415, 1.641] | 2.658 [1.924, 4.370] | 3.332 [1.935, 5.255] |
+| open-c1 / fill | 1.337 [1.332, 1.352] | 2.187 [2.179, 2.232] | 2.466 [2.413, 2.585] | 3.961 [2.957, 5.267] | 4.180 [3.068, 6.291] |
+| open-c10 / ack | 0.961 [0.935, 0.975] | 1.768 [1.712, 1.800] | 2.542 [2.226, 5.698] | 4.682 [2.841, 13.230] | 5.501 [4.149, 15.262] |
+| open-c10 / fill | 1.688 [1.650, 1.734] | 2.644 [2.587, 2.673] | 3.334 [3.125, 5.714] | 5.599 [3.817, 13.591] | 6.627 [4.866, 15.630] |
+| closed-c1 / ack | 0.226 [0.191, 0.242] | 0.312 [0.290, 0.330] | 0.453 [0.398, 0.655] | 1.097 [0.888, 2.017] | 1.871 [1.204, 5.374] |
+| closed-c1 / fill | 0.353 [0.323, 0.381] | 0.606 [0.520, 0.612] | 0.809 [0.743, 1.351] | 1.411 [1.070, 2.486] | 1.917 [1.569, 5.747] |
 
 
 For example, c10 open-loop ACK p99 ranges from
-1.907 to 6.554 ms;
+2.226 to 5.698 ms;
 this spread is published, not discarded as an outlier. The maximum observed
-run's terminal-fill tail is 14.746 ms.
+run's terminal-fill tail is 15.630 ms.
 A 1000-order run's p99.9 is an extreme with little statistical confidence.
+
+## Initial record retained
+
+The first complete five-repetition dataset (source `dff2cc3`) is preserved in
+[benchmarks/round3/initial](benchmarks/round3/initial/), including all raw HDR
+snapshots, estimates, provenance and checksums. It measured FXP/FIX reused encode
+at 163.6/127.9 ns and owned SBE decode at 114.2 ns. The current tables above come
+from a fresh full run after the closed-loop deadline correction (`f0edb3e`),
+not a filtered subset of the first run. All measured phases in the initial run
+finished within the old timeout; different code revisions/runs are not pooled.
+Shared-host variation and the deadline-refresh work preclude assigning every
+number change to the fix. Neither favorable nor unfavorable results are erased.
 
 ## Caveats and boundaries
 
