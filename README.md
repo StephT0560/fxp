@@ -84,7 +84,7 @@ Auction price selection maximizes volume, minimizes imbalance, prefers the refer
 
 ---
 
-## Proto Schema (v2.4)
+## Proto Schema (v2.5)
 
 Full institutional-grade message coverage:
 
@@ -95,14 +95,14 @@ OrderCancelReplaceRequest — amend price/quantity
 ExecutionReport         — lifecycle reports with leaves_qty, avg_px, cum_qty
 MarketDataSnapshot      — full order book depth
 MarketDataIncrementalUpdate — level changes
-TradeCaptureReport      — trade print feed
+TradeCaptureReport      — anonymous public trade feed, one per fill
 TradingSessionStatus    — trading phase by symbol
 AuctionInfo             — indicative auction price, volume and imbalance
 ErrorMessage            — structured error responses
 OrderMassCancelRequest / OrderMassCancelReport — owner-scoped mass cancel
 ```
 
-Version 2.4 adds optional iceberg display quantities on entry/replacement and execution reports; see [iceberg behavior](docs/iceberg-orders.md). Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+Version 2.5 adds `TradeCaptureReport.aggressor_side`, `seq` and `is_auction` for the anonymous public trade feed, which the core now emits once per fill to every market-data subscriber of the symbol; see [market data](docs/market-data.md). Version 2.4 adds optional iceberg display quantities on entry/replacement and execution reports; see [iceberg behavior](docs/iceberg-orders.md). Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
 **TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
@@ -346,7 +346,7 @@ The FIX 4.4 bridge (`fix_bridge`, port 8083) handles these inbound messages:
 | `H`, `AF` | OrderStatusRequest / OrderMassStatusRequest | ✅ owner-scoped snapshots, including retained terminal orders; mass types 1 (symbol) and 7 (all) |
 | any other application type | e.g. `AE`, `AD`, `c`, unknown `ZZ` | ❌ BusinessMessageReject (`35=j`, `380=3`) before application body dictionary validation; supported types retain full dictionary checks |
 
-Outbound: ExecutionReport (`8`, ExecType `D` = restated by decrement-and-cancel STP), OrderCancelReject (`9`), OrderMassCancelReport (`r`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`), BusinessMessageReject (`j`) plus the session messages.
+Outbound: ExecutionReport (`8`, ExecType `D` = restated by decrement-and-cancel STP), OrderCancelReject (`9`), OrderMassCancelReport (`r`), MarketDataSnapshotFullRefresh (`W`), MarketDataIncrementalRefresh (`X`; public trades as `269=2` entries, see [docs/market-data.md](docs/market-data.md)), BusinessMessageReject (`j`) plus the session messages.
 
 Required fields follow the FIX 4.4 spec (`fix_bridge/codec/dictionary.go`):
 `D` needs 11, 55, 54, 60, 40; `F` needs 41, 11, 55, 54, 60; `G` needs 41, 11, 55, 54, 60, 40;
@@ -436,7 +436,7 @@ bursts and loopback figures are not production capacity or WAN SLO claims.
 ```text
 fxp/
 ├── .github/                    CI, benchmark/release workflows and Dependabot
-├── fxp_core/                   Rust matching engine, protobuf v2.4, Criterion
+├── fxp_core/                   Rust matching engine, protobuf v2.5, Criterion
 │   └── src/                    server/core auth, engine, order_book, event log,
 │                               schedule, symbol configuration and regressions
 ├── go_gateway/                 Native TCP/WebSocket gateway
@@ -447,7 +447,8 @@ fxp/
 ├── fix_bridge/                 FIX codec/dictionary, session, gateway, translators
 │   └── fixture_*.go            compile-gated QuickFIX echo fixture / rejecting stub
 ├── fix_test_client/            Python FIX and order-type E2E clients
-├── tests/                      CI/Compose/security/release/QuickFIX gate tests
+├── tests/                      CI/Compose/security/release/QuickFIX gate tests,
+│                               cross-implementation wire vectors (tests/vectors)
 ├── scripts/
 │   ├── gen_proto.sh            pinned protobuf generation
 │   ├── ci_success.py           stable required-check aggregator
@@ -458,7 +459,7 @@ fxp/
 │   └── bench.sh, collect_encoding.py, build_release.sh, verify_static_elf.py
 ├── docs/                       operations.md, risk-controls.md, fix-conformance.md,
 │                               gtc-persistence.md, symbol-config.md, tls-trust.md,
-│                               iceberg-orders.md, pegged-orders.md,
+│                               iceberg-orders.md, pegged-orders.md, market-data.md,
 │                               benchmark-methodology.md, repo-settings.md,
 │                               releasing.md, release-process.md
 ├── config/                     symbol CSV examples
