@@ -9,7 +9,7 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.4 adds iceberg display quantities.
+// FXP Protocol — v2.5 adds public trade-feed fields.
 // v2.3 added order-status requests/replies.
 // v2.2 added self-trade prevention, cancel-on-disconnect and mass cancel.
 // v2.1 added auction/session messages.
@@ -352,12 +352,15 @@ message MarketDataRequest {
 message TradeCaptureReport {
   FXPHeader                 header         = 1;
   string                    trade_id       = 2;
-  string                    buy_order_id   = 3;
-  string                    sell_order_id  = 4;
+  string                    buy_order_id   = 3; // Empty on the public trade feed.
+  string                    sell_order_id  = 4; // Empty on the public trade feed.
   string                    symbol         = 5;
   int64                     trade_price    = 6;
   int32                     trade_quantity = 7;
   google.protobuf.Timestamp timestamp      = 8;
+  OrderSide                 aggressor_side = 9;  // UNSPECIFIED for auction prints.
+  uint64                    seq            = 10; // Per symbol; starts at 1 and is gap-free at the emitter.
+  bool                      is_auction     = 11;
 }
 
 message TradingSessionStatus {
