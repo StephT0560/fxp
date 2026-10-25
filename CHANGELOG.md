@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Replace the live benchmark with intended-time open-loop and labeled ACK-controlled closed-loop modes, exact ACK/fill accounting, separate warmup, five-run HDR/spread reports, environment/JSON/Markdown output, shared JWT config and precision-correct $3000 pricing (#3).
+
 - Add behavior-level P09 per-print stop cascade and round-3 auction, exact-expiry, transition and torn-replay edge coverage (#3/§2).
 
 - Preserve STP-restated totals and reserve caps on price-only amendments; validate lot/min/max only on explicit new quantities (#1, review regression).

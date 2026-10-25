@@ -166,15 +166,18 @@ cargo bench --bench encoding_benchmark
 
 ### 5. Run the end-to-end benchmark
 
+With a fresh release core and gateway running and compatible `FXP_JWT_*` settings:
+
 ```bash
 cd go_gateway
-
-# Throughput test
-go run benchmark/benchmark.go --concurrency 10 --orders 500
-
-# Latency test (rate-limited for honest RTT measurement)
-go run benchmark/benchmark.go --concurrency 50 --orders 200 --rate 25 --timeout 60
+go run ./benchmark --mode open --rate 1000 --concurrency 1 --orders 1000 --warmup 100 --repetitions 5
+go run ./benchmark --mode closed --concurrency 1 --orders 1000 --warmup 100 --repetitions 5
 ```
+
+JSON contains per-run HDR histograms, separate ACK/final-fill endpoints and
+median/min/max summaries; Markdown is printed and saved alongside it. Open-loop
+latency includes sender backlog from intended send times. See the
+[methodology and limitations](docs/benchmark-methodology.md).
 
 ### Logging
 
