@@ -69,6 +69,11 @@ start_bridge() {
 : >"$log_dir/bridge.log"
 start_bridge
 
+if [[ -n "${FXP_E2E_TLS_CERT_DIR:-}" ]]; then
+    (cd "$repo_root/go_gateway" && go run ./test_clients/security_probe) | tee "$log_dir/security_probe.log"
+    python3 "$repo_root/scripts/tls_reload_probe.py" "$FXP_E2E_TLS_CERT_DIR" | tee "$log_dir/tls_reload.log"
+fi
+
 python3 "$repo_root/fix_test_client/fix_client.py" | tee "$log_dir/fix_client.log"
 grep -Eq 'Results: ([1-9][0-9]*)/\1 passed$' "$log_dir/fix_client.log"
 

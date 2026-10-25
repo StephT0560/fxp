@@ -36,3 +36,6 @@ out/
 # Python
 __pycache__/
 fix_store/
+
+# Local TLS deployment material; never commit private keys.
+/certs/

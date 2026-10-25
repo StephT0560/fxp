@@ -5,6 +5,8 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -25,6 +27,7 @@ import (
 	"go_gateway/protobuf"
 	"go_gateway/symbolconfig"
 	"go_gateway/test_clients/devjwt"
+	"go_gateway/tlsconfig"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -32,19 +35,20 @@ const maxFrame = 4 * 1024 * 1024
 const histogramMax = int64(24 * time.Hour)
 
 type config struct {
-	Mode        string        `json:"mode"`
-	Address     string        `json:"gateway"`
-	Concurrency int           `json:"connections"`
-	Orders      int           `json:"measured_orders_per_connection"`
-	Warmup      int           `json:"warmup_orders_per_connection"`
-	Repetitions int           `json:"repetitions"`
-	Rate        int           `json:"open_loop_orders_per_second_per_connection"`
-	Timeout     time.Duration `json:"response_timeout_ns"`
-	Symbol      string        `json:"symbol"`
-	Symbols     string        `json:"symbol_mode"`
-	Quantity    int32         `json:"quantity"`
-	Price       int64         `json:"default_price_minor_units"`
-	Pinning     string        `json:"pinning_notes"`
+	TLS         tlsconfig.ClientOptions `json:"tls"`
+	Mode        string                  `json:"mode"`
+	Address     string                  `json:"gateway"`
+	Concurrency int                     `json:"connections"`
+	Orders      int                     `json:"measured_orders_per_connection"`
+	Warmup      int                     `json:"warmup_orders_per_connection"`
+	Repetitions int                     `json:"repetitions"`
+	Rate        int                     `json:"open_loop_orders_per_second_per_connection"`
+	Timeout     time.Duration           `json:"response_timeout_ns"`
+	Symbol      string                  `json:"symbol"`
+	Symbols     string                  `json:"symbol_mode"`
+	Quantity    int32                   `json:"quantity"`
+	Price       int64                   `json:"default_price_minor_units"`
+	Pinning     string                  `json:"pinning_notes"`
 }
 
 func benchmarkSecret() string {
@@ -125,7 +129,7 @@ func readFramed(conn net.Conn) (*protobuf.FXPMessage, error) {
 	return m, proto.Unmarshal(body, m)
 }
 func connect(c config, id int, nonce string) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", c.Address, c.Timeout)
+	conn, err := c.TLS.Dial(context.Background(), c.Address, c.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +142,13 @@ func connect(c config, id int, nonce string) (net.Conn, error) {
 	if err = conn.SetDeadline(time.Now().Add(c.Timeout)); err != nil {
 		return nil, err
 	}
-	m := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_Logon{Logon: &protobuf.Logon{Token: devjwt.Generate(benchmarkSecret(), fmt.Sprintf("bench-%s-%d", nonce, id)), SessionId: fmt.Sprintf("bench-%s-%d", nonce, id), EncryptionType: protobuf.EncryptionType_NONE}}}
+	encryption := protobuf.EncryptionType_NONE
+	if tlsconfig.Version(conn) == tls.VersionTLS13 {
+		encryption = protobuf.EncryptionType_TLS_1_3
+	} else if tlsconfig.Version(conn) == tls.VersionTLS12 {
+		encryption = protobuf.EncryptionType_TLS_1_2
+	}
+	m := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_Logon{Logon: &protobuf.Logon{Token: devjwt.Generate(benchmarkSecret(), fmt.Sprintf("bench-%s-%d", nonce, id)), SessionId: fmt.Sprintf("bench-%s-%d", nonce, id), EncryptionType: encryption}}}
 	if err = sendFramed(conn, m); err != nil {
 		return nil, err
 	}
@@ -484,6 +494,7 @@ func environment(c config) map[string]string {
 func markdown(c config, env map[string]string, summary map[string]statistic) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Live FXP benchmark\n\nMode: **%s**; %d connections; %d measured + %d warmup orders/connection; %d repetitions; open-loop rate %d orders/s/connection (ignored in closed mode).\n\n", c.Mode, c.Concurrency, c.Orders, c.Warmup, c.Repetitions, c.Rate)
+	fmt.Fprintf(&b, "Transport: TLS=%t; client certificate=%t.\n\n", c.TLS.Enabled, c.TLS.CertFile != "")
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -501,6 +512,11 @@ func markdown(c config, env map[string]string, summary map[string]statistic) str
 	return b.String()
 }
 func run() error {
+	options, err := tlsconfig.ClientFromEnv("FXP_CLIENT_")
+	if err != nil {
+		return err
+	}
+	options.Flags(flag.CommandLine)
 	c := config{}
 	var jsonPath, markdownPath string
 	var qty int
@@ -519,6 +535,10 @@ func run() error {
 	flag.StringVar(&jsonPath, "json", "benchmark-results.json", "JSON output including per-run HDR snapshots")
 	flag.StringVar(&markdownPath, "markdown", "benchmark-results.md", "Markdown output")
 	flag.Parse()
+	c.TLS = options
+	if _, err := options.Config(); err != nil {
+		return err
+	}
 	if qty < 1 || int64(qty) > int64(1<<31-1) {
 		return errors.New("quantity outside int32 range")
 	}
