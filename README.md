@@ -298,6 +298,16 @@ go run simulation/trading_day.go -gateway localhost:8082 -tls \
 
 ---
 
+## Local FXP Console demo
+
+Run `make demo` (Docker Compose >=2.24.4 and Python 3), then open
+**http://127.0.0.1:3000**. `make demo-down` stops it. The command creates a
+private, gitignored `.env.demo` with random credentials. Only the UI/BFF port
+is published; gateway and core remain private. The BFF offers short-lived demo
+JWTs, a same-origin binary WebSocket proxy and supervised simulator control.
+A placeholder is served until the separately scoped UI is built.
+See [console API, configuration and security model](docs/console/README.md).
+
 ## Trading Day Simulation
 
 Simulates a realistic institutional trading session with 4 participant archetypes across 5 session phases.
@@ -642,6 +652,13 @@ See [deployment, reload and client examples](docs/tls-trust.md) and the
 | `FXP_GATEWAY_TLS_CA_FILE` | native system roots; secure Compose `/etc/fxp/certs/ca.crt` | Bridge's trusted gateway CA bundle |
 | `FXP_GATEWAY_TLS_CERT_FILE` / `FXP_GATEWAY_TLS_KEY_FILE` | native unset; secure Compose `/etc/fxp/certs/client.crt` / `client.key` | Bridge's optional upstream mTLS identity |
 | `FXP_GATEWAY_TLS_SERVER_NAME` | native dial host; secure Compose `localhost` | Bridge's verified upstream server name |
+| `FXP_DEMO_ADDR` | `127.0.0.1:3000` | Local demo API listen address; external bind requires `FXP_ALLOW_PLAINTEXT=true` |
+| `FXP_DEMO_ORIGIN` | `http://127.0.0.1:3000` | Exact browser Origin and Host accepted by the BFF |
+| `FXP_DEMO_GATEWAY_WS_URL` | `ws://127.0.0.1:8081/ws` | Private gateway WebSocket upstream |
+| `FXP_DEMO_STATIC_DIR` | `web/dist` | Static UI directory (`-static-dir` overrides); placeholder when absent |
+| `FXP_DEMO_SIM_BINARY` | `bin/simday` | Trusted simulator executable |
+| `FXP_DEMO_TOKEN_TTL_SEC` | `900` | Demo JWT lifetime, 1–900 seconds |
+| `FXP_DEMO_TOKEN_RATE_PER_MIN` | `10` | Token attempts per IP/minute, 1–120 |
 | `FXP_SIM_GATEWAY_ADDR` | `127.0.0.1:8082` | Simulator TCP gateway; overridden by `-gateway` |
 | `FXP_CLIENT_TLS` | `false` | Go TCP/WS clients, simulator, benchmark and Python FIX client enable verified TLS |
 | `FXP_CLIENT_TLS_CA_FILE` | system roots | Tool clients' trusted server CA bundle |
