@@ -19,6 +19,7 @@ import (
 
 	"go_gateway/protobuf"
 	"go_gateway/test_clients/devjwt"
+	"go_gateway/test_clients/tradefeed"
 	"go_gateway/tlsconfig"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -144,6 +145,7 @@ func main() {
 	log.Println("📡 Subscribed to Market Data for ETH/USD!")
 
 	// ── Step 3: Listen for server messages ────────────────────────────────────
+	tracker := &tradefeed.Tracker{}
 	go func() {
 		for {
 			msg, err := readFramedMessage(conn)
@@ -171,12 +173,13 @@ func main() {
 						change.UpdateType, change.Price, change.Quantity)
 				}
 			case *protobuf.FXPMessage_TradeCaptureReport:
-				log.Printf("💥 TradeCaptureReport: %s | Buy=%s | Sell=%s | Price=%d | Qty=%d",
-					payload.TradeCaptureReport.TradeId,
-					payload.TradeCaptureReport.BuyOrderId,
-					payload.TradeCaptureReport.SellOrderId,
-					payload.TradeCaptureReport.TradePrice,
-					payload.TradeCaptureReport.TradeQuantity)
+				trade := payload.TradeCaptureReport
+				if gap, expected := tracker.Observe(trade.Symbol, trade.Seq); gap {
+					log.Printf("SEQ GAP symbol=%s expected=%d got=%d", trade.Symbol, expected, trade.Seq)
+				}
+				log.Printf("TradeCaptureReport: symbol=%s seq=%d price=%d qty=%d aggressor=%s auction=%t",
+					trade.Symbol, trade.Seq, trade.TradePrice, trade.TradeQuantity,
+					trade.AggressorSide.String(), trade.IsAuction)
 			case *protobuf.FXPMessage_ErrorMessage:
 				log.Printf("⚠️ Server error: [%s] %s",
 					payload.ErrorMessage.ErrorType.String(),

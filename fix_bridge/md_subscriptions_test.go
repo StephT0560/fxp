@@ -5,6 +5,8 @@ package main
 import (
 	"slices"
 	"testing"
+
+	"go_gateway/protobuf"
 )
 
 func wantIDs(t *testing.T, what string, got []string, want ...string) {
@@ -73,4 +75,20 @@ func TestMDSubscriptionsPartialUnsubscribe(t *testing.T) {
 	wantIDs(t, "MSFT still streaming", s.incrementalTargets("MSFT"), "R1")
 	s.unsubscribe("R1", nil)
 	wantIDs(t, "MSFT after unsubscribing every symbol", s.incrementalTargets("MSFT"))
+}
+
+func TestTradeCaptureReportRoutesOnlyToStreamingSymbolSubscribers(t *testing.T) {
+	msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_TradeCaptureReport{
+		TradeCaptureReport: &protobuf.TradeCaptureReport{Symbol: "MDSYM"},
+	}}
+	symbol, snapshot, ok := marketDataSymbol(msg)
+	if !ok || snapshot || symbol != "MDSYM" {
+		t.Fatalf("marketDataSymbol = (%q, %v, %v), want (MDSYM, false, true)", symbol, snapshot, ok)
+	}
+	var subscriptions mdSubscriptions
+	subscriptions.subscribe("STREAM", true, []string{"MDSYM"})
+	subscriptions.subscribe("OTHER", true, []string{"OTHER"})
+	subscriptions.snapshotTargets("MDSYM")
+	subscriptions.snapshotTargets("OTHER")
+	wantIDs(t, "trade-feed subscribers", subscriptions.incrementalTargets(symbol), "STREAM")
 }

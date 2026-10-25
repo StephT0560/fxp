@@ -176,6 +176,7 @@ const (
 	TagMDUpdateAction          = 279 // 0=New, 1=Change, 2=Delete
 	TagMDEntryPx               = 270 // price of market data entry
 	TagMDEntrySize             = 271 // size of market data entry
+	TagMDEntryTime             = 273 // entry time: HH:MM:SS.sss
 )
 
 // ── Side values (tag 54) ──────────────────────────────────────────────────────

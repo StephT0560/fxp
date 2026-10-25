@@ -7,6 +7,20 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Public trade feed (C1)
+- Protocol v2.5 (additive): `TradeCaptureReport` gains `aggressor_side` (9),
+  `seq` (10) and `is_auction` (11). The core now emits one anonymous
+  `TradeCaptureReport` per fill on the symbol's market-data path, in matching
+  order. This covers sweeps, iceberg slices, stop cascades and one print per
+  matched auction pair at the uncross price. STP, cancels and expiries do not
+  print. Order ids stay empty. `seq` is per symbol, gap-free at the emitter and
+  reproduced by event-log replay. Reports use the droppable market-data queue,
+  so a full queue drops and counts them and clients see a `seq` gap.
+- FIX bridge: trade reports map to `35=X` with `279=0 269=2 55 270 271 273` for
+  streaming subscribers. Aggressor side and `seq` have no FIX 4.4 field.
+- `tcp_client`/`ws_client` print trade reports and flag sequence gaps.
+- See [docs/market-data.md](docs/market-data.md).
+
 ### Performance investigation (round 4)
 - Isolate the FIX test heartbeat clock per session after race validation caught
   a global fixture-cleanup race; production heartbeat units remain seconds.

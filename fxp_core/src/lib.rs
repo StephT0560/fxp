@@ -7,17 +7,19 @@ mod event_log;
 pub mod order_book;
 pub mod server;
 pub mod symbol_config;
+#[cfg(test)]
+mod trade_vector_tests;
 
 #[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
 pub mod fxp {
     include!(concat!(env!("OUT_DIR"), "/fxp.rs"));
 }
 
-pub const PROTOCOL_VERSION: &str = "2.4";
+pub const PROTOCOL_VERSION: &str = "2.5";
 
 #[test]
 fn protocol_version_is_v2() {
-    assert_eq!(PROTOCOL_VERSION, "2.4");
+    assert_eq!(PROTOCOL_VERSION, "2.5");
 }
 
 // ── Shared test helpers ───────────────────────────────────────────────────────

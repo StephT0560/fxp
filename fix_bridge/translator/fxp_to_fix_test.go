@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"fix_bridge/codec"
 	"go_gateway/protobuf"
+	"go_gateway/symbolconfig"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func parseER(t *testing.T, raw []byte) *codec.Message {
@@ -241,6 +244,58 @@ func TestMarketDataWithoutSubscriptionIsDropped(t *testing.T) {
 	}
 	if got := TranslateFXPtoFIX(msg, "FXPBRIDGE", "CLIENT", 4, nil); got != nil {
 		t.Fatalf("nil lookup produced FIX output: %q", got)
+	}
+}
+
+func TestTradeCaptureReportProducesFIXIncrementalTradeEntry(t *testing.T) {
+	old := symbolconfig.Current()
+	defer symbolconfig.Set(old)
+	config, err := symbolconfig.Parse("P3,3,1,1,1,100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolconfig.Set(config)
+	report := &protobuf.TradeCaptureReport{
+		Symbol: "P3", TradeId: "P3:7", TradePrice: 10105, TradeQuantity: 30,
+		AggressorSide: protobuf.OrderSide_SELL, Seq: 7, IsAuction: true,
+		Timestamp: timestamppb.New(time.Date(2024, 1, 2, 3, 4, 5, 678_000_000, time.UTC)),
+	}
+	raw := TranslateFXPtoFIX(
+		&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_TradeCaptureReport{TradeCaptureReport: report}},
+		"FXPBRIDGE", "CLIENT", 4, mdReqIDs(map[string]string{"P3": "REQ7"}),
+	)
+	msg := parseER(t, raw)
+	if msg.MsgType() != "X" {
+		t.Fatalf("35=%q, want X", msg.MsgType())
+	}
+	var got []string
+	for _, field := range msg.Tags {
+		switch field.Tag {
+		case codec.TagMDReqID, codec.TagNoMDEntries, codec.TagMDUpdateAction,
+			codec.TagMDEntryType, codec.TagSymbol, codec.TagMDEntryPx,
+			codec.TagMDEntrySize, codec.TagMDEntryTime:
+			got = append(got, strconv.Itoa(field.Tag)+"="+field.Value)
+		}
+	}
+	want := []string{
+		"262=REQ7", "268=1", "279=0", "269=2", "55=P3",
+		"270=10.105", "271=30", "273=03:04:05.678",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("FIX tags = %v, want %v", got, want)
+	}
+	allowed := map[int]bool{
+		8: true, 9: true, 10: true, 34: true, 35: true, 49: true, 52: true, 56: true,
+		262: true, 268: true, 269: true, 270: true, 271: true, 273: true,
+		279: true, 55: true,
+	}
+	for _, field := range msg.Tags {
+		if field.Tag == codec.TagTransactTime {
+			t.Fatal("trade 35=X unexpectedly contains TransactTime (60)")
+		}
+		if !allowed[field.Tag] {
+			t.Fatalf("unexpected FIX field %d=%q", field.Tag, field.Value)
+		}
 	}
 }
 

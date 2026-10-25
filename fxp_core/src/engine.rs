@@ -26,6 +26,8 @@ mod session;
 mod status_tests;
 #[cfg(test)]
 mod stp_tests;
+#[cfg(test)]
+mod trade_feed_tests;
 use session::expiry_instant;
 pub use session::{SessionSchedule, UtcTimeOfDay};
 
@@ -158,6 +160,7 @@ pub enum Output<R> {
     AuctionInfo(fxp::AuctionInfo),
     ExecutionReport(R, fxp::ExecutionReport),
     MarketData(fxp::MarketDataIncrementalUpdate),
+    Trade(fxp::TradeCaptureReport),
     Snapshot(R, fxp::MarketDataSnapshot),
     /// Number of orders a mass cancel canceled; follows their reports.
     MassCancelCount(u32),
@@ -168,6 +171,7 @@ pub struct Engine<R, C, I> {
     book: OrderBook,
     stop_book: StopBook,
     last_trade_price: Option<i64>,
+    trade_seq: u64,
     states: HashMap<String, OrderState<R>>,
     clock: C,
     ids: I,
@@ -198,6 +202,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             book: OrderBook::new(symbol, Arc::new(MarketDataBroadcaster::new())),
             stop_book: StopBook::default(),
             last_trade_price: None,
+            trade_seq: 0,
             states: HashMap::new(),
             clock,
             ids,
@@ -402,6 +407,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         let last_trade_price = &mut self.last_trade_price;
         let states = &mut self.states;
         let ids = &mut self.ids;
+        let trade_seq = &mut self.trade_seq;
         'request: {
             match msg {
                 SymbolMsg::Cancel(cancel_msg) => {
@@ -578,7 +584,15 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                     exec.triggered.push(order.order_id.clone());
                                     book.execute_into(order, &mut exec);
                                     run_stop_cascade(book, stop_book, last_trade_price, &mut exec);
-                                    report_execution(ids, &mut outputs, exec, states, symbol, &ts);
+                                    report_execution(
+                                        ids,
+                                        &mut outputs,
+                                        exec,
+                                        states,
+                                        symbol,
+                                        &ts,
+                                        trade_seq,
+                                    );
                                 }
                             }
                         }
@@ -679,7 +693,15 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             book.match_into(&mut exec);
                             run_stop_cascade(book, stop_book, last_trade_price, &mut exec);
                             outputs.push(Output::MarketData(build_md_update(&inc, &ts)));
-                            report_execution(ids, &mut outputs, exec, states, symbol, &ts);
+                            report_execution(
+                                ids,
+                                &mut outputs,
+                                exec,
+                                states,
+                                symbol,
+                                &ts,
+                                trade_seq,
+                            );
                         }
                     }
                 }
@@ -918,7 +940,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         ));
                     }
                     run_stop_cascade(book, stop_book, last_trade_price, &mut exec);
-                    report_execution(ids, &mut outputs, exec, states, symbol, &ts);
+                    report_execution(ids, &mut outputs, exec, states, symbol, &ts, trade_seq);
                 }
             }
         }
@@ -1183,6 +1205,33 @@ fn build_md_update(
     }
 }
 
+fn build_trade(
+    symbol: &str,
+    seq: u64,
+    px: i64,
+    qty: u32,
+    aggressor_side: i32,
+    is_auction: bool,
+    ts: &Option<Timestamp>,
+) -> fxp::TradeCaptureReport {
+    fxp::TradeCaptureReport {
+        header: Some(fxp::FxpHeader {
+            protocol_version: crate::PROTOCOL_VERSION.to_string(),
+            sequence_number: 0,
+        }),
+        trade_id: format!("{symbol}:{seq}"),
+        buy_order_id: String::new(),
+        sell_order_id: String::new(),
+        symbol: symbol.to_string(),
+        trade_price: px,
+        trade_quantity: qty as i32,
+        timestamp: *ts,
+        aggressor_side,
+        seq,
+        is_auction,
+    }
+}
+
 /// Fill reports to each order's own connection, then remainder cancels (after
 /// the fills they complete), then market data for rested orders and fills.
 fn report_execution<R: Clone>(
@@ -1192,6 +1241,7 @@ fn report_execution<R: Clone>(
     states: &mut HashMap<String, OrderState<R>>,
     symbol: &str,
     ts: &Option<Timestamp>,
+    trade_seq: &mut u64,
 ) {
     let mut stp = exec.stp.iter().peekable();
     for (i, f) in exec.fills.iter().enumerate() {
@@ -1205,6 +1255,16 @@ fn report_execution<R: Clone>(
                 outputs.push(Output::ExecutionReport(tx.clone(), frame));
             }
         }
+        *trade_seq += 1;
+        outputs.push(Output::Trade(build_trade(
+            symbol,
+            *trade_seq,
+            f.trade_price,
+            f.trade_quantity,
+            md_side(&f.aggressor_side),
+            false,
+            ts,
+        )));
     }
     for e in stp {
         report_stp(ids, outputs, states, symbol, e, ts);
@@ -1765,7 +1825,7 @@ mod tests {
         assert_eq!(engine.book.order_lookup["B"].timestamp, 123_456);
 
         let outputs = engine.new_order(order("S", fxp::OrderSide::Sell), 2);
-        assert_eq!(outputs.len(), 5);
+        assert_eq!(outputs.len(), 6);
         let ack = report(&outputs[0], 2, "X2");
         assert_eq!(ack.execution_type, fxp::ExecutionType::ExecNew as i32);
         for (output, owner, id) in [(&outputs[1], 1, "X3"), (&outputs[2], 2, "X4")] {
@@ -1775,8 +1835,9 @@ mod tests {
             assert_eq!(fill.executed_quantity, 5);
             assert_eq!(fill.leaves_quantity, 0);
         }
+        assert!(matches!(outputs[3], Output::Trade(_)));
         assert!(
-            outputs[3..]
+            outputs[4..]
                 .iter()
                 .all(|o| matches!(o, Output::MarketData(_)))
         );

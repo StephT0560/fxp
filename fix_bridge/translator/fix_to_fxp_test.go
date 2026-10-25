@@ -46,6 +46,20 @@ func TestFixTimeInForceDefaults(t *testing.T) {
 	}
 }
 
+func TestMarketDataRequestAcceptsTradeEntryType(t *testing.T) {
+	msg, err := TranslateFIXtoFXP(buildInbound(t, codec.MsgTypeMarketDataRequest, map[int]string{
+		codec.TagMDReqID: "RTRADE", codec.TagSubscriptionRequestType: "1",
+		codec.TagMarketDepth: "0", codec.TagNoMDEntryTypes: "1", codec.TagMDEntryType: "2",
+		codec.TagNoRelatedSym: "1", codec.TagSymbol: "MDSYM",
+	}))
+	if err != nil {
+		t.Fatalf("269=2 MarketDataRequest rejected: %v", err)
+	}
+	if got := msg.GetMarketDataRequest().Symbols; len(got) != 1 || got[0] != "MDSYM" {
+		t.Fatalf("request symbols = %v, want [MDSYM]", got)
+	}
+}
+
 func TestGTDExpireDateTranslation(t *testing.T) {
 	for _, date := range []string{"20240229", "20270131"} {
 		msg, err := TranslateFIXtoFXP(buildInbound(t, codec.MsgTypeNewOrderSingle, map[int]string{

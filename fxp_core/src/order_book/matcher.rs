@@ -180,6 +180,11 @@ impl OrderBook {
                 sell_order_id: ask.order_id.clone(),
                 trade_price: if bid_newer { ask_price } else { bid_price },
                 trade_quantity: quantity,
+                aggressor_side: if bid_newer {
+                    OrderSide::Buy
+                } else {
+                    OrderSide::Sell
+                },
                 buy_fully_filled: bid.quantity == 0,
                 sell_fully_filled: ask.quantity == 0,
             });
@@ -481,6 +486,7 @@ impl OrderBook {
                 sell_order_id: sell_id,
                 trade_price: price,
                 trade_quantity: quantity,
+                aggressor_side: aggressor.side,
                 buy_fully_filled: buy_done,
                 sell_fully_filled: sell_done,
             });

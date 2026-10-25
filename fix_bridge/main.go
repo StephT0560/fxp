@@ -697,6 +697,9 @@ func marketDataSymbol(msg *protobuf.FXPMessage) (symbol string, snapshot, ok boo
 		return p.MarketDataSnapshot.Symbol, true, true
 	case *protobuf.FXPMessage_MarketDataIncremental:
 		return p.MarketDataIncremental.Symbol, false, true
+	case *protobuf.FXPMessage_TradeCaptureReport:
+		// Public trades go to every streaming subscriber, regardless of its 269 list.
+		return p.TradeCaptureReport.Symbol, false, true
 	}
 	return "", false, false
 }

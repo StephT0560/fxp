@@ -6,6 +6,7 @@ pub struct ExecutionReport {
     pub sell_order_id: String,
     pub trade_price: i64,
     pub trade_quantity: u32,
+    pub aggressor_side: super::order::OrderSide,
     /// True when the buy order is fully filled in this match.
     /// False means it was partially filled and remains in the book.
     pub buy_fully_filled: bool,
@@ -19,6 +20,7 @@ impl ExecutionReport {
         sell_id: String,
         price: i64,
         quantity: u32,
+        aggressor_side: super::order::OrderSide,
         buy_fully_filled: bool,
         sell_fully_filled: bool,
     ) -> Self {
@@ -27,6 +29,7 @@ impl ExecutionReport {
             sell_order_id: sell_id,
             trade_price: price,
             trade_quantity: quantity,
+            aggressor_side,
             buy_fully_filled,
             sell_fully_filled,
         }

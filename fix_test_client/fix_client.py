@@ -901,7 +901,7 @@ def md_group(msg, tags):
 
 
 def test_market_data(s, r):
-    """V subscribe → W carries every book level, X carries 262/269 per entry."""
+    """V subscribe → W book levels and X book/trade entries."""
     print('\n─── test_market_data ────────────────────────────────────────')
     sym    = 'MDSYM'
     req_id = order_id('MDR')
@@ -915,7 +915,7 @@ def test_market_data(s, r):
             if not sess.wait_for(order_id=oid, exec_type='0', timeout=3.0):
                 print(f'  {FAIL} book order {oid} not acknowledged'); r.failed += 1; return
 
-        sess.send('V', [(262, req_id), (263, '1'), (264, '0'), (267, '2'), (269, '0'), (269, '1'),
+        sess.send('V', [(262, req_id), (263, '1'), (264, '0'), (267, '3'), (269, '0'), (269, '1'), (269, '2'),
                         (146, '1'), (55, sym)], f'MarketDataRequest {req_id}')
         snap = sess.wait_for_md('W', lambda m: m.get(55) == sym)
         want = [('0', '10.00', '10'), ('0', '9.90', '20'), ('1', '10.10', '30'), ('1', '10.20', '40')]
@@ -931,6 +931,17 @@ def test_market_data(s, r):
 
         aggr = order_id('MDA')
         sess.new_order(aggr, sym, '1', 30, '2', price=10.10, description=f'BUY 30 {sym} @10.10 (lifts offer)')
+        trade = ('0', '2', sym, '10.10', '30')
+        trade_msg = sess.wait_for_md(
+            'X', lambda m: trade in md_group(m, (279, 269, 55, 270, 271)))
+        trade_entries = md_group(trade_msg, (279, 269, 55, 270, 271)) if trade_msg else None
+        if trade_msg and trade in trade_entries and any(tag == 273 for tag, _ in trade_msg['tags']):
+            print(f'  {PASS} X 269=2 public trade with MDEntryTime')
+            r.passed += 1
+        else:
+            print(f'  {FAIL} X public trade missing 269=2/273: {trade_msg and trade_msg["tags"]}')
+            r.failed += 1
+
         # The fill updates the resting offer level: 279=1 (Change) with 269=1 (Offer).
         fill = ('1', '1', sym, '10.10', '30')
         inc = sess.wait_for_md('X', lambda m: fill in md_group(m, (279, 269, 55, 270, 271)))
@@ -943,7 +954,7 @@ def test_market_data(s, r):
             print(f'  {FAIL} X incremental missing 262/269 group: {inc and inc["tags"]}')
             r.failed += 1
 
-        sess.send('V', [(262, req_id), (263, '2'), (264, '0'), (267, '2'), (269, '0'), (269, '1'),
+        sess.send('V', [(262, req_id), (263, '2'), (264, '0'), (267, '3'), (269, '0'), (269, '1'), (269, '2'),
                         (146, '1'), (55, sym)], f'Unsubscribe {req_id}')
     finally:
         sess.logout()

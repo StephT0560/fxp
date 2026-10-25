@@ -122,6 +122,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         &mut self.states,
                         &self.symbol,
                         &timestamp(at),
+                        &mut self.trade_seq,
                     );
                 }
             }
@@ -233,6 +234,16 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                     out.push(Output::ExecutionReport(owner, report));
                 }
             }
+            self.trade_seq += 1;
+            out.push(Output::Trade(build_trade(
+                &self.symbol,
+                self.trade_seq,
+                result.price,
+                quantity,
+                fxp::OrderSide::Unspecified as i32,
+                true,
+                &timestamp(at),
+            )));
         }
         for update in md {
             out.push(Output::MarketData(build_md_update(&update, &timestamp(at))));
