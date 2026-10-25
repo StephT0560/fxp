@@ -18,7 +18,7 @@ func (a *app) proxy(w http.ResponseWriter, r *http.Request) {
 	// cookies, Authorization and forwarded-host headers never reach the gateway.
 	upstream, response, err := dialer.DialContext(r.Context(), a.cfg.upstream, nil)
 	if response != nil && response.Body != nil {
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 	}
 	if err != nil {
 		http.Error(w, "gateway unavailable", http.StatusBadGateway)
@@ -50,28 +50,29 @@ func (a *app) proxy(w http.ResponseWriter, r *http.Request) {
 		delete(a.sockets, upstream)
 		a.mu.Unlock()
 	}()
-	errors := make(chan error, 2)
+	type copyResult struct{ err error }
+	errors := make(chan copyResult, 2)
 	copyFrames := func(dst, src *websocket.Conn) {
 		for {
 			kind, data, err := src.ReadMessage()
 			if err != nil {
-				errors <- err
+				errors <- copyResult{err}
 				return
 			}
 			if kind != websocket.BinaryMessage {
-				errors <- &websocket.CloseError{Code: websocket.CloseUnsupportedData, Text: "binary frames required"}
+				errors <- copyResult{&websocket.CloseError{Code: websocket.CloseUnsupportedData, Text: "binary frames required"}}
 				return
 			}
 			_ = dst.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if err := dst.WriteMessage(kind, data); err != nil {
-				errors <- err
+				errors <- copyResult{err}
 				return
 			}
 		}
 	}
 	go copyFrames(upstream, client)
 	go copyFrames(client, upstream)
-	err = <-errors
+	err = (<-errors).err
 	code, reason := websocket.CloseGoingAway, "connection closed"
 	if closeErr, ok := err.(*websocket.CloseError); ok {
 		code, reason = closeErr.Code, closeErr.Text

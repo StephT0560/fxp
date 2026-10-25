@@ -55,7 +55,7 @@ func request(t *testing.T, server *httptest.Server, method, path, body, origin s
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestProxyPreservesIndependentRustBytesAndClose(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		kind, data, err := conn.ReadMessage()
 		if err != nil || kind != websocket.BinaryMessage || !bytes.Equal(data, vector) {
 			upstreamClosed <- false
@@ -259,7 +259,7 @@ func TestProxyPreservesIndependentRustBytesAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if err := client.WriteMessage(websocket.BinaryMessage, vector); err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestProxyLimitsAndShutdown(t *testing.T) {
 				if err != nil {
 					return
 				}
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				defer close(gone)
 				for {
 					if _, _, err := conn.ReadMessage(); err != nil {
@@ -309,7 +309,7 @@ func TestProxyLimitsAndShutdown(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			_ = conn.WriteMessage(tc.kind, bytes.Repeat([]byte("x"), tc.size))
 			_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 			_, _, err = conn.ReadMessage()
@@ -331,7 +331,7 @@ func TestProxyUpstreamClose(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(1008, "policy"), time.Now().Add(time.Second))
 	}))
 	defer upstream.Close()
@@ -340,7 +340,7 @@ func TestProxyUpstreamClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, _, err = conn.ReadMessage()
 	if !websocket.IsCloseError(err, 1008) {

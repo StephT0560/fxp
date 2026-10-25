@@ -55,7 +55,7 @@ func (r *logRing) append(p []byte) {
 func (r *logRing) text() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return strings.ToValidUTF8(string(r.data), "�")
+	return strings.ToValidUTF8(string(r.data), "")
 }
 func (r *logRing) reset() { r.mu.Lock(); defer r.mu.Unlock(); r.data = nil }
 
@@ -134,7 +134,7 @@ func (s *simulator) start(p simParams) error {
 	done := s.done
 	go func() {
 		captured := make(chan struct{})
-		go func() { defer close(captured); defer reader.Close(); s.capture(reader) }()
+		go func() { defer close(captured); defer func() { _ = reader.Close() }(); s.capture(reader) }()
 		err := cmd.Wait()
 		// Close any descendants holding the output pipe even if the leader exited.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)

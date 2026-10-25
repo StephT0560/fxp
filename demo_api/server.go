@@ -242,7 +242,7 @@ func (a *app) static(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>FXP Console</title><h1>FXP Console</h1><p>The local demo API is ready. The UI has not been built yet.</p></html>")
 		return
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 	if name == "" {
 		name = "index.html"
@@ -259,7 +259,7 @@ func (a *app) static(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	stat, err := file.Stat()
 	if err != nil || !stat.Mode().IsRegular() {
 		http.NotFound(w, r)
