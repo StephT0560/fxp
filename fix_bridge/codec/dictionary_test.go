@@ -50,3 +50,34 @@ func TestMissingRequired(t *testing.T) {
 		}
 	}
 }
+
+func TestTradeIncrementalGroupValidatesAgainstPinnedDictionary(t *testing.T) {
+	msg := validationMessage(t, MsgTypeMarketDataIncremental,
+		Field{TagMDReqID, "REQ7"},
+		Field{TagNoMDEntries, "1"},
+		Field{TagMDUpdateAction, "0"},
+		Field{TagMDEntryType, "2"},
+		Field{TagSymbol, "MDSYM"},
+		Field{TagMDEntryPx, "10.10"},
+		Field{TagMDEntrySize, "30"},
+		Field{TagMDEntryTime, "03:04:05.678"},
+	)
+	if validation := DefaultDictionary.Validate(msg, false); validation != nil {
+		t.Fatalf("trade 35=X failed pinned dictionary validation: %v", validation)
+	}
+}
+
+func TestMarketDataRequestAcceptsTradeEntryType(t *testing.T) {
+	msg := validationMessage(t, MsgTypeMarketDataRequest,
+		Field{TagMDReqID, "REQ7"},
+		Field{TagSubscriptionRequestType, "1"},
+		Field{TagMarketDepth, "0"},
+		Field{TagNoMDEntryTypes, "1"},
+		Field{TagMDEntryType, "2"},
+		Field{TagNoRelatedSym, "1"},
+		Field{TagSymbol, "MDSYM"},
+	)
+	if validation := DefaultDictionary.Validate(msg, false); validation != nil {
+		t.Fatalf("269=2 MarketDataRequest failed pinned dictionary validation: %v", validation)
+	}
+}

@@ -16,6 +16,10 @@
 //                        EXEC_EXPIRED  → ExecType=C (Expired)
 //   MarketDataSnapshot     → FIX MarketDataSnapshotFullRefresh (tag 35=W)
 //   MarketDataIncremental  → FIX MarketDataIncrementalRefresh  (tag 35=X)
+//   TradeCaptureReport     → FIX MarketDataIncrementalRefresh (35=X, 269=2)
+//
+// Aggressor side and per-symbol sequence are omitted from FIX 4.4 because it
+// has no corresponding market-data fields.
 //
 // Prices are converted from FXP fixed-point integers (cents) back to
 // FIX decimal strings ("18542" → "185.42").
@@ -75,6 +79,13 @@ func TranslateFXPtoFIX(
 			return nil
 		}
 		return translateMarketDataIncremental(payload.MarketDataIncremental, senderCompID, targetCompID, seqNum, reqID)
+
+	case *protobuf.FXPMessage_TradeCaptureReport:
+		reqID := lookupMDReqID(mdReqID, payload.TradeCaptureReport.Symbol)
+		if reqID == "" {
+			return nil
+		}
+		return translateTradeCaptureReport(payload.TradeCaptureReport, senderCompID, targetCompID, seqNum, reqID)
 
 	case *protobuf.FXPMessage_OrderMassCancelReport:
 		return translateMassCancelReport(payload.OrderMassCancelReport, senderCompID, targetCompID, seqNum)
@@ -267,6 +278,26 @@ func translateMarketDataIncremental(
 		b.Set(codec.TagTransactTime, formatProtoTime(inc.Timestamp))
 	}
 
+	return b.Build()
+}
+
+func translateTradeCaptureReport(
+	report *protobuf.TradeCaptureReport,
+	senderCompID, targetCompID string,
+	seqNum int,
+	mdReqID string,
+) []byte {
+	b := codec.NewBuilder(codec.MsgTypeMarketDataIncremental, senderCompID, targetCompID, seqNum)
+	b.Set(codec.TagMDReqID, mdReqID)
+	b.SetInt(codec.TagNoMDEntries, 1)
+	b.Append(codec.TagMDUpdateAction, "0")
+	b.Append(codec.TagMDEntryType, "2")
+	b.Append(codec.TagSymbol, report.Symbol)
+	b.Append(codec.TagMDEntryPx, symbolconfig.Current().FormatPrice(report.Symbol, report.TradePrice))
+	b.Append(codec.TagMDEntrySize, strconv.Itoa(int(report.TradeQuantity)))
+	if report.Timestamp != nil {
+		b.Append(codec.TagMDEntryTime, report.Timestamp.AsTime().UTC().Format("15:04:05.000"))
+	}
 	return b.Build()
 }
 
