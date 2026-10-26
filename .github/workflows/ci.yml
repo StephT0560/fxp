@@ -241,10 +241,73 @@ jobs:
         if: always()
         run: make demo-down
 
+  console-e2e:
+    name: console-e2e
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go_gateway/go.mod
+          cache-dependency-path: "**/go.sum"
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm ci
+      - name: Generated TS and Go golden frames are current
+        run: |
+          npm run gen
+          (cd .. && bash scripts/gen_proto.sh)
+          (cd ../go_gateway && go run ./cmd/console_golden ../web/src/testdata/golden)
+          git diff --exit-code -- src/gen src/testdata
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run size
+      - name: No secret material in the bundle
+        run: bash scripts/check-bundle-secrets.sh dist
+      - name: Start demo stack
+        working-directory: .
+        run: |
+          make demo
+          curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:3000/healthz
+      - name: Secret values absent from the served bundle
+        working-directory: .
+        run: |
+          set -a; . ./.env.demo; set +a
+          mkdir -p /tmp/served && curl -fsS http://127.0.0.1:3000/ -o /tmp/served/index.html
+          for a in $(grep -oE '/assets/[^"]+' /tmp/served/index.html); do curl -fsS "http://127.0.0.1:3000$a" -o "/tmp/served/$(basename "$a")"; done
+          bash web/scripts/check-bundle-secrets.sh /tmp/served
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+        env:
+          CI: "1"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: console-e2e-playwright
+          path: |
+            web/test-results
+            web/playwright-report
+          retention-days: 14
+      - name: Stop demo
+        if: always()
+        working-directory: .
+        run: make demo-down
+
   # Keep this name stable: the main ruleset requires only ci-success.
   ci-success:
     name: ci-success
-    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto, demo-api]
+    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto, demo-api, console-e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
