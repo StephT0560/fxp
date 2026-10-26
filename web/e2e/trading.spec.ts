@@ -188,6 +188,8 @@ test("rapid clicks submit one order", async ({ browser }) => {
   await a.getByTestId("ticket-price").fill("30.00");
   await a.getByTestId("ticket-submit").dblclick();
   await a.getByTestId("ticket-submit").click({ force: true });
+  await a.waitForTimeout(250);
+  await a.getByTestId("ticket-submit").click({ force: true });
   await a.getByTestId("blotter-tab-working").click();
   await expect(a.locator("[data-testid=order-row]")).toHaveCount(1);
   await a.waitForTimeout(500);

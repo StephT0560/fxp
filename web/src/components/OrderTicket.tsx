@@ -28,6 +28,8 @@ const STPS: [SelfTradePrevention, string][] = [
   [SelfTradePrevention.DECREMENT_AND_CANCEL, "decrement and cancel"],
 ];
 const SUBMIT_TIMEOUT_MS = 5000;
+// A double-click lands within this window even when the ack is faster.
+const MIN_RESUBMIT_MS = 600;
 
 const input = "num w-full rounded bg-neutral-800 px-1 py-0.5";
 
@@ -50,6 +52,7 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
   const [inFlight, setInFlight] = useState<string>();
   // Synchronous guard: clicks that land before React re-renders are dropped.
   const sending = useRef(false);
+  const sentAt = useRef(0);
   const [lastId, setLastId] = useState<string>();
   const ticket: TicketInput = { ...t, symbol: rules.symbol };
   const { errors, draft } = validateTicket(ticket, rules);
@@ -62,8 +65,9 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
       sending.current = false;
       setInFlight(undefined);
     };
-    if (row && row.orderId === inFlight && row.state !== "pending") release();
-    const timer = setTimeout(release, SUBMIT_TIMEOUT_MS);
+    const acked = row && row.orderId === inFlight && row.state !== "pending";
+    const wait = acked ? Math.max(0, MIN_RESUBMIT_MS - (Date.now() - sentAt.current)) : SUBMIT_TIMEOUT_MS;
+    const timer = setTimeout(release, wait);
     return () => clearTimeout(timer);
   }, [inFlight, row, row?.state]);
 
@@ -73,6 +77,7 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
     setAttempted(true);
     if (!draft || inFlight || sending.current) return;
     sending.current = true;
+    sentAt.current = Date.now();
     const id = activeClient.current?.placeOrder(draft);
     if (!id) sending.current = false;
     if (id) {
