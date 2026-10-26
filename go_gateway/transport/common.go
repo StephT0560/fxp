@@ -93,6 +93,10 @@ func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
 	case *protobuf.FXPMessage_OrderStatusRequest:
 		forwardStatusRequest(conn, msg)
 
+	case *protobuf.FXPMessage_SessionControl:
+		// HandleFXPMessageAuthenticated admits only operator sessions.
+		forwardSessionControl(conn, msg)
+
 	case *protobuf.FXPMessage_MarketDataRequest:
 		slog.Debug("processing MarketDataRequest")
 		switch c := conn.(type) {
