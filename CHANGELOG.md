@@ -7,7 +7,26 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
-### Console UI v0.1a
+### Console UI v0.1b
+- Order ticket: limit, market, stop and stop-limit; IOC, FOK, GTC, Day, GTD
+  (expiry date) and at-open; iceberg display quantity; STP mode and group.
+  Client-side tick, lot, min/max and price-scale checks use `bigint` math;
+  the core's rejects are shown with their reasons. One order in flight at a
+  time, with generated client order ids.
+- Blotter from private ExecutionReports: working and completed orders with
+  cum/leaves/avg price, a state machine that drops duplicates and never lets
+  late reports resurrect a terminal order, restatements, cancel, replace,
+  cancel-all (all symbols or one) via mass cancel, own fills kept apart from
+  the public tape, and an exec-report log. After every (re)connect the blotter
+  is rebuilt from an `OrderStatusRequest`.
+- Core: `SessionControl` (proto v2.5) puts every symbol into an opening call
+  that uncrosses after `opening_call_seconds`; journaled like other inputs.
+  The gateway forwards it only for tokens with `fxp_role=operator`, which only
+  the BFF mints. `POST /api/sim/start` takes `opening_auction_sec` and starts
+  the simulator in its opening-auction phase, so the demo reaches an uncross
+  deterministically.
+- Demo config adds `DEMO`, a symbol the simulator never trades.
+
 - Add `web/`: React/TypeScript console served by the BFF with demo-user login,
   connection/phase status bar, auction banner, symbol list, 10-level depth
   ladder, public trade tape with visible per-symbol gap counter, last price,
