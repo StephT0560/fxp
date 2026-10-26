@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,6 +84,7 @@ type app struct {
 	mu         sync.Mutex
 	closed     bool
 	sockets    map[*websocket.Conn]struct{}
+	openCall   func(ctx context.Context, seconds int) error
 }
 
 func newApp(cfg config) (*app, error) {
@@ -101,7 +103,7 @@ func newApp(cfg config) (*app, error) {
 		}
 	}
 	origin, _ := url.Parse(cfg.origin)
-	a := &app{cfg: cfg, originHost: origin.Host, sim: simulator{cfg: cfg}, limiter: rateLimiter{limit: cfg.tokenRate}, sockets: make(map[*websocket.Conn]struct{}), mux: http.NewServeMux()}
+	a := &app{cfg: cfg, originHost: origin.Host, sim: simulator{cfg: cfg}, limiter: rateLimiter{limit: cfg.tokenRate}, sockets: make(map[*websocket.Conn]struct{}), mux: http.NewServeMux(), openCall: cfg.openCall}
 	names := make(map[string]bool)
 	for _, name := range defaultSymbols {
 		names[name] = true
@@ -217,6 +219,18 @@ func (a *app) simStart(w http.ResponseWriter, r *http.Request) {
 	if err := p.validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if p.OpeningAuctionSec > 0 {
+		if a.sim.status().Running {
+			http.Error(w, "simulator already running", http.StatusConflict)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		if err := a.openCall(ctx, p.OpeningAuctionSec); err != nil {
+			http.Error(w, "opening auction unavailable: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 	if err := a.sim.start(p); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)

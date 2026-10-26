@@ -102,6 +102,8 @@ var (
 	durationSec     = flag.Int("duration", 120, "Simulation wall-clock duration in seconds")
 	seed            = flag.Int64("seed", 0, "Random seed (0 = use current time)")
 	verbose         = flag.Bool("verbose", false, "Print individual order events")
+	// Set by the console BFF after it put the core into an opening call.
+	openingAuctionSec = flag.Int("opening-auction-sec", 0, "Start in the opening auction for this many seconds (core call started by the caller)")
 )
 
 // ── Session phases ────────────────────────────────────────────────────────────
@@ -441,7 +443,8 @@ func (p *Participant) sendMarketMakerOrder(sym *SymbolState, ph Phase) {
 	// 25% chance: send an aggressive IOC to generate fills (cross the spread).
 	// Use the current drifted mid so fill prices track the price model,
 	// which allows Rust's last_trade_price to move and trigger stop orders.
-	if p.rng.Float64() < 0.25 {
+	// The core rejects IOC during a real call, so skip the aggressor then.
+	if !(ph == PhaseOpenAuction && *openingAuctionSec > 0) && p.rng.Float64() < 0.25 {
 		aggrSide := protobuf.OrderSide_BUY
 		aggrPrice := mid + sym.volatility*3 // cross the ask with headroom
 		if p.rng.Float64() < 0.5 {
@@ -980,24 +983,35 @@ func (p *Participant) readLoop() {
 
 // ── Phase scheduler ───────────────────────────────────────────────────────────
 
-func runPhaseScheduler(phase *Phase, phaseMu *sync.RWMutex, totalDuration time.Duration, done chan struct{}) {
-	// Scale session phases to wall-clock duration
-	// Real day: pre=9hr, open_auction=1min, continuous=5h25min, close_auction=5min
-	// We compress into totalDuration proportionally
-	total := float64(totalDuration)
-	phases := []struct {
-		ph       Phase
-		fraction float64
-		name     string
-	}{
-		{PhasePreMarket, 0.05, "PRE_MARKET"},
-		{PhaseOpenAuction, 0.05, "OPEN_AUCTION"},
-		{PhaseContinuous, 0.80, "CONTINUOUS"},
-		{PhaseCloseAuction, 0.08, "CLOSE_AUCTION"},
-		{PhaseClosed, 0.02, "CLOSED"},
-	}
+type phaseSlot struct {
+	ph   Phase
+	d    time.Duration
+	name string
+}
 
-	for _, p := range phases {
+// phasePlan compresses the trading day into total. A positive openingAuction
+// starts in the opening auction (the console BFF has put the core into its
+// call) for that long, then trades continuously: no closing call is scheduled.
+func phasePlan(total, openingAuction time.Duration) []phaseSlot {
+	if openingAuction > 0 {
+		return []phaseSlot{
+			{PhaseOpenAuction, openingAuction, "OPEN_AUCTION"},
+			{PhaseContinuous, max(total-openingAuction, 0), "CONTINUOUS"},
+		}
+	}
+	// Real day: pre=9hr, open_auction=1min, continuous=5h25min, close_auction=5min
+	f := float64(total)
+	return []phaseSlot{
+		{PhasePreMarket, time.Duration(f * 0.05), "PRE_MARKET"},
+		{PhaseOpenAuction, time.Duration(f * 0.05), "OPEN_AUCTION"},
+		{PhaseContinuous, time.Duration(f * 0.80), "CONTINUOUS"},
+		{PhaseCloseAuction, time.Duration(f * 0.08), "CLOSE_AUCTION"},
+		{PhaseClosed, time.Duration(f * 0.02), "CLOSED"},
+	}
+}
+
+func runPhaseScheduler(phase *Phase, phaseMu *sync.RWMutex, plan []phaseSlot, done chan struct{}) {
+	for _, p := range plan {
 		phaseMu.Lock()
 		*phase = p.ph
 		phaseMu.Unlock()
@@ -1006,7 +1020,7 @@ func runPhaseScheduler(phase *Phase, phaseMu *sync.RWMutex, totalDuration time.D
 		select {
 		case <-done:
 			return
-		case <-time.After(time.Duration(total * p.fraction)):
+		case <-time.After(p.d):
 		}
 	}
 	close(done)
@@ -1131,7 +1145,7 @@ func main() {
 	}
 
 	// Run phase scheduler
-	go runPhaseScheduler(&phase, phaseMu, time.Duration(*durationSec)*time.Second, done)
+	go runPhaseScheduler(&phase, phaseMu, phasePlan(time.Duration(*durationSec)*time.Second, time.Duration(*openingAuctionSec)*time.Second), done)
 
 	// Progress ticker
 	start := time.Now()

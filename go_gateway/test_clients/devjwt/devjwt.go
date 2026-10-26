@@ -40,24 +40,37 @@ func GenerateWithTTL(secret, traderID string, ttl time.Duration) (string, error)
 	return generate(secret, traderID, ttl), nil
 }
 
+// GenerateOperator mints a token with fxp_role=operator, which the gateway
+// requires for SessionControl. Only the console BFF uses it.
+func GenerateOperator(secret, subject string, ttl time.Duration) (string, error) {
+	if ttl < time.Second || ttl > 5*time.Minute {
+		return "", fmt.Errorf("operator JWT lifetime must be between one second and five minutes")
+	}
+	return generateClaims(secret, subject, ttl, map[string]any{"fxp_role": "operator"}), nil
+}
 func generate(secret, traderID string, ttl time.Duration) string {
+	return generateClaims(secret, traderID, ttl, nil)
+}
+func generateClaims(secret, traderID string, ttl time.Duration, extra map[string]any) string {
 	head := map[string]string{"alg": "HS256", "typ": "JWT"}
 	if kid := os.Getenv("FXP_JWT_KID"); kid != "" {
 		head["kid"] = kid
 	}
 	now := time.Now()
 	header := base64.RawURLEncoding.EncodeToString(mustJSON(head))
-	payload := base64.RawURLEncoding.EncodeToString(
-		mustJSON(map[string]interface{}{
-			"sub": traderID,
-			"iss": envOr("FXP_JWT_ISSUER", DefaultIssuer),
-			"aud": envOr("FXP_JWT_AUDIENCE", DefaultAudience),
-			"jti": newJTI(),
-			"iat": now.Unix(),
-			"nbf": now.Unix(),
-			"exp": now.Add(ttl).Unix(),
-		}),
-	)
+	claims := map[string]interface{}{
+		"sub": traderID,
+		"iss": envOr("FXP_JWT_ISSUER", DefaultIssuer),
+		"aud": envOr("FXP_JWT_AUDIENCE", DefaultAudience),
+		"jti": newJTI(),
+		"iat": now.Unix(),
+		"nbf": now.Unix(),
+		"exp": now.Add(ttl).Unix(),
+	}
+	for k, v := range extra {
+		claims[k] = v
+	}
+	payload := base64.RawURLEncoding.EncodeToString(mustJSON(claims))
 	signingInput := header + "." + payload
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(signingInput))

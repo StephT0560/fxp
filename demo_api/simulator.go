@@ -21,11 +21,16 @@ type simParams struct {
 	Symbols      int   `json:"symbols"`
 	Participants int   `json:"participants"`
 	Duration     int   `json:"duration"`
+	// Seconds of opening call the BFF starts on the core before the run.
+	OpeningAuctionSec int `json:"opening_auction_sec"`
 }
 
 func (p simParams) validate() error {
 	if p.Symbols < 1 || p.Symbols > 10 || p.Participants < 1 || p.Participants > 50 || p.Duration < 1 || p.Duration > 300 {
 		return fmt.Errorf("symbols must be 1..10, participants 1..50, duration 1..300 seconds")
+	}
+	if p.OpeningAuctionSec != 0 && (p.OpeningAuctionSec < 5 || p.OpeningAuctionSec > 120 || p.OpeningAuctionSec >= p.Duration) {
+		return fmt.Errorf("opening_auction_sec must be 0 or 5..120 and shorter than duration")
 	}
 	return nil
 }
@@ -101,7 +106,11 @@ func (s *simulator) start(p simParams) error {
 		return fmt.Errorf("simulator already running")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.Duration+30)*time.Second)
-	cmd := exec.CommandContext(ctx, s.cfg.simBinary, "-seed", strconv.FormatInt(p.Seed, 10), "-symbols", strconv.Itoa(p.Symbols), "-participants", strconv.Itoa(p.Participants), "-duration", strconv.Itoa(p.Duration))
+	args := []string{"-seed", strconv.FormatInt(p.Seed, 10), "-symbols", strconv.Itoa(p.Symbols), "-participants", strconv.Itoa(p.Participants), "-duration", strconv.Itoa(p.Duration)}
+	if p.OpeningAuctionSec > 0 {
+		args = append(args, "-opening-auction-sec", strconv.Itoa(p.OpeningAuctionSec))
+	}
+	cmd := exec.CommandContext(ctx, s.cfg.simBinary, args...)
 	cmd.Env = s.childEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Kill the whole process group on timeout/stop, then Wait reaps the child.
