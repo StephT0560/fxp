@@ -657,18 +657,6 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 output_tx: cr_msg.output_tx.clone(),
                             };
 
-                            if let Some(orig) = original.as_ref()
-                                && (orig.display_quantity > 0 || replacement.display_quantity > 0)
-                            {
-                                let md = book.generate_incremental_update(
-                                    MarketUpdateType::CancelOrder,
-                                    orig.price,
-                                    original_visible,
-                                    orig.side,
-                                );
-                                outputs.push(Output::MarketData(build_md_update(&md, &ts)));
-                            }
-
                             send_replace_reports(
                                 ids,
                                 &mut outputs,
@@ -688,7 +676,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 let md = book.generate_incremental_update(
                                     MarketUpdateType::CancelOrder,
                                     orig.price,
-                                    orig.quantity,
+                                    original_visible,
                                     orig.side,
                                 );
                                 outputs.push(Output::MarketData(build_md_update(&md, &ts)));
@@ -1836,7 +1824,7 @@ mod tests {
         assert_eq!(engine.book.order_lookup["B"].timestamp, 123_456);
 
         let outputs = engine.new_order(order("S", fxp::OrderSide::Sell), 2);
-        assert_eq!(outputs.len(), 6);
+        assert_eq!(outputs.len(), 7);
         let ack = report(&outputs[0], 2, "X2");
         assert_eq!(ack.execution_type, fxp::ExecutionType::ExecNew as i32);
         for (output, owner, id) in [(&outputs[1], 1, "X3"), (&outputs[2], 2, "X4")] {

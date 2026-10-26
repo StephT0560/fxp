@@ -18,6 +18,11 @@ date when the reviewed main commit is tagged.
 - Fix: the gateway sends every `MarketDataRequest` on one core connection;
   spreading them over the pool registered several core subscribers and
   duplicated every incremental and trade to clients.
+- Fix: core market data now keeps level books in step with the order book.
+  A cancel/replace published only the replacement's `NewOrder`, never the
+  original leaving its level; and a cross between two resting orders (every
+  aggressive limit rests first) shrank only the older order's level. Clients
+  applying incrementals drifted into stale, sometimes crossed, ladders.
 - CI: `console-e2e` job (generated code/golden frames current, typecheck,
   Vitest, bundle budget, bundle secret scan, Playwright smoke on `make demo`)
   required by `ci-success`.

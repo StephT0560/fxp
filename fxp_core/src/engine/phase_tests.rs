@@ -709,3 +709,111 @@ fn late_subscriber_gets_phase_and_unchanged_indicative() {
     assert!(outputs.iter().any(|o| matches!(o,
         Output::TradingSessionStatus(s) if s.phase == e.phase() as i32)));
 }
+
+/// Replaying every MarketData output onto a level book must reproduce the
+/// snapshot a fresh subscriber gets, across phases and order types.
+#[test]
+fn incrementals_reproduce_the_snapshot_book() {
+    use std::collections::BTreeMap;
+    type Side = BTreeMap<i64, i64>;
+    fn apply(o: &[Output<u32>], bids: &mut Side, asks: &mut Side) {
+        for o in o {
+            if let Output::MarketData(md) = o {
+                for c in &md.changes {
+                    let side = if c.side == fxp::OrderSide::Buy as i32 {
+                        &mut *bids
+                    } else {
+                        &mut *asks
+                    };
+                    let q = i64::from(c.quantity);
+                    let e = side.entry(c.price).or_default();
+                    *e += if c.update_type == 0 { q } else { -q };
+                    if *e == 0 {
+                        side.remove(&c.price);
+                    }
+                }
+            }
+        }
+    }
+    let mut seed: u64 = 0x9e3779b97f4a7c15;
+    let mut rnd = |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let (mut e, clock) = setup(11);
+    let (mut bids, mut asks) = (Side::new(), Side::new());
+    let mut ids: Vec<String> = Vec::new();
+    let mut n = 0;
+    for (t, steps) in [(11, 150), (20, 600), (30, 150), (40, 50)] {
+        advance(&clock, t);
+        for _ in 0..steps {
+            n += 1;
+            let id = format!("O{n}");
+            let side = if rnd(2) == 0 {
+                fxp::OrderSide::Buy
+            } else {
+                fxp::OrderSide::Sell
+            };
+            let price = 95 + rnd(11) as i64;
+            let qty = 1 + rnd(20) as i32;
+            let out = match rnd(10) {
+                0..=4 => {
+                    let mut o = order(&id, side, fxp::TimeInForce::Gtc, qty, price);
+                    if rnd(4) == 0 {
+                        o.display_quantity = 1 + rnd(5) as i32;
+                    }
+                    ids.push(id.clone());
+                    e.new_order(o, 1)
+                }
+                5 => e.new_order(order(&id, side, fxp::TimeInForce::Ioc, qty, price), 1),
+                6 => e.new_order(
+                    fxp::NewOrderSingle {
+                        order_type: fxp::OrderType::Market as i32,
+                        ..order(&id, side, fxp::TimeInForce::Ioc, qty, 0)
+                    },
+                    1,
+                ),
+                7 | 8 if !ids.is_empty() => {
+                    let victim = ids.swap_remove(rnd(ids.len() as u64) as usize);
+                    e.cancel(cancel(&victim))
+                }
+                _ if !ids.is_empty() => {
+                    let victim = ids.swap_remove(rnd(ids.len() as u64) as usize);
+                    ids.push(id.clone());
+                    let mut r = replace(&victim, &id, price, fxp::TimeInForce::Gtc);
+                    r.new_quantity = qty;
+                    if rnd(3) == 0 {
+                        r.new_display_quantity = Some(rnd(4) as i32);
+                    }
+                    e.cancel_replace(r)
+                }
+                _ => Vec::new(),
+            };
+            apply(&out, &mut bids, &mut asks);
+            let sub = e.subscribe(2);
+            apply(&sub, &mut bids, &mut asks);
+            let snap = sub
+                .iter()
+                .find_map(|o| match o {
+                    Output::Snapshot(_, s) => Some(s),
+                    _ => None,
+                })
+                .expect("snapshot");
+            let level = |l: &fxp::MarketOrderBookEntry| (l.price, i64::from(l.size));
+            let want_b: Side = snap.bid_levels.iter().map(level).collect();
+            let want_a: Side = snap.ask_levels.iter().map(level).collect();
+            assert_eq!(
+                (&bids, &asks),
+                (&want_b, &want_a),
+                "drift after op {n} at t={t}"
+            );
+            if t == 20
+                && let (Some(b), Some(a)) = (want_b.keys().next_back(), want_a.keys().next())
+            {
+                assert!(b < a, "crossed continuous book after op {n}: {b} >= {a}");
+            }
+        }
+    }
+}

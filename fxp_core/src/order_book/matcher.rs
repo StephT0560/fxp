@@ -188,25 +188,13 @@ impl OrderBook {
                 buy_fully_filled: bid.quantity == 0,
                 sell_fully_filled: ask.quantity == 0,
             });
-            if bid.display_quantity > 0 || ask.display_quantity > 0 {
-                for order in [&bid, &ask] {
-                    updates.push(self.generate_incremental_update(
-                        MarketUpdateType::ModifyOrder,
-                        order.price,
-                        quantity,
-                        order.side,
-                    ));
-                }
-            } else {
+            // Both orders rest on the book and were published, so both levels shrink.
+            for order in [&bid, &ask] {
                 updates.push(self.generate_incremental_update(
                     MarketUpdateType::ModifyOrder,
-                    if bid_newer { ask_price } else { bid_price },
+                    order.price,
                     quantity,
-                    if bid_newer {
-                        OrderSide::Sell
-                    } else {
-                        OrderSide::Buy
-                    },
+                    order.side,
                 ));
             }
             let bid_refresh = self.replenish(&bid);
