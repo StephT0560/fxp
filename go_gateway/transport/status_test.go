@@ -69,3 +69,42 @@ func TestStatusOwnerBindingAndIndependentRoutes(t *testing.T) {
 		t.Fatal("status request hijacked live route")
 	}
 }
+
+func TestStatusResponseRebindsLiveOrdersToTheRequester(t *testing.T) {
+	srv, cli := routedPipes(t)
+	stale, _ := pipes(t) // closed console: no client writer
+	other, _ := routedPipes(t)
+	live, done := namespacedOrderID("TRADER", "LIVE"), namespacedOrderID("TRADER", "DONE")
+	busy, gone := namespacedOrderID("TRADER", "BUSY"), namespacedOrderID("TRADER", "GONE")
+	orderClientMap.Store(live, orderRoute{conn: stale, owner: "TRADER"})
+	orderClientMap.Store(done, orderRoute{conn: stale, owner: "TRADER"})
+	orderClientMap.Store(busy, orderRoute{conn: other, owner: "TRADER"})
+	for _, id := range []string{live, done, busy, gone} {
+		defer orderClientMap.Delete(id)
+	}
+	key, err := registerStatusRoute(srv, &protobuf.OrderStatusRequest{RequestId: "R", Sender: "TRADER"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go routeFromCore(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderStatusResponse{OrderStatusResponse: &protobuf.OrderStatusResponse{RequestId: key, Sender: "TRADER", Complete: true, Reports: []*protobuf.ExecutionReport{
+		{OrderId: live, OrderStatus: protobuf.OrderStatus_ORDER_NEW},
+		{OrderId: done, OrderStatus: protobuf.OrderStatus_ORDER_FILLED},
+		{OrderId: busy, OrderStatus: protobuf.OrderStatus_ORDER_NEW},
+		{OrderId: gone, OrderStatus: protobuf.OrderStatus_ORDER_NEW},
+	}}}})
+	if got := readFXP(t, cli).GetOrderStatusResponse(); got == nil || got.Reports[0].OrderId != "LIVE" {
+		t.Fatalf("response %+v", got)
+	}
+	if v, _ := orderClientMap.Load(live); v.(orderRoute).conn != srv {
+		t.Fatal("live order not rebound to the requester")
+	}
+	if v, _ := orderClientMap.Load(done); v.(orderRoute).conn != stale {
+		t.Fatal("terminal order route changed")
+	}
+	if v, _ := orderClientMap.Load(busy); v.(orderRoute).conn != other {
+		t.Fatal("route on another open console was stolen")
+	}
+	if _, ok := orderClientMap.Load(gone); ok {
+		t.Fatal("removed route recreated from a snapshot")
+	}
+}

@@ -61,6 +61,15 @@ func GetTraderID(sessionID string) string {
 	return ""
 }
 
+// sessionOperator holds the sessions whose token carried fxp_role=operator.
+var sessionOperator sync.Map // session_id (string) → struct{}
+
+// IsOperator reports whether the session may send SessionControl.
+func IsOperator(sessionID string) bool {
+	_, ok := sessionOperator.Load(sessionID)
+	return ok
+}
+
 // sessionCOD holds the sessions that asked for cancel-on-disconnect at Logon.
 var sessionCOD sync.Map // session_id (string) → struct{}
 
@@ -100,6 +109,7 @@ var cancelOnDisconnect = func(traderID string) {
 // invalidateSession removes a session (called on Logout or disconnect).
 func invalidateSession(sessionID string) {
 	sessionStore.Delete(sessionID)
+	sessionOperator.Delete(sessionID)
 	log.Printf("🔒 Session invalidated: %s", sessionID)
 }
 
@@ -126,6 +136,8 @@ type jwtClaims struct {
 	Iss string      `json:"iss"`
 	Aud jwtAudience `json:"aud"`
 	Jti string      `json:"jti"` // token ID (required when the replay cache is on)
+	// Role "operator" may send SessionControl; demo users carry no role.
+	Role string `json:"fxp_role"`
 }
 
 // jwtAudience accepts both forms RFC 7519 allows: a string or an array.
@@ -379,6 +391,9 @@ func HandleLogon(logon *protobuf.Logon) (traderID, sessionID string, err error) 
 
 	sessionID = newSessionID()
 	sessionStore.Store(sessionID, claims.Sub)
+	if claims.Role == "operator" {
+		sessionOperator.Store(sessionID, struct{}{})
+	}
 	if logon.CancelOnDisconnect {
 		sessionCOD.Store(sessionID, struct{}{})
 	}
@@ -477,6 +492,14 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 				"session not established — send Logon before any other message")
 			drainTerminalResponse(conn)
 			return
+		}
+
+		if control := msg.GetSessionControl(); control != nil {
+			control.Sender = GetTraderID(*sessionID)
+			if !IsOperator(*sessionID) {
+				_ = writeFXPMessage(conn, sessionControlReject(control.Sender, control.RequestId, "operator role required"))
+				return
+			}
 		}
 
 		// Authenticated: bind order-entry messages to the session's trader, then route

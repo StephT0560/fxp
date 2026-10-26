@@ -2,6 +2,8 @@
 import { create } from "zustand";
 import type {
   AuctionInfo,
+  ExecutionReport,
+  OrderMassCancelReport,
   MarketDataIncrementalUpdate,
   MarketDataSnapshot,
   TradeCaptureReport,
@@ -9,7 +11,9 @@ import type {
 } from "../gen/fxp_pb";
 import { applyIncremental, applySnapshot, emptyBook, type Book } from "./book";
 import { schedule } from "./scheduler";
+import { applyReport, emptyBlotter, note, onMassCancelReport, rebuild, type Blotter, type LogEntry } from "./orders";
 import { applyTrade, emptyTape, resyncTape, type Tape } from "./tape";
+import type { SymbolRules } from "./validate";
 
 
 export type ConnState = "idle" | "connecting" | "live" | "reconnecting" | "rejected";
@@ -38,11 +42,7 @@ export const useSession = create<SessionState>((set) => ({
   onAuction: (a) => set((s) => ({ auctions: { ...s.auctions, [a.symbol]: a } })),
 }));
 
-export interface SymbolInfo {
-  symbol: string;
-  price_scale: number;
-  tick_size: string;
-}
+export type SymbolInfo = SymbolRules;
 
 export interface SymbolsState {
   list: SymbolInfo[];
@@ -114,5 +114,48 @@ export const useTape = create<TapeState>((set, get) => {
       applyTrade(tape, t);
       schedule(bump);
     },
+  };
+});
+
+/** Private order state; the blotter is mutated in place and `version` bumps per frame. */
+export interface OrdersState {
+  blotter: Blotter;
+  version: number;
+  notice?: string;
+  touch: () => void;
+  onReport: (r: ExecutionReport) => void;
+  onStatus: (reports: ExecutionReport[]) => void;
+  onMassCancel: (r: OrderMassCancelReport) => void;
+  note: (kind: LogEntry["kind"], text: string) => void;
+  markStale: () => void;
+  reset: () => void;
+}
+
+export const useOrders = create<OrdersState>((set, get) => {
+  const bump = () => set((s) => ({ version: s.version + 1 }));
+  return {
+    blotter: emptyBlotter(),
+    version: 0,
+    touch: () => schedule(bump),
+    onReport: (r) => {
+      if (applyReport(get().blotter, r)) schedule(bump);
+    },
+    onStatus: (reports) => {
+      rebuild(get().blotter, reports);
+      schedule(bump);
+    },
+    onMassCancel: (r) => {
+      set({ notice: onMassCancelReport(get().blotter, r) });
+      schedule(bump);
+    },
+    note: (kind, text) => {
+      note(get().blotter, kind, text);
+      schedule(bump);
+    },
+    markStale: () => {
+      get().blotter.stale = true;
+      schedule(bump);
+    },
+    reset: () => set({ blotter: emptyBlotter(), notice: undefined, version: get().version + 1 }),
   };
 });

@@ -817,3 +817,44 @@ fn incrementals_reproduce_the_snapshot_book() {
         }
     }
 }
+
+#[test]
+fn operator_opening_call_uncrosses_after_the_requested_seconds() {
+    let clock = FakeClock(Rc::new(Cell::new(Time {
+        seconds: 100,
+        nanos: 0,
+    })));
+    let mut e = Engine::new("TEST", clock.clone(), Ids(0), None);
+    assert_eq!(e.phase(), fxp::TradingPhase::Continuous);
+    rejected(
+        &e.new_order(buy("AO", fxp::TimeInForce::AtOpen, 5, 100), 7),
+        "no auction scheduled",
+    );
+    let started = e.begin_opening_call(30);
+    assert!(started.iter().any(|o| matches!(o,
+        Output::TradingSessionStatus(s) if s.phase == fxp::TradingPhase::OpeningCall as i32)));
+    rejected(
+        &e.new_order(buy("I", fxp::TimeInForce::Ioc, 5, 100), 7),
+        "IOC/FOK",
+    );
+    assert!(fills(&e.new_order(buy("B", fxp::TimeInForce::AtOpen, 5, 101), 7)).is_empty());
+    assert!(fills(&e.new_order(sell("S", fxp::TimeInForce::Gtc, 5, 99), 7)).is_empty());
+    // A second request during the call does not extend it.
+    assert!(
+        !e.begin_opening_call(600)
+            .iter()
+            .any(|o| matches!(o, Output::TradingSessionStatus(_)))
+    );
+    advance(&clock, 129);
+    assert!(fills(&e.tick()).is_empty());
+    assert_eq!(e.phase(), fxp::TradingPhase::OpeningCall);
+    advance(&clock, 130);
+    let open = e.tick();
+    let filled = fills(&open);
+    assert_eq!(filled.len(), 2);
+    assert!(filled.iter().all(|r| r.auction));
+    assert_eq!(e.phase(), fxp::TradingPhase::Continuous);
+    assert!(e.call_until.is_none());
+    assert!(e.begin_opening_call(0).is_empty());
+    assert_eq!(e.phase(), fxp::TradingPhase::Continuous);
+}

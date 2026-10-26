@@ -175,3 +175,49 @@ typecheck, Vitest (decoders, book/tape stores, gaps, crossed and out-of-order
 updates, a 2,000-update replay timing test), the bundle budget and secret scan
 (built and served bundle), then brings up `make demo` and runs the Playwright
 smoke with trace/video artifacts.
+
+## Trading (v0.1b)
+
+**Order ticket.** Limit, market, stop and stop-limit orders; IOC, FOK, GTC,
+Day, GTD (the expiry date sets `expire_date`, UTC) and at-open; iceberg display
+quantity (`display_quantity`, MaxFloor); STP mode and group. Prices are parsed
+from decimal text into minor units with `bigint` and checked against the
+symbol's `price_scale`, `tick_size`, `lot_size`, `min_quantity` and
+`max_quantity` from `/api/symbols`. These checks only save a round trip: the
+core remains authoritative, and its rejects are shown with their reasons. Each
+order gets a fresh client order id, and the ticket allows one order in flight
+until its first report arrives (or 5 s pass).
+
+**Blotter.** Built from the user's private ExecutionReports. Working and
+completed tabs show cum, leaves and average price. Reports are de-duplicated by
+execution id; cumulative quantity never decreases; a terminal order (filled,
+canceled, rejected, expired, replaced) only moves to another terminal state, so
+reordered reports such as an IOC remainder cancel ahead of its fill cannot
+resurrect it. EXEC_RESTATED (self-trade prevention) marks the row restated. A
+rejected cancel or replace (`orig_order_id` set) leaves the order unchanged and
+shows the reason on the row. Cancel-all sends `OrderMassCancelRequest` for all
+symbols or the selected one and shows the `OrderMassCancelReport`. Own fills
+are listed separately from the public tape; the exec-report tab logs every
+report and request.
+
+**Reconnect.** When the socket drops the blotter is marked as resyncing. After
+LogonAck the console sends `OrderStatusRequest` (all orders) and replaces the
+blotter with the response batches. Execution reports carry no limit price, so
+prices are kept for orders entered in this tab and shown as "—" after a page
+refresh.
+
+**Opening auction.** The core takes its phases from `FXP_SESSION_SCHEDULE`
+only. To reach an auction on demand, `POST /api/sim/start` accepts
+`opening_auction_sec` (5–120, shorter than `duration`). The BFF then connects to
+the gateway with a one-minute operator token (`fxp_role=operator`) and sends
+`SessionControl`: every live and configured symbol enters an opening call now
+and uncrosses after that many seconds, printing auction trades on the tape. The
+simulator starts in its opening-auction phase (at-open orders, no IOC) and
+trades continuously afterwards. The gateway rejects `SessionControl` from any
+other token. Demo users can trigger it through the BFF; this is a local demo
+control, not an operator console.
+
+`DEMO` is configured but never traded by the simulator, which makes it the
+place to try fills between two users. The 90-second walkthrough is in
+[demo-script.md](demo-script.md).
+

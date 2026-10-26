@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
 import { useEffect, useRef, useState } from "react";
 import { AuctionBanner } from "./components/AuctionBanner";
+import { Blotter } from "./components/Blotter";
 import { Chart } from "./components/Chart";
 import { Ladder } from "./components/Ladder";
 import { Login } from "./components/Login";
+import { OrderTicket } from "./components/OrderTicket";
 import { SimControls } from "./components/SimControls";
 import { StatusBar } from "./components/StatusBar";
 import { SymbolList } from "./components/SymbolList";
 import { TapeView } from "./components/TapeView";
-import { ConsoleClient } from "./lib/client";
+import { activeClient, ConsoleClient } from "./lib/client";
 import { formatPrice, formatQty } from "./lib/format";
-import { useSession, useSymbols, useTape, type SymbolInfo } from "./lib/stores";
+import { useOrders, useSession, useSymbols, useTape, type SymbolInfo } from "./lib/stores";
 
 function Stats({ symbol, scale }: { symbol: string; scale: number }) {
   useTape((s) => s.version);
@@ -43,10 +45,15 @@ export function App() {
 
   useEffect(() => {
     if (!user) return;
+    useOrders.getState().reset();
     const c = new ConsoleClient({ user, symbols: () => useSymbols.getState().list.map((s) => s.symbol) });
     client.current = c;
+    activeClient.current = c;
     c.start();
-    return () => c.stop();
+    return () => {
+      c.stop();
+      if (activeClient.current === c) activeClient.current = undefined;
+    };
   }, [user]);
 
   if (!user) return <Login onLogin={setUser} />;
@@ -73,6 +80,12 @@ export function App() {
           </>
         )}
       </div>
+      {info && (
+        <div className="flex h-72 shrink-0 border-t border-neutral-800">
+          <OrderTicket key={selected} rules={info} />
+          <Blotter symbol={selected!} />
+        </div>
+      )}
     </div>
   );
 }

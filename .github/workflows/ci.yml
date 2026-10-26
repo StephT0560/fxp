@@ -277,6 +277,9 @@ jobs:
         run: bash scripts/check-bundle-secrets.sh dist
       - name: Start demo stack
         working-directory: .
+        env:
+          # The trading specs log in several users and reconnect on purpose.
+          FXP_DEMO_TOKEN_RATE_PER_MIN: "60"
         run: |
           make demo
           curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:3000/healthz

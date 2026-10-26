@@ -41,6 +41,7 @@ pub(crate) enum Input {
     Tick,
     Subscribe,
     MassCancel(fxp::OrderMassCancelRequest),
+    SessionControl(fxp::SessionControl),
 }
 
 impl Input {
@@ -52,6 +53,7 @@ impl Input {
             Self::Tick => (4, Vec::new()),
             Self::Subscribe => (5, Vec::new()),
             Self::MassCancel(m) => (6, m.encode_to_vec()),
+            Self::SessionControl(m) => (7, m.encode_to_vec()),
         }
     }
 
@@ -79,6 +81,10 @@ impl Input {
                     .map_err(invalid)?;
                 let symbol = m.symbol.clone();
                 (Self::MassCancel(m), symbol)
+            }
+            7 => {
+                let m = fxp::SessionControl::decode(record.payload.as_slice()).map_err(invalid)?;
+                (Self::SessionControl(m), record.symbol.clone())
             }
             4 if record.payload.is_empty() => (Self::Tick, record.symbol.clone()),
             5 if record.payload.is_empty() => (Self::Subscribe, record.symbol.clone()),
@@ -389,7 +395,17 @@ impl<R: Clone> Journal<R> {
     }
 
     pub(crate) fn tick(&mut self, symbol: &str, at: Time) -> io::Result<Vec<Output<R>>> {
-        self.apply(symbol, at, Input::Tick, self.detached.clone())
+        self.control(symbol, at, Input::Tick)
+    }
+
+    /// Applies an input that has no reporting owner.
+    pub(crate) fn control(
+        &mut self,
+        symbol: &str,
+        at: Time,
+        input: Input,
+    ) -> io::Result<Vec<Output<R>>> {
+        self.apply(symbol, at, input, self.detached.clone())
     }
 
     fn execute(&mut self, symbol: &str, at: Time, input: Input, owner: R) -> Vec<Output<R>> {
@@ -427,6 +443,7 @@ impl<R: Clone> Journal<R> {
                 client_request_id: m.client_request_id,
                 reason: m.reason,
             }),
+            Input::SessionControl(m) => engine.begin_opening_call(m.opening_call_seconds),
         }
     }
 }

@@ -43,7 +43,26 @@ func routeStatusResponse(msg *protobuf.FXPMessage) {
 	out := cloned.GetOrderStatusResponse()
 	out.RequestId = r.original
 	for _, report := range out.Reports {
+		// A reconnected console adopts live orders whose socket has closed.
+		// Routes on open sockets stay put, and a route already removed by a
+		// terminal report is never recreated from an older snapshot.
+		if !terminalStatus(report.OrderStatus) && report.OrderId != "" {
+			if v, ok := orderClientMap.Load(report.OrderId); ok {
+				if _, open := clientWriters.Load(v.(orderRoute).conn); !open {
+					orderClientMap.CompareAndSwap(report.OrderId, v, orderRoute{conn: r.conn, owner: r.owner})
+				}
+			}
+		}
 		stripOwner(report, r.owner)
 	}
 	_ = writeFXPMessage(r.conn, cloned)
+}
+
+func terminalStatus(s protobuf.OrderStatus) bool {
+	switch s {
+	case protobuf.OrderStatus_ORDER_FILLED, protobuf.OrderStatus_ORDER_CANCELED, protobuf.OrderStatus_ORDER_REJECTED,
+		protobuf.OrderStatus_ORDER_EXPIRED, protobuf.OrderStatus_ORDER_REPLACED:
+		return true
+	}
+	return false
 }

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,6 +84,7 @@ type app struct {
 	mu         sync.Mutex
 	closed     bool
 	sockets    map[*websocket.Conn]struct{}
+	openCall   func(ctx context.Context, seconds int) error
 }
 
 func newApp(cfg config) (*app, error) {
@@ -101,7 +103,7 @@ func newApp(cfg config) (*app, error) {
 		}
 	}
 	origin, _ := url.Parse(cfg.origin)
-	a := &app{cfg: cfg, originHost: origin.Host, sim: simulator{cfg: cfg}, limiter: rateLimiter{limit: cfg.tokenRate}, sockets: make(map[*websocket.Conn]struct{}), mux: http.NewServeMux()}
+	a := &app{cfg: cfg, originHost: origin.Host, sim: simulator{cfg: cfg}, limiter: rateLimiter{limit: cfg.tokenRate}, sockets: make(map[*websocket.Conn]struct{}), mux: http.NewServeMux(), openCall: cfg.openCall}
 	names := make(map[string]bool)
 	for _, name := range defaultSymbols {
 		names[name] = true
@@ -218,9 +220,28 @@ func (a *app) simStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := a.sim.start(p); err != nil {
+	run, err := a.sim.startRun(p)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
+	}
+	// The simulator connects first and waits; the core's call starts only
+	// then, so both auction clocks start together. Any failure stops the run.
+	if p.OpeningAuctionSec > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		err := a.sim.waitReady(ctx, run)
+		if err == nil {
+			err = a.openCall(ctx, p.OpeningAuctionSec)
+		}
+		if err == nil {
+			err = a.sim.release(run)
+		}
+		if err != nil {
+			a.sim.stopRun(run)
+			http.Error(w, "opening auction unavailable: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 	writeJSON(w, http.StatusAccepted, a.sim.status())
 }

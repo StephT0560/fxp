@@ -484,6 +484,9 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 	case *protobuf.FXPMessage_OrderMassCancelReport:
 		routeMassCancelResponse(msg)
 
+	case *protobuf.FXPMessage_SessionControlReport:
+		routeSessionControlReport(msg)
+
 	case *protobuf.FXPMessage_MarketDataIncremental:
 		slog.Debug("MarketDataIncrementalUpdate received", "symbol", payload.MarketDataIncremental.Symbol)
 		ForwardMarketData(payload.MarketDataIncremental)

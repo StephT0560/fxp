@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ import (
 func TestLogRingBoundsAndRedaction(t *testing.T) {
 	s := simulator{cfg: config{secret: "sensitive-test-secret"}}
 	input := "safe\nsecret=sensitive-test-secret\neyJhbGciOiJIUzI1NiJ9.fake.signature\n" + strings.Repeat("x", 5000) + "\n"
-	s.capture(bytes.NewBufferString(input))
+	s.capture(bytes.NewBufferString(input), nil)
 	got := s.logs.text()
 	if strings.Contains(got, s.cfg.secret) || strings.Contains(got, "eyJ") || !strings.Contains(got, "safe") || !strings.Contains(got, "discarded") {
 		t.Fatal("sensitive output leaked")
@@ -89,5 +90,43 @@ func TestSimulatorHardTimeout(t *testing.T) {
 		}
 	case <-time.After(35 * time.Second):
 		t.Fatal("hard deadline not enforced")
+	}
+}
+
+func TestStaleRunHandleLeavesNewerRunAlone(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "simulator")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'All participants connected'\nread line\nsleep 30\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := defaultConfig()
+	c.secret = strings.Repeat("s", 32)
+	c.simBinary = binary
+	s := &simulator{cfg: c}
+	t.Cleanup(func() { s.stop(true) })
+	p := simParams{Seed: 1, Symbols: 1, Participants: 1, Duration: 30, OpeningAuctionSec: 5}
+	old, err := s.startRun(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.stop(false)
+	current, err := s.startRun(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if s.waitReady(ctx, old) == nil || s.release(old) == nil {
+		t.Fatal("stale handle acted on the newer run")
+	}
+	s.stopRun(old)
+	if !s.status().Running {
+		t.Fatal("stale handle stopped the newer run")
+	}
+	if err := s.waitReady(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.release(current); err != nil {
+		t.Fatal(err)
 	}
 }

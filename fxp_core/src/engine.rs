@@ -176,6 +176,8 @@ pub struct Engine<R, C, I> {
     clock: C,
     ids: I,
     schedule: Option<SessionSchedule>,
+    /// Operator-started opening call: uncross at this instant.
+    call_until: Option<Time>,
     last_seen: Time,
     next_arrival: u64,
     phase: fxp::TradingPhase,
@@ -207,6 +209,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             clock,
             ids,
             schedule,
+            call_until: None,
             last_seen,
             next_arrival: 0,
             phase,
@@ -394,6 +397,26 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         self.publish_indicative(now, &mut outputs);
         outputs
     }
+    /// Operator override: start an opening call now and uncross after
+    /// `seconds`. Ignored while a call is already running.
+    pub fn begin_opening_call(&mut self, seconds: u32) -> Vec<Output<R>> {
+        let mut outputs = self.tick();
+        if seconds == 0 || phases::is_call(self.phase) {
+            return outputs;
+        }
+        let now = self.clock.now();
+        self.call_until = Some(Time {
+            seconds: now.seconds + i64::from(seconds),
+            nanos: 0,
+        });
+        self.set_phase(fxp::TradingPhase::OpeningCall, now, &mut outputs);
+        self.publish_indicative(now, &mut outputs);
+        self.remember_status(&outputs);
+        outputs
+    }
+    fn auctions_enabled(&self) -> bool {
+        self.call_until.is_some() || self.schedule.is_some_and(SessionSchedule::is_full)
+    }
     pub fn tick(&mut self) -> Vec<Output<R>> {
         let outputs = self.advance();
         self.remember_status(&outputs);
@@ -409,7 +432,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         }
         let symbol_rules = self.symbol_rules;
         let phase = self.phase;
-        let full_schedule = self.schedule.is_some_and(SessionSchedule::is_full);
+        let full_schedule = self.auctions_enabled();
         let call_markets = &mut self.call_markets;
         let held_close = &mut self.held_close;
         let symbol = &self.symbol;
