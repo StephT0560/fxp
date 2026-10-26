@@ -306,7 +306,9 @@ private, gitignored `.env.demo` with random credentials. Only the UI/BFF port
 is published; gateway and core remain private. The BFF offers short-lived demo
 JWTs, a same-origin binary WebSocket proxy and supervised simulator control.
 A placeholder is served until the separately scoped UI is built.
-See [console API, configuration and security model](docs/console/README.md).
+The console UI in `web/` shows the live 10-level book, public trade tape with
+sequence-gap counter, price chart, session phase/auction banner and simulator
+controls. See [console API, configuration and security model](docs/console/README.md).
 
 ## Trading Day Simulation
 

@@ -3,8 +3,8 @@
 Run `make demo` from the repository root with Docker Compose **2.24.4+** and
 Python 3 installed. It creates a private, gitignored `.env.demo` with a random
 32-byte JWT secret and starts the dev + demo profiles. Open
-**http://127.0.0.1:3000**. Until `web/dist/index.html` exists the server shows a
-small placeholder; UI code is a separate work item. `make demo-down` stops the
+**http://127.0.0.1:3000**. The BFF serves the console from `web/dist` (see
+[Console UI](#console-ui)); without a build it shows a small placeholder. `make demo-down` stops the
 stack without deleting the private env file or volumes. Remove `.env.demo` while
 the stack is stopped to generate new credentials on the next start.
 
@@ -119,3 +119,59 @@ runs a real core, gateway and BFF, verifies token -> WS LogonAck, a foreign-Orig
 403, independent Rust public trades, simulator lifecycle/shutdown, and absence
 of secrets in responses, captured logs and process argv. The `demo-api` CI job
 runs these checks and a real Compose build; it is required by `ci-success`.
+
+## Console UI
+
+`web/` is the browser console (v0.1a): React 18, strict TypeScript, Vite,
+Tailwind, Zustand and Vitest; protobuf-es bindings keep every int64/uint64 as
+`bigint`. It is local-only, read-only market view: demo-user login, connection
+and trading-phase status bar, auction banner (indicative price/volume and
+imbalance during calls), symbol list with last price, 10-level depth ladder,
+public trade tape with a per-symbol **tape gap** counter, last price and session
+volume, a `lightweight-charts` price line, and simulator start/stop with a seed.
+
+Data flow: `POST /api/token` (JWT kept in memory only) -> same-origin `/ws` ->
+`Logon` as the first binary frame -> on accepted `LogonAck`, one
+`MarketDataRequest` for every symbol. Symbols still without a snapshot are
+re-requested every 2 s (the core ignores requests for books it has not created
+yet). A rejected `LogonAck` stops the client and shows the reason; any other
+close marks books unsynced and reconnects with exponential backoff (0.5 s
+doubling to 10 s, plus jitter) and a fresh token.
+
+Book semantics: a snapshot replaces the book; `MarketOrderUpdate` is an
+order-level delta (`update_type` 0 adds `quantity` at the level, 1 fill and 2
+cancel remove it). Incrementals before the first snapshot are dropped, deltas
+that would go negative are clamped and counted as anomalies, and a crossed
+book is labelled rather than hidden. Trades use the per-symbol `seq`: a jump
+increments the visible gap counter (gaps are never hidden), duplicates and late
+prints are dropped so volume is not double counted. Store notifications are
+coalesced to one per animation frame, so a burst of incrementals costs one
+render.
+
+The core now also publishes the symbol's current `TradingSessionStatus` right
+after each subscription snapshot, so late joiners learn the phase, and the
+gateway sends every `MarketDataRequest` on one core connection so it is a
+single core subscriber (spreading them over the pool duplicated every update).
+
+Dev loop (Node 22):
+
+```bash
+cd web && npm ci
+npm run dev          # Vite on :5173, proxies /api and /ws to the BFF on :3000
+npm run gen          # regenerate src/gen from fxp_core/proto (buf + protoc-gen-es)
+npm run typecheck && npm test
+npm run build && npm run size   # gzip JS+CSS budget: 160 kB (FXP_CONSOLE_BUDGET_KB)
+bash scripts/check-bundle-secrets.sh dist
+npm run e2e          # Playwright smoke against FXP_CONSOLE_URL (default :3000)
+```
+
+`npm run dev` needs the BFF's `FXP_DEMO_ORIGIN` to match the page origin
+(`http://127.0.0.1:5173`) because `/ws` is same-origin checked; the default
+flow is `npm run build` and the BFF serving `web/dist`. Decoder tests use
+golden frames encoded by the Go gateway's protobuf package:
+`cd go_gateway && go run ./cmd/console_golden ../web/src/testdata/golden`.
+CI job `console-e2e` checks generated code/fixtures are current, runs
+typecheck, Vitest (decoders, book/tape stores, gaps, crossed and out-of-order
+updates, a 2,000-update replay timing test), the bundle budget and secret scan
+(built and served bundle), then brings up `make demo` and runs the Playwright
+smoke with trace/video artifacts.

@@ -7,6 +7,21 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Console UI v0.1a
+- Add `web/`: React/TypeScript console served by the BFF with demo-user login,
+  connection/phase status bar, auction banner, symbol list, 10-level depth
+  ladder, public trade tape with visible per-symbol gap counter, last price,
+  session volume, price chart and simulator controls; protobuf-es bindings
+  with `bigint` int64s; reconnect with backoff and re-subscribe.
+- Core sends the current `TradingSessionStatus` after each subscription
+  snapshot so late subscribers learn the phase.
+- Fix: the gateway sends every `MarketDataRequest` on one core connection;
+  spreading them over the pool registered several core subscribers and
+  duplicated every incremental and trade to clients.
+- CI: `console-e2e` job (generated code/golden frames current, typecheck,
+  Vitest, bundle budget, bundle secret scan, Playwright smoke on `make demo`)
+  required by `ci-success`.
+
 ### Local console BFF
 - Add the `demo_api` Go module: demo users/symbol rules, short-lived JWTs via
   the shared signer with per-IP issuance limits, same-origin byte-transparent
