@@ -190,29 +190,48 @@ func writeSubscription(frame []byte) error {
 	return writeVia(mdConn, frame)
 }
 
+// mdAwaiting holds replayed symbols the core has not yet answered with a
+// snapshot.
+var mdAwaiting sync.Map
+
 // replaySubscriptions re-sends one MarketDataRequest for every symbol that
-// still has a WebSocket subscriber.
-func replaySubscriptions(pc *pooledConn) error {
+// still has a WebSocket subscriber (only those still awaiting a snapshot when
+// pendingOnly) and returns how many it requested.
+func replaySubscriptions(pc *pooledConn, pendingOnly bool) (int, error) {
 	var symbols []string
 	clientSubs.Range(func(k, v any) bool {
+		s, ok := k.(string)
+		if !ok || s == "" {
+			return true
+		}
 		live := false
 		v.(*sync.Map).Range(func(_, _ any) bool { live = true; return false })
-		if s, ok := k.(string); ok && s != "" && live {
-			symbols = append(symbols, s)
+		if !live {
+			mdAwaiting.Delete(s)
+			return true
 		}
+		if _, waiting := mdAwaiting.Load(s); pendingOnly && !waiting {
+			return true
+		}
+		symbols = append(symbols, s)
 		return true
 	})
 	if len(symbols) == 0 {
-		return nil
+		return 0, nil
 	}
 	sort.Strings(symbols)
+	if !pendingOnly {
+		for _, s := range symbols {
+			mdAwaiting.Store(s, struct{}{})
+		}
+	}
 	raw, err := proto.Marshal(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{
 		MarketDataRequest: &protobuf.MarketDataRequest{Symbols: symbols},
 	}})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return pc.write(frameBytes(raw))
+	return len(symbols), pc.write(frameBytes(raw))
 }
 
 func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {

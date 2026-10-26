@@ -63,7 +63,8 @@ func readCoreFrame(r io.Reader) ([]byte, error) {
 }
 
 // When the core drops the market-data connection, the gateway must redial
-// and replay subscriptions without waiting for a client request.
+// and replay subscriptions without waiting for a client request, and keep
+// re-requesting a symbol until the core answers it with a snapshot.
 func TestMarketDataConnectionRestoresSubscriptions(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -85,7 +86,7 @@ func TestMarketDataConnectionRestoresSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pc.md = true
+	pc.md, pc.mdRetry = true, 20*time.Millisecond
 	mdConn = pc
 	subs := &sync.Map{}
 	subs.Store("client", true)
@@ -94,6 +95,7 @@ func TestMarketDataConnectionRestoresSubscriptions(t *testing.T) {
 		pc.shutdown()
 		_ = ln.Close()
 		clientSubs.Delete("RESTORE")
+		mdAwaiting.Delete("RESTORE")
 		coreAddr, mdConn = oldAddr, oldMD
 	})
 	go poolReader(pc)
@@ -111,17 +113,21 @@ func TestMarketDataConnectionRestoresSubscriptions(t *testing.T) {
 	_ = accept().Close()
 	second := accept()
 	_ = second.SetReadDeadline(time.Now().Add(5 * time.Second))
-	for {
+	for requests := 0; requests < 2; {
 		body, err := readCoreFrame(second)
 		if err != nil {
-			t.Fatalf("no replayed subscription: %v", err)
+			t.Fatalf("after %d replayed subscriptions: %v", requests, err)
 		}
 		var msg protobuf.FXPMessage
 		if proto.Unmarshal(body, &msg) == nil && msg.GetMarketDataRequest() != nil {
 			if got := msg.GetMarketDataRequest().Symbols; !slices.Contains(got, "RESTORE") {
 				t.Fatalf("replayed %v", got)
 			}
-			return
+			requests++
 		}
+	}
+	mdAwaiting.Delete("RESTORE") // as when the snapshot arrives
+	if n, err := replaySubscriptions(pc, true); n != 0 || err != nil {
+		t.Fatalf("answered symbol re-requested: n=%d err=%v", n, err)
 	}
 }

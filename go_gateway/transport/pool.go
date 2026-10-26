@@ -53,7 +53,9 @@ var errConnDown = errors.New("pool connection is down")
 // swaps conn and wakes that reader instead of starting another one.
 type pooledConn struct {
 	// md marks the dedicated market-data connection (see mdConn).
-	md      bool
+	md bool
+	// mdRetry overrides mdRetryInterval (tests).
+	mdRetry time.Duration
 	mu      sync.Mutex
 	changed *sync.Cond // signalled when conn is replaced or the pool shuts down
 	conn    net.Conn
@@ -150,20 +152,38 @@ func (p *pooledConn) redial() error {
 	return nil
 }
 
+// mdRetryInterval paces re-requests for replayed symbols the core has not
+// yet answered with a snapshot (a restarted core ignores symbols it has not
+// created yet).
+const mdRetryInterval = 2 * time.Second
+
 // restoreMarketData reconnects the market-data connection without waiting
-// for a write and replays every active subscription: the core forgets
-// subscribers whose connection closed, and synced clients never re-request.
+// for a write and replays every active subscription, then keeps re-requesting
+// symbols until each has produced a snapshot: the core forgets subscribers
+// whose connection closed, and synced clients never re-request.
 func restoreMarketData(pc *pooledConn) {
 	delay := 100 * time.Millisecond
+	retry := pc.mdRetry
+	if retry == 0 {
+		retry = mdRetryInterval
+	}
+	pendingOnly := false
 	for {
 		err := pc.redial()
 		if errors.Is(err, net.ErrClosed) {
 			return
 		}
 		if err == nil {
-			if err = replaySubscriptions(pc); err == nil {
-				log.Printf("🔄 Market-data subscriptions replayed on pool conn %d", pc.id)
-				return
+			var n int
+			if n, err = replaySubscriptions(pc, pendingOnly); err == nil {
+				if n == 0 {
+					log.Printf("🔄 Market-data subscriptions restored on pool conn %d", pc.id)
+					return
+				}
+				pendingOnly = true
+				delay = 100 * time.Millisecond
+				time.Sleep(retry)
+				continue
 			}
 		}
 		log.Printf("⚠️ Market-data restore on pool conn %d: %v", pc.id, err)
@@ -470,6 +490,7 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 
 	case *protobuf.FXPMessage_MarketDataSnapshot:
 		slog.Debug("MarketDataSnapshot received", "symbol", payload.MarketDataSnapshot.Symbol)
+		mdAwaiting.Delete(payload.MarketDataSnapshot.Symbol)
 		ForwardMarketData(payload.MarketDataSnapshot)
 
 	case *protobuf.FXPMessage_TradeCaptureReport:
