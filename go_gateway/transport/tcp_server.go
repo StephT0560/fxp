@@ -180,6 +180,15 @@ func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame 
 	slog.Debug("WebSocket order forwarded to FXP Core")
 }
 
+// writeSubscription sends on the dedicated market-data connection when the
+// pool has one (tests may install a pool without it).
+func writeSubscription(frame []byte) error {
+	if mdConn == nil {
+		return writeToCore(frame)
+	}
+	return writeVia(mdConn, frame)
+}
+
 func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
 	// Filter out empty symbol strings — Rust would spawn a ghost order book task for them
 	filtered := make([]string, 0, len(request.Symbols))
@@ -207,9 +216,7 @@ func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
 	frame := make([]byte, 4+len(raw))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
 	copy(frame[4:], raw)
-	pc := acquire()
-	defer release(pc)
-	if err := pc.write(frame); err != nil {
+	if err := writeSubscription(frame); err != nil {
 		log.Printf("❌ Failed to send MarketDataRequest to Rust Core: %v", err)
 		return
 	}

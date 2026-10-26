@@ -169,6 +169,10 @@ func (p *pooledConn) shutdown() {
 var (
 	corePool chan *pooledConn
 	poolOnce sync.Once
+	// mdConn carries every MarketDataRequest. The core registers the sending
+	// connection as the symbol's subscriber, so using one connection keeps the
+	// gateway a single subscriber and fan-out free of duplicates.
+	mdConn *pooledConn
 )
 
 // InitPool creates poolSize connections to FXP Core and starts one reader
@@ -184,6 +188,9 @@ func InitPool() error {
 			if err != nil {
 				initErr = err
 				return
+			}
+			if i == 0 {
+				mdConn = pc
 			}
 			corePool <- pc
 			go poolReader(pc)
@@ -247,6 +254,10 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string, owner string
 func writeToCore(frame []byte) error {
 	pc := acquire()
 	defer release(pc)
+	return writeVia(pc, frame)
+}
+
+func writeVia(pc *pooledConn, frame []byte) error {
 	if err := pc.write(frame); err != nil {
 		log.Printf("❌ Pool conn %d write failed: %v — reconnecting", pc.id, err)
 		if rerr := pc.reconnect(); rerr != nil {
