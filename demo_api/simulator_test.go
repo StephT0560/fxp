@@ -13,7 +13,7 @@ import (
 func TestLogRingBoundsAndRedaction(t *testing.T) {
 	s := simulator{cfg: config{secret: "sensitive-test-secret"}}
 	input := "safe\nsecret=sensitive-test-secret\neyJhbGciOiJIUzI1NiJ9.fake.signature\n" + strings.Repeat("x", 5000) + "\n"
-	s.capture(bytes.NewBufferString(input))
+	s.capture(bytes.NewBufferString(input), nil)
 	got := s.logs.text()
 	if strings.Contains(got, s.cfg.secret) || strings.Contains(got, "eyJ") || !strings.Contains(got, "safe") || !strings.Contains(got, "discarded") {
 		t.Fatal("sensitive output leaked")

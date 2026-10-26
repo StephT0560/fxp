@@ -16,6 +16,9 @@ import (
 
 const logCapacity = 32 * 1024
 
+// simReadyMarker is printed by simday once every participant is connected.
+const simReadyMarker = "All participants connected"
+
 type simParams struct {
 	Seed         int64 `json:"seed"`
 	Symbols      int   `json:"symbols"`
@@ -71,6 +74,8 @@ type simulator struct {
 	logs   logRing
 	cancel context.CancelFunc
 	done   chan struct{}
+	ready  chan struct{}
+	stdin  io.WriteCloser
 	closed bool
 }
 
@@ -122,6 +127,14 @@ func (s *simulator) start(p simParams) error {
 		return err
 	}
 	cmd.WaitDelay = 2 * time.Second
+	var stdin io.WriteCloser
+	if p.OpeningAuctionSec > 0 {
+		var err error
+		if stdin, err = cmd.StdinPipe(); err != nil {
+			cancel()
+			return fmt.Errorf("cannot attach simulator input")
+		}
+	}
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		cancel()
@@ -139,11 +152,14 @@ func (s *simulator) start(p simParams) error {
 	_ = writer.Close()
 	s.cancel = cancel
 	s.done = make(chan struct{})
+	s.ready = make(chan struct{})
+	s.stdin = stdin
+	ready := s.ready
 	s.state = simStatus{Running: true, Params: p, StartedAt: time.Now().UTC()}
 	done := s.done
 	go func() {
 		captured := make(chan struct{})
-		go func() { defer close(captured); defer func() { _ = reader.Close() }(); s.capture(reader) }()
+		go func() { defer close(captured); defer func() { _ = reader.Close() }(); s.capture(reader, ready) }()
 		err := cmd.Wait()
 		// Close any descendants holding the output pipe even if the leader exited.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -166,11 +182,15 @@ func (s *simulator) start(p simParams) error {
 // Lines are never logged by the BFF. Oversize lines are discarded, and a line
 // containing credential material or a JWT is redacted as a whole, including
 // secrets split across individual pipe writes.
-func (s *simulator) capture(reader io.Reader) {
+func (s *simulator) capture(reader io.Reader, ready chan struct{}) {
 	buf := make([]byte, 4096)
 	line := make([]byte, 0, 4096)
 	oversize := false
 	flush := func() {
+		if ready != nil && strings.Contains(string(line), simReadyMarker) {
+			close(ready)
+			ready = nil
+		}
 		if oversize {
 			s.logs.append([]byte("[oversize log line discarded]\n"))
 		} else if strings.Contains(string(line), s.cfg.secret) || strings.Contains(string(line), "eyJ") {
@@ -203,6 +223,39 @@ func (s *simulator) capture(reader io.Reader) {
 		}
 	}
 }
+
+// waitReady blocks until the running simulator has connected its participants.
+func (s *simulator) waitReady(ctx context.Context) error {
+	s.mu.Lock()
+	ready, done := s.ready, s.done
+	s.mu.Unlock()
+	if ready == nil {
+		return fmt.Errorf("simulator not running")
+	}
+	select {
+	case <-ready:
+		return nil
+	case <-done:
+		return fmt.Errorf("simulator exited before connecting")
+	case <-ctx.Done():
+		return fmt.Errorf("simulator did not connect in time")
+	}
+}
+
+// release lets a simulator that waits for the opening call start trading.
+func (s *simulator) release() error {
+	s.mu.Lock()
+	stdin := s.stdin
+	s.stdin = nil
+	s.mu.Unlock()
+	if stdin == nil {
+		return fmt.Errorf("simulator not waiting")
+	}
+	_, err := io.WriteString(stdin, "go\n")
+	_ = stdin.Close()
+	return err
+}
+
 func (s *simulator) stop(shutdown bool) {
 	s.mu.Lock()
 	if shutdown {

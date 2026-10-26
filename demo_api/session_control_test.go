@@ -76,7 +76,9 @@ func TestSimStartOpeningAuction(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
 	binary := filepath.Join(dir, "simulator")
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho \"$@\" > "+argsFile+"\nsleep 30\n"), 0700); err != nil {
+	released := filepath.Join(dir, "released")
+	script := "#!/bin/sh\necho \"$@\" > " + argsFile + "\necho 'All participants connected'\nread line\necho \"$line\" > " + released + "\nsleep 30\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a, server := testApp(t, func(c *config) { c.simBinary = binary })
@@ -92,7 +94,10 @@ func TestSimStartOpeningAuction(t *testing.T) {
 		t.Fatalf("open-call failure: %d %s", code, data)
 	}
 	if a.sim.status().Running {
-		t.Fatal("simulator started without the opening call")
+		t.Fatal("simulator kept running without the opening call")
+	}
+	if _, err := os.Stat(released); err == nil {
+		t.Fatal("simulator released without the opening call")
 	}
 	for _, bad := range []string{`"opening_auction_sec":3`, `"opening_auction_sec":60`, `"opening_auction_sec":121`} {
 		b := `{"seed":7,"symbols":2,"participants":4,"duration":60,` + bad + `}`
@@ -106,6 +111,9 @@ func TestSimStartOpeningAuction(t *testing.T) {
 	}
 	if len(calls) != 2 || calls[1] != 20 {
 		t.Fatalf("open calls %v", calls)
+	}
+	if got, _ := os.ReadFile(released); strings.TrimSpace(string(got)) != "go" {
+		t.Fatalf("simulator not released after the opening call: %q", got)
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {

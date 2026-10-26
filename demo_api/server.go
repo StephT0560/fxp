@@ -220,21 +220,27 @@ func (a *app) simStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if p.OpeningAuctionSec > 0 {
-		if a.sim.status().Running {
-			http.Error(w, "simulator already running", http.StatusConflict)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		if err := a.openCall(ctx, p.OpeningAuctionSec); err != nil {
-			http.Error(w, "opening auction unavailable: "+err.Error(), http.StatusBadGateway)
-			return
-		}
-	}
 	if err := a.sim.start(p); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
+	}
+	// The simulator connects first and waits; the core's call starts only
+	// then, so both auction clocks start together. Any failure stops the run.
+	if p.OpeningAuctionSec > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		err := a.sim.waitReady(ctx)
+		if err == nil {
+			err = a.openCall(ctx, p.OpeningAuctionSec)
+		}
+		if err == nil {
+			err = a.sim.release()
+		}
+		if err != nil {
+			a.sim.stop(false)
+			http.Error(w, "opening auction unavailable: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 	writeJSON(w, http.StatusAccepted, a.sim.status())
 }

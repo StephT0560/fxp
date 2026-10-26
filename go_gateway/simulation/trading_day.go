@@ -31,6 +31,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"flag"
@@ -1136,6 +1137,14 @@ func main() {
 		}
 	}
 	fmt.Printf("✅ All participants connected\n")
+	if *openingAuctionSec > 0 {
+		// The console BFF starts the core's opening call now that every
+		// participant is connected, then releases the run on stdin.
+		fmt.Printf("⏳ Waiting for the opening call\n")
+		if _, err := bufio.NewReader(os.Stdin).ReadString('\n'); err != nil {
+			log.Fatal("opening call not confirmed")
+		}
+	}
 
 	// Start participants
 	var wg sync.WaitGroup
