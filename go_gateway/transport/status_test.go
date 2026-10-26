@@ -69,3 +69,30 @@ func TestStatusOwnerBindingAndIndependentRoutes(t *testing.T) {
 		t.Fatal("status request hijacked live route")
 	}
 }
+
+func TestStatusResponseRebindsLiveOrdersToTheRequester(t *testing.T) {
+	srv, cli := routedPipes(t)
+	stale, _ := routedPipes(t)
+	live, done := namespacedOrderID("TRADER", "LIVE"), namespacedOrderID("TRADER", "DONE")
+	orderClientMap.Store(live, orderRoute{conn: stale, owner: "TRADER"})
+	orderClientMap.Store(done, orderRoute{conn: stale, owner: "TRADER"})
+	defer orderClientMap.Delete(live)
+	defer orderClientMap.Delete(done)
+	key, err := registerStatusRoute(srv, &protobuf.OrderStatusRequest{RequestId: "R", Sender: "TRADER"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go routeFromCore(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderStatusResponse{OrderStatusResponse: &protobuf.OrderStatusResponse{RequestId: key, Sender: "TRADER", Complete: true, Reports: []*protobuf.ExecutionReport{
+		{OrderId: live, OrderStatus: protobuf.OrderStatus_ORDER_NEW},
+		{OrderId: done, OrderStatus: protobuf.OrderStatus_ORDER_FILLED},
+	}}}})
+	if got := readFXP(t, cli).GetOrderStatusResponse(); got == nil || got.Reports[0].OrderId != "LIVE" {
+		t.Fatalf("response %+v", got)
+	}
+	if v, _ := orderClientMap.Load(live); v.(orderRoute).conn != srv {
+		t.Fatal("live order not rebound to the requester")
+	}
+	if v, _ := orderClientMap.Load(done); v.(orderRoute).conn != stale {
+		t.Fatal("terminal order route changed")
+	}
+}

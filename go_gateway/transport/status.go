@@ -43,7 +43,21 @@ func routeStatusResponse(msg *protobuf.FXPMessage) {
 	out := cloned.GetOrderStatusResponse()
 	out.RequestId = r.original
 	for _, report := range out.Reports {
+		// The requester adopts the owner's live orders, so a console that
+		// reconnected (new socket) receives their later reports.
+		if !terminalStatus(report.OrderStatus) && report.OrderId != "" {
+			orderClientMap.Store(report.OrderId, orderRoute{conn: r.conn, owner: r.owner})
+		}
 		stripOwner(report, r.owner)
 	}
 	_ = writeFXPMessage(r.conn, cloned)
+}
+
+func terminalStatus(s protobuf.OrderStatus) bool {
+	switch s {
+	case protobuf.OrderStatus_ORDER_FILLED, protobuf.OrderStatus_ORDER_CANCELED, protobuf.OrderStatus_ORDER_REJECTED,
+		protobuf.OrderStatus_ORDER_EXPIRED, protobuf.OrderStatus_ORDER_REPLACED:
+		return true
+	}
+	return false
 }

@@ -171,6 +171,27 @@ test("socket drop and page refresh rebuild the blotter from order status", async
   await expect(row(a, working).getByTestId("order-leaves")).toHaveText("10");
   await a.getByTestId("blotter-tab-log").click();
   await expect(a.getByTestId("exec-log")).toContainText("rebuilt from order status");
+  // Reports for orders entered before the refresh reach the new socket.
+  await clean(a);
+  await a.getByTestId("blotter-tab-completed").click();
+  await expect(row(a, working)).toHaveAttribute("data-state", "canceled");
+});
+
+test("rapid clicks submit one order", async ({ browser }) => {
+  const a = await login(browser, "alice");
+  await continuous(a);
+  await clean(a);
+  await a.getByTestId("ticket-side-buy").click();
+  await a.getByTestId("ticket-type").selectOption(LIMIT);
+  await a.getByTestId("ticket-tif").selectOption("2");
+  await a.getByTestId("ticket-qty").fill("7");
+  await a.getByTestId("ticket-price").fill("30.00");
+  await a.getByTestId("ticket-submit").dblclick();
+  await a.getByTestId("ticket-submit").click({ force: true });
+  await a.getByTestId("blotter-tab-working").click();
+  await expect(a.locator("[data-testid=order-row]")).toHaveCount(1);
+  await a.waitForTimeout(500);
+  await expect(a.locator("[data-testid=order-row]")).toHaveCount(1);
   await clean(a);
 });
 

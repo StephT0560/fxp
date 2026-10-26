@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { OrderSide, OrderType, SelfTradePrevention, TimeInForce } from "../gen/fxp_pb";
 import { activeClient } from "../lib/client";
 import { useOrders, useSession } from "../lib/stores";
@@ -48,6 +48,8 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
   });
   const [attempted, setAttempted] = useState(false);
   const [inFlight, setInFlight] = useState<string>();
+  // Synchronous guard: clicks that land before React re-renders are dropped.
+  const sending = useRef(false);
   const [lastId, setLastId] = useState<string>();
   const ticket: TicketInput = { ...t, symbol: rules.symbol };
   const { errors, draft } = validateTicket(ticket, rules);
@@ -56,8 +58,12 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
   // One order in flight at a time: released by the first report or a timeout.
   useEffect(() => {
     if (!inFlight) return;
-    if (row && row.orderId === inFlight && row.state !== "pending") setInFlight(undefined);
-    const timer = setTimeout(() => setInFlight(undefined), SUBMIT_TIMEOUT_MS);
+    const release = () => {
+      sending.current = false;
+      setInFlight(undefined);
+    };
+    if (row && row.orderId === inFlight && row.state !== "pending") release();
+    const timer = setTimeout(release, SUBMIT_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [inFlight, row, row?.state]);
 
@@ -65,8 +71,10 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
   const show = (f: Field) => (attempted || (f in t && (t as Record<string, unknown>)[f] !== "") ? errors[f] : undefined);
   const submit = () => {
     setAttempted(true);
-    if (!draft || inFlight) return;
+    if (!draft || inFlight || sending.current) return;
+    sending.current = true;
     const id = activeClient.current?.placeOrder(draft);
+    if (!id) sending.current = false;
     if (id) {
       setInFlight(id);
       setLastId(id);
