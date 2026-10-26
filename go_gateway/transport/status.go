@@ -43,10 +43,15 @@ func routeStatusResponse(msg *protobuf.FXPMessage) {
 	out := cloned.GetOrderStatusResponse()
 	out.RequestId = r.original
 	for _, report := range out.Reports {
-		// The requester adopts the owner's live orders, so a console that
-		// reconnected (new socket) receives their later reports.
+		// A reconnected console adopts live orders whose socket has closed.
+		// Routes on open sockets stay put, and a route already removed by a
+		// terminal report is never recreated from an older snapshot.
 		if !terminalStatus(report.OrderStatus) && report.OrderId != "" {
-			orderClientMap.Store(report.OrderId, orderRoute{conn: r.conn, owner: r.owner})
+			if v, ok := orderClientMap.Load(report.OrderId); ok {
+				if _, open := clientWriters.Load(v.(orderRoute).conn); !open {
+					orderClientMap.CompareAndSwap(report.OrderId, v, orderRoute{conn: r.conn, owner: r.owner})
+				}
+			}
 		}
 		stripOwner(report, r.owner)
 	}
