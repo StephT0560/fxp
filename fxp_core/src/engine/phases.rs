@@ -61,7 +61,14 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                     }) > cursor
                 })
                 .min();
-            let Some(seconds) = scheduled.map(|s| s.0).into_iter().chain(expiry).min() else {
+            let operator_open = self.call_until.map(|t| t.seconds);
+            let Some(seconds) = scheduled
+                .map(|s| s.0)
+                .into_iter()
+                .chain(expiry)
+                .chain(operator_open)
+                .min()
+            else {
                 break;
             };
             let at = Time { seconds, nanos: 0 };
@@ -71,7 +78,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
             let boundary = scheduled.filter(|s| s.0 == seconds).map(|s| s.1);
             let full = self.schedule.is_some_and(SessionSchedule::is_full);
             self.expire(at, !full && boundary == Some(Boundary::Close), &mut outputs);
-            if full && let Some(kind) = boundary {
+            if operator_open == Some(seconds) {
+                self.call_until = None;
+                self.session_boundary(Boundary::Open, at, &mut outputs);
+            } else if full && let Some(kind) = boundary {
                 self.session_boundary(kind, at, &mut outputs);
             }
             self.publish_indicative(at, &mut outputs);
@@ -83,7 +93,12 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         outputs
     }
 
-    fn set_phase(&mut self, phase: fxp::TradingPhase, at: Time, out: &mut Vec<Output<R>>) {
+    pub(super) fn set_phase(
+        &mut self,
+        phase: fxp::TradingPhase,
+        at: Time,
+        out: &mut Vec<Output<R>>,
+    ) {
         if self.phase == phase {
             return;
         }
@@ -403,20 +418,15 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                             } else {
                                 OrderType::Limit
                             };
-                            entry_reason(
-                                self.phase,
-                                self.schedule.is_some_and(SessionSchedule::is_full),
-                                ty,
-                                tif,
-                            )
-                            .map(str::to_string)
-                            .or_else(|| {
-                                if tif == TimeInForce::Gtd {
-                                    validate_expiry(&state.expire_date, self.clock.now()).err()
-                                } else {
-                                    None
-                                }
-                            })
+                            entry_reason(self.phase, self.auctions_enabled(), ty, tif)
+                                .map(str::to_string)
+                                .or_else(|| {
+                                    if tif == TimeInForce::Gtd {
+                                        validate_expiry(&state.expire_date, self.clock.now()).err()
+                                    } else {
+                                        None
+                                    }
+                                })
                         }
                     }
                 };
@@ -480,7 +490,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         display_ceiling,
                         ty,
                         tif,
-                        self.schedule.is_some_and(SessionSchedule::is_full),
+                        self.auctions_enabled(),
                         self.symbol_rules.lot_size,
                     )
                 });

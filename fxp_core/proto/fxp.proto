@@ -437,6 +437,8 @@ message FXPMessage {
     OrderMassCancelReport       order_mass_cancel_report = 19;
     OrderStatusRequest          order_status_request   = 20;
     OrderStatusResponse         order_status_response  = 21;
+    SessionControl              session_control        = 22;
+    SessionControlReport        session_control_report = 23;
   }
 }
 
@@ -456,4 +458,17 @@ message OrderStatusResponse {
   string reject_reason = 4; // same unknown result for missing/non-owned IDs
   bool complete = 5; // last batch; response batches carry at most 64 reports
   uint32 total_reports = 6;
+}
+// v2.5 (operator): every symbol enters an opening call now and uncrosses after
+// opening_call_seconds. The gateway forwards it only for operator tokens.
+message SessionControl {
+  string request_id = 1;
+  string sender = 2;
+  uint32 opening_call_seconds = 3; // 1..=3600
+}
+message SessionControlReport {
+  string request_id = 1;
+  string sender = 2;
+  uint32 symbols_affected = 3;
+  string reject_reason = 4; // non-empty when rejected
 }

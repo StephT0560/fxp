@@ -246,3 +246,39 @@ fn mass_cancel_is_journaled_and_replayed() {
     assert!(engine.stop_book.is_empty());
     assert!(engine.states.is_empty());
 }
+
+#[test]
+fn session_control_is_journaled_and_replayed() {
+    let dir = TestDir::new();
+    let mut journal = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+    let at = Time {
+        seconds: 1,
+        nanos: 0,
+    };
+    journal
+        .control(
+            "TEST",
+            at,
+            Input::SessionControl(fxp::SessionControl {
+                sender: "op".into(),
+                opening_call_seconds: 60,
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        journal.engines["TEST"].phase(),
+        fxp::TradingPhase::OpeningCall
+    );
+    drop(journal);
+    let replayed = Journal::open(&dir.log(), None, StpMode::None, 0).unwrap();
+    let engine = &replayed.engines["TEST"];
+    assert_eq!(engine.phase(), fxp::TradingPhase::OpeningCall);
+    assert_eq!(
+        engine.call_until,
+        Some(Time {
+            seconds: 61,
+            nanos: 0
+        })
+    );
+}

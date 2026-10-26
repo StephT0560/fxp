@@ -109,6 +109,7 @@ fn persisted_input(
             }),
             m.output_tx,
         ),
+        Some(SymbolMsg::SessionControl(m)) => journal.control(symbol, at, Input::SessionControl(m)),
     };
     result.unwrap_or_else(|error| persistence_failure(error))
 }
@@ -235,6 +236,7 @@ enum SymbolMsg {
     Cancel(CancelMsg),
     CancelReplace(CancelReplaceMsg),
     MassCancel(MassCancelMsg),
+    SessionControl(fxp::SessionControl),
 }
 
 // ── Symbol router ─────────────────────────────────────────────────────────────
@@ -562,6 +564,9 @@ async fn configured_order_book_task(
                         client_request_id: m.request.client_request_id,
                         reason: m.request.reason,
                     }),
+                    SymbolMsg::SessionControl(m) => {
+                        engine.begin_opening_call(m.opening_call_seconds)
+                    }
                 },
             }
         };
@@ -967,6 +972,9 @@ async fn handle_tcp_client_with_shutdown(
                 Some(fxp::fxp_message::Payload::OrderMassCancel(request)) => {
                     mass_cancel(&router, request, &output_tx).await;
                 }
+                Some(fxp::fxp_message::Payload::SessionControl(request)) => {
+                    session_control(&router, request, &output_tx).await;
+                }
 
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     tracing::debug!("MarketDataRequest for {:?}", request.symbols);
@@ -1217,6 +1225,53 @@ async fn mass_cancel(
             payload: Some(fxp::fxp_message::Payload::OrderMassCancelReport(report)),
         }));
     });
+}
+
+/// Operator session control: fans out to every symbol and reports how many
+/// were asked. Only the gateway forwards it, and only for operator tokens.
+async fn session_control(
+    router: &SymbolRouter,
+    request: fxp::SessionControl,
+    output_tx: &OutputTx,
+) {
+    let reject = if request.sender.is_empty() {
+        "session control requires a sender"
+    } else if !(1..=3600).contains(&request.opening_call_seconds) {
+        "opening_call_seconds must be 1..=3600"
+    } else {
+        ""
+    };
+    let mut symbols_affected = 0;
+    if reject.is_empty() {
+        // Configured symbols that have not traded yet join the call too.
+        let mut symbols = router.symbols().await;
+        symbols.extend(router.symbol_config.symbols().map(str::to_string));
+        symbols.sort();
+        symbols.dedup();
+        for symbol in symbols {
+            let Ok(tx) = router.get_or_admit(&symbol).await else {
+                continue;
+            };
+            if tx
+                .send(SymbolMsg::SessionControl(request.clone()))
+                .await
+                .is_ok()
+            {
+                symbols_affected += 1;
+            }
+        }
+    }
+    tracing::info!(sender = %request.sender, symbols_affected, reject, "session control");
+    output_tx.try_send_frame(frame_message(&fxp::FxpMessage {
+        payload: Some(fxp::fxp_message::Payload::SessionControlReport(
+            fxp::SessionControlReport {
+                request_id: request.request_id,
+                sender: request.sender,
+                symbols_affected,
+                reject_reason: reject.into(),
+            },
+        )),
+    }));
 }
 
 const ACCEPT_BACKOFF_MIN: std::time::Duration = std::time::Duration::from_millis(5);
@@ -2162,6 +2217,70 @@ mod report_tests {
         );
         assert!(report.reject_reason.is_empty());
         assert_quiet(&mut a_rx).await;
+    }
+
+    async fn next_session_report(rx: &mut Rx) -> fxp::SessionControlReport {
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("timed out waiting for session control report")
+                .expect("channel closed");
+            if let Some(fxp::fxp_message::Payload::SessionControlReport(r)) =
+                fxp::FxpMessage::decode(&frame[4..]).unwrap().payload
+            {
+                return r;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn session_control_opens_a_call_on_live_and_configured_symbols() {
+        let mut router = SymbolRouter::new(None);
+        router.symbol_config =
+            crate::symbol_config::SymbolConfig::parse("CFG,2,1,1,1,1000000").unwrap();
+        let (a, mut a_rx) = conn();
+        let live = router.get_or_admit("AAA").await.unwrap();
+        let request = fxp::SessionControl {
+            request_id: "SC".into(),
+            sender: "operator".into(),
+            opening_call_seconds: 60,
+        };
+        session_control(&router, request.clone(), &a).await;
+        let report = next_session_report(&mut a_rx).await;
+        assert_eq!(
+            (report.request_id.as_str(), report.symbols_affected),
+            ("SC", 2)
+        );
+        assert!(report.reject_reason.is_empty());
+        let configured = router
+            .get_existing("CFG")
+            .await
+            .expect("configured symbol admitted");
+        for (tx, symbol) in [(&live, "AAA"), (&configured, "CFG")] {
+            let order = fxp::NewOrderSingle {
+                symbol: symbol.into(),
+                time_in_force: fxp::TimeInForce::AtOpen as i32,
+                ..nos(symbol, "T", BUY, 100, 5, LIMIT, GTC)
+            };
+            send_order(tx, order, &a).await;
+            let ack = next(&mut a_rx).await;
+            assert_eq!(
+                ack.execution_type,
+                fxp::ExecutionType::ExecNew as i32,
+                "{symbol}: {}",
+                ack.reject_reason
+            );
+        }
+        for seconds in [0, 3601] {
+            let bad = fxp::SessionControl {
+                opening_call_seconds: seconds,
+                ..request.clone()
+            };
+            session_control(&router, bad, &a).await;
+            let report = next_session_report(&mut a_rx).await;
+            assert_eq!(report.symbols_affected, 0);
+            assert!(report.reject_reason.contains("1..=3600"));
+        }
     }
 
     #[tokio::test]

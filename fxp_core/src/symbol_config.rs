@@ -81,6 +81,9 @@ impl SymbolRules {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SymbolConfig(BTreeMap<String, SymbolRules>);
 impl SymbolConfig {
+    pub fn symbols(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
     pub fn get(&self, symbol: &str) -> SymbolRules {
         self.0.get(symbol).copied().unwrap_or_default()
     }
