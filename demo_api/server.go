@@ -220,7 +220,8 @@ func (a *app) simStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := a.sim.start(p); err != nil {
+	run, err := a.sim.startRun(p)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -229,15 +230,15 @@ func (a *app) simStart(w http.ResponseWriter, r *http.Request) {
 	if p.OpeningAuctionSec > 0 {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		err := a.sim.waitReady(ctx)
+		err := a.sim.waitReady(ctx, run)
 		if err == nil {
 			err = a.openCall(ctx, p.OpeningAuctionSec)
 		}
 		if err == nil {
-			err = a.sim.release()
+			err = a.sim.release(run)
 		}
 		if err != nil {
-			a.sim.stop(false)
+			a.sim.stopRun(run)
 			http.Error(w, "opening auction unavailable: "+err.Error(), http.StatusBadGateway)
 			return
 		}

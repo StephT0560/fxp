@@ -99,16 +99,28 @@ func (s *simulator) childEnv() []string {
 	return env
 }
 func (s *simulator) start(p simParams) error {
+	_, err := s.startRun(p)
+	return err
+}
+
+// startRun starts a run and returns its handle (the run's done channel), which
+// waitReady, release and stopRun use so a request only ever acts on its own run.
+func (s *simulator) startRun(p simParams) (run chan struct{}, err error) {
+	defer func() {
+		if err == nil {
+			run = s.done
+		}
+	}()
 	if err := p.validate(); err != nil {
-		return err
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return fmt.Errorf("server is shutting down")
+		return nil, fmt.Errorf("server is shutting down")
 	}
 	if s.state.Running {
-		return fmt.Errorf("simulator already running")
+		return nil, fmt.Errorf("simulator already running")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.Duration+30)*time.Second)
 	args := []string{"-seed", strconv.FormatInt(p.Seed, 10), "-symbols", strconv.Itoa(p.Symbols), "-participants", strconv.Itoa(p.Participants), "-duration", strconv.Itoa(p.Duration)}
@@ -132,13 +144,13 @@ func (s *simulator) start(p simParams) error {
 		var err error
 		if stdin, err = cmd.StdinPipe(); err != nil {
 			cancel()
-			return fmt.Errorf("cannot attach simulator input")
+			return nil, fmt.Errorf("cannot attach simulator input")
 		}
 	}
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		cancel()
-		return fmt.Errorf("cannot capture simulator output")
+		return nil, fmt.Errorf("cannot capture simulator output")
 	}
 	cmd.Stdout = writer
 	cmd.Stderr = writer
@@ -147,7 +159,7 @@ func (s *simulator) start(p simParams) error {
 		cancel()
 		_ = reader.Close()
 		_ = writer.Close()
-		return fmt.Errorf("cannot start configured simulator")
+		return nil, fmt.Errorf("cannot start configured simulator")
 	}
 	_ = writer.Close()
 	s.cancel = cancel
@@ -176,7 +188,7 @@ func (s *simulator) start(p simParams) error {
 		close(done)
 		s.mu.Unlock()
 	}()
-	return nil
+	return nil, nil
 }
 
 // Lines are never logged by the BFF. Oversize lines are discarded, and a line
@@ -225,12 +237,12 @@ func (s *simulator) capture(reader io.Reader, ready chan struct{}) {
 }
 
 // waitReady blocks until the running simulator has connected its participants.
-func (s *simulator) waitReady(ctx context.Context) error {
+func (s *simulator) waitReady(ctx context.Context, run chan struct{}) error {
 	s.mu.Lock()
 	ready, done := s.ready, s.done
 	s.mu.Unlock()
-	if ready == nil {
-		return fmt.Errorf("simulator not running")
+	if done != run || ready == nil {
+		return fmt.Errorf("simulator was restarted")
 	}
 	select {
 	case <-ready:
@@ -243,8 +255,12 @@ func (s *simulator) waitReady(ctx context.Context) error {
 }
 
 // release lets a simulator that waits for the opening call start trading.
-func (s *simulator) release() error {
+func (s *simulator) release(run chan struct{}) error {
 	s.mu.Lock()
+	if s.done != run {
+		s.mu.Unlock()
+		return fmt.Errorf("simulator was restarted")
+	}
 	stdin := s.stdin
 	s.stdin = nil
 	s.mu.Unlock()
@@ -254,6 +270,16 @@ func (s *simulator) release() error {
 	_, err := io.WriteString(stdin, "go\n")
 	_ = stdin.Close()
 	return err
+}
+
+// stopRun stops run if it is still the current one; a newer run is left alone.
+func (s *simulator) stopRun(run chan struct{}) {
+	s.mu.Lock()
+	current := s.done == run
+	s.mu.Unlock()
+	if current {
+		s.stop(false)
+	}
 }
 
 func (s *simulator) stop(shutdown bool) {
