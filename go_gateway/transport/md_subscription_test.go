@@ -131,3 +131,24 @@ func TestMarketDataConnectionRestoresSubscriptions(t *testing.T) {
 		t.Fatalf("answered symbol re-requested: n=%d err=%v", n, err)
 	}
 }
+
+// A departed client's subscriptions must not keep the restore loop retrying.
+func TestUnregisterClientWriterDropsSubscriptions(t *testing.T) {
+	client := new(int)
+	subs := &sync.Map{}
+	subs.Store(client, true)
+	clientSubs.Store("DEPARTED", subs)
+	mdAwaiting.Store("DEPARTED", struct{}{})
+	t.Cleanup(func() { clientSubs.Delete("DEPARTED"); mdAwaiting.Delete("DEPARTED") })
+
+	unregisterClientWriter(client)
+	if _, ok := subs.Load(client); ok {
+		t.Fatal("subscription survived unregister")
+	}
+	if n, err := replaySubscriptions(&pooledConn{}, true); n != 0 || err != nil {
+		t.Fatalf("departed symbol re-requested: n=%d err=%v", n, err)
+	}
+	if _, ok := mdAwaiting.Load("DEPARTED"); ok {
+		t.Fatal("departed symbol still awaiting a snapshot")
+	}
+}
