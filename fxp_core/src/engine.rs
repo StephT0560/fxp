@@ -375,12 +375,20 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         self.remember_status(&outputs);
         outputs
     }
+    /// Snapshot for the new subscriber, then the current phase: phases are
+    /// otherwise only published on transitions, which a late joiner misses.
     pub fn subscribe(&mut self, owner: R) -> Vec<Output<R>> {
         let mut outputs = self.tick();
-        outputs.push(Output::Snapshot(
-            owner,
-            snapshot(&self.book, self.clock.now()),
-        ));
+        let now = self.clock.now();
+        outputs.push(Output::Snapshot(owner, snapshot(&self.book, now)));
+        outputs.push(Output::TradingSessionStatus(fxp::TradingSessionStatus {
+            symbol: self.symbol.clone(),
+            phase: self.phase as i32,
+            timestamp: Some(Timestamp {
+                seconds: now.seconds,
+                nanos: now.nanos,
+            }),
+        }));
         outputs
     }
     pub fn tick(&mut self) -> Vec<Output<R>> {
@@ -1862,6 +1870,11 @@ mod tests {
                 nanos: 456_000_000
             })
         );
+        let Output::TradingSessionStatus(status) = &outputs[1] else {
+            panic!("expected current phase after snapshot");
+        };
+        assert_eq!(status.phase, fxp::TradingPhase::Continuous as i32);
+        assert_eq!(status.timestamp, snapshot.timestamp);
         let outputs = engine.cancel(CancelMsg {
             order_id: "missing".into(),
             sender: "T".into(),
