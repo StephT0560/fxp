@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT
+import { useState } from "react";
+
+export function SimControls() {
+  const [seed, setSeed] = useState(42);
+  const [duration, setDuration] = useState(60);
+  const [msg, setMsg] = useState<string>();
+  const call = async (path: string, body?: unknown) => {
+    setMsg(undefined);
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    setMsg(res.ok ? (path.endsWith("start") ? "simulator running" : "simulator stopped") : (await res.text()).trim());
+  };
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <label className="text-neutral-400">
+        seed{" "}
+        <input
+          data-testid="sim-seed"
+          type="number"
+          value={seed}
+          onChange={(e) => setSeed(Number(e.target.value))}
+          className="num w-20 rounded bg-neutral-800 px-1"
+        />
+      </label>
+      <label className="text-neutral-400">
+        secs{" "}
+        <input
+          type="number"
+          min={1}
+          max={300}
+          value={duration}
+          onChange={(e) => setDuration(Number(e.target.value))}
+          className="num w-16 rounded bg-neutral-800 px-1"
+        />
+      </label>
+      <button
+        data-testid="sim-start"
+        onClick={() => void call("/api/sim/start", { seed, symbols: 10, participants: 20, duration })}
+        className="rounded bg-blue-700 px-2 py-1 hover:bg-blue-600"
+      >
+        Start simulator
+      </button>
+      <button onClick={() => void call("/api/sim/stop")} className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700">
+        Stop
+      </button>
+      {msg && <span className="text-neutral-400" data-testid="sim-msg">{msg}</span>}
+    </div>
+  );
+}
