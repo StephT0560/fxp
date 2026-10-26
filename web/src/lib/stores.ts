@@ -9,7 +9,8 @@ import type {
 } from "../gen/fxp_pb";
 import { applyIncremental, applySnapshot, emptyBook, type Book } from "./book";
 import { schedule } from "./scheduler";
-import { applyTrade, emptyTape, type Tape } from "./tape";
+import { applyTrade, emptyTape, resyncTape, type Tape } from "./tape";
+
 
 export type ConnState = "idle" | "connecting" | "live" | "reconnecting" | "rejected";
 
@@ -80,6 +81,8 @@ export const useBook = create<BookState>((set, get) => {
     dropped: 0,
     onSnapshot: (s) => {
       applySnapshot(book(s.symbol), s);
+      const tape = useTape.getState().tapes.get(s.symbol);
+      if (tape) resyncTape(tape);
       schedule(bump);
     },
     onIncremental: (u) => {

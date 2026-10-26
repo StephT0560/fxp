@@ -21,7 +21,7 @@ function Stats({ symbol, scale }: { symbol: string; scale: number }) {
         last <span className="num text-neutral-100" data-testid="last-price">{formatPrice(t?.lastPrice, scale)}</span>
       </span>
       <span>
-        volume <span className="num text-neutral-100" data-testid="volume">{formatQty(t?.volume ?? 0n)}</span>
+        <span title="Volume of prints observed since this console connected">observed vol</span> <span className="num text-neutral-100" data-testid="volume">{formatQty(t?.volume ?? 0n)}</span>
       </span>
     </div>
   );

@@ -23,6 +23,7 @@ export interface Tape {
   /** Next expected per-symbol seq; 0n until the first print. */
   expected: bigint;
   lastPrice?: bigint;
+  /** Volume of prints observed since this console joined, not the session total. */
   volume: bigint;
   gapCount: number;
   missed: bigint;
@@ -39,6 +40,14 @@ export function timeMs(t: { seconds: bigint; nanos: number } | undefined): numbe
 }
 
 /**
+ * Forgets the sequence baseline after a fresh subscription (snapshot) so a
+ * reset or resumed stream is neither dropped as stale nor reported as a gap.
+ */
+export function resyncTape(tape: Tape): void {
+  tape.expected = 0n;
+}
+
+/**
  * Applies one public print. A seq above the expected one records a gap
  * (best-effort MD loss); a seq below it is a duplicate/out-of-order print
  * and is dropped so volume is never double counted.
@@ -52,8 +61,6 @@ export function applyTrade(tape: Tape, tr: TradeCaptureReport): boolean {
     tape.gapCount++;
     tape.missed += tr.seq - tape.expected;
     tape.lastGap = { from: tape.expected, to: tr.seq - 1n };
-  } else if (tape.expected === 0n && tr.seq > 1n) {
-    // Joined mid-session: earlier prints were never ours to miss.
   }
   tape.expected = tr.seq + 1n;
   tape.lastPrice = tr.tradePrice;

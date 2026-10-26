@@ -3,7 +3,7 @@ import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import { TradeCaptureReportSchema } from "../gen/fxp_pb";
 import { formatPrice } from "./format";
-import { applyTrade, emptyTape, TAPE_LIMIT } from "./tape";
+import { applyTrade, emptyTape, resyncTape, TAPE_LIMIT } from "./tape";
 
 const tr = (seq: bigint, price = 100n, qty = 1) =>
   create(TradeCaptureReportSchema, { symbol: "AAPL", seq, tradePrice: price, tradeQuantity: qty });
@@ -45,6 +45,27 @@ describe("tape", () => {
     expect(t.volume).toBe(4n);
     expect(t.stale).toBe(2);
     expect(t.gapCount).toBe(0);
+  });
+
+  it("accepts a restarted sequence after the resubscription snapshot", () => {
+    const t = emptyTape();
+    for (let i = 1n; i <= 900n; i++) applyTrade(t, tr(i));
+    resyncTape(t);
+    expect(applyTrade(t, tr(1n, 50n))).toBe(true);
+    expect(applyTrade(t, tr(2n, 51n))).toBe(true);
+    expect(t.lastPrice).toBe(51n);
+    expect(t.gapCount).toBe(0);
+  });
+
+  it("resync after a fresh snapshot is not a gap and not stale", () => {
+    const t = emptyTape();
+    applyTrade(t, tr(10n));
+    resyncTape(t);
+    expect(applyTrade(t, tr(25n))).toBe(true);
+    expect(t.gapCount).toBe(0);
+    resyncTape(t);
+    expect(applyTrade(t, tr(5n))).toBe(true);
+    expect(t.stale).toBe(0);
   });
 
   it("bounds the tape", () => {
