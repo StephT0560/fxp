@@ -1787,14 +1787,15 @@ mod report_tests {
                 match fxp::FxpMessage::decode(&frame[4..]).unwrap().payload {
                     Some(fxp::fxp_message::Payload::MarketDataSnapshot(_)) => "W",
                     Some(fxp::fxp_message::Payload::MarketDataIncremental(_)) => "X",
+                    Some(fxp::fxp_message::Payload::TradingSessionStatus(_)) => "h",
                     _ => "?",
                 },
             );
         }
         assert_eq!(
             kinds,
-            ["W", "W", "X"],
-            "one snapshot per request, one stream"
+            ["W", "h", "W", "h", "X"],
+            "one snapshot and current phase per request, one stream"
         );
     }
 

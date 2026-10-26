@@ -28,6 +28,7 @@ import (
 	"net"
 	"runtime"
 	"sync"
+	"time"
 
 	"go_gateway/coreauth"
 	"go_gateway/protobuf"
@@ -51,6 +52,10 @@ var errConnDown = errors.New("pool connection is down")
 // poolReader goroutine owns its read side for the pool's lifetime. reconnect
 // swaps conn and wakes that reader instead of starting another one.
 type pooledConn struct {
+	// md marks the dedicated market-data connection (see mdConn).
+	md bool
+	// mdRetry overrides mdRetryInterval (tests).
+	mdRetry time.Duration
 	mu      sync.Mutex
 	changed *sync.Cond // signalled when conn is replaced or the pool shuts down
 	conn    net.Conn
@@ -127,6 +132,66 @@ func (p *pooledConn) reconnect() error {
 	return nil
 }
 
+// redial dials only if the connection is down, so it never replaces a
+// connection a concurrent writer already re-established.
+func (p *pooledConn) redial() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return net.ErrClosed
+	}
+	if p.conn != nil {
+		return nil
+	}
+	c, err := dialCore(coreAddr)
+	if err != nil {
+		return err
+	}
+	p.conn = c
+	p.changed.Broadcast()
+	return nil
+}
+
+// mdRetryInterval paces re-requests for replayed symbols the core has not
+// yet answered with a snapshot (a restarted core ignores symbols it has not
+// created yet).
+const mdRetryInterval = 2 * time.Second
+
+// restoreMarketData reconnects the market-data connection without waiting
+// for a write and replays every active subscription, then keeps re-requesting
+// symbols until each has produced a snapshot: the core forgets subscribers
+// whose connection closed, and synced clients never re-request.
+func restoreMarketData(pc *pooledConn) {
+	delay := 100 * time.Millisecond
+	retry := pc.mdRetry
+	if retry == 0 {
+		retry = mdRetryInterval
+	}
+	pendingOnly := false
+	for {
+		err := pc.redial()
+		if errors.Is(err, net.ErrClosed) {
+			return
+		}
+		if err == nil {
+			var n int
+			if n, err = replaySubscriptions(pc, pendingOnly); err == nil {
+				if n == 0 {
+					log.Printf("🔄 Market-data subscriptions restored on pool conn %d", pc.id)
+					return
+				}
+				pendingOnly = true
+				delay = 100 * time.Millisecond
+				time.Sleep(retry)
+				continue
+			}
+		}
+		log.Printf("⚠️ Market-data restore on pool conn %d: %v", pc.id, err)
+		time.Sleep(delay)
+		delay = min(2*delay, 5*time.Second)
+	}
+}
+
 // nextConn blocks until a live connection is available, or returns nil once
 // the pool connection is shut down.
 func (p *pooledConn) nextConn() net.Conn {
@@ -169,6 +234,10 @@ func (p *pooledConn) shutdown() {
 var (
 	corePool chan *pooledConn
 	poolOnce sync.Once
+	// mdConn carries every MarketDataRequest. The core registers the sending
+	// connection as the symbol's subscriber, so using one connection keeps the
+	// gateway a single subscriber and fan-out free of duplicates.
+	mdConn *pooledConn
 )
 
 // InitPool creates poolSize connections to FXP Core and starts one reader
@@ -184,6 +253,10 @@ func InitPool() error {
 			if err != nil {
 				initErr = err
 				return
+			}
+			if i == 0 {
+				pc.md = true
+				mdConn = pc
 			}
 			corePool <- pc
 			go poolReader(pc)
@@ -247,6 +320,10 @@ func SendFramedToCore(clientConn any, frame []byte, orderID string, owner string
 func writeToCore(frame []byte) error {
 	pc := acquire()
 	defer release(pc)
+	return writeVia(pc, frame)
+}
+
+func writeVia(pc *pooledConn, frame []byte) error {
 	if err := pc.write(frame); err != nil {
 		log.Printf("❌ Pool conn %d write failed: %v — reconnecting", pc.id, err)
 		if rerr := pc.reconnect(); rerr != nil {
@@ -284,6 +361,9 @@ func poolReader(pc *pooledConn) {
 		err := readCoreFrames(c)
 		log.Printf("⚠️ Pool reader %d: %v — waiting for reconnect", pc.id, err)
 		pc.markDead(c)
+		if pc.md {
+			go restoreMarketData(pc)
+		}
 	}
 }
 
@@ -410,6 +490,7 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 
 	case *protobuf.FXPMessage_MarketDataSnapshot:
 		slog.Debug("MarketDataSnapshot received", "symbol", payload.MarketDataSnapshot.Symbol)
+		mdAwaiting.Delete(payload.MarketDataSnapshot.Symbol)
 		ForwardMarketData(payload.MarketDataSnapshot)
 
 	case *protobuf.FXPMessage_TradeCaptureReport:

@@ -145,7 +145,7 @@ fn test_full_order_lifecycle() {
     assert!(fills[0].sell_fully_filled);
     assert_eq!(fills[0].buy_order_id, "B1");
     assert_eq!(fills[0].sell_order_id, "S1");
-    assert_eq!(updates.len(), 1);
+    assert_eq!(updates.len(), 2, "both resting levels shrink");
     broadcaster.broadcast_snapshot(&book.get_market_snapshot());
 }
 

@@ -163,7 +163,7 @@ fn cancel_oldest_cancels_resting_self_order_and_keeps_matching_others() {
     assert!(f.iter().any(|r| r.order_id == "B2"));
     assert_eq!(resting(&e, "B1"), None);
     assert_eq!(resting(&e, "S"), Some(1));
-    assert_eq!(md_trades(&out), 1);
+    assert_eq!(md_trades(&out), 2, "both levels shrink");
 }
 
 #[test]

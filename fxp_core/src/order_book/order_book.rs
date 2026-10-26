@@ -330,7 +330,7 @@ impl OrderBook {
             return Err(OrderReject::QuantityNotAboveFilled);
         };
 
-        self.cancel_order(orig_id);
+        let removed = self.cancel_order(orig_id);
         let replacement = Order {
             order_id: new_id.to_string(),
             price: if new_price > 0 { new_price } else { orig.price },
@@ -341,7 +341,12 @@ impl OrderBook {
             client_order_id: client_order_id.to_string(),
             ..orig
         };
-        let inc = self.add_order(replacement.clone());
+        // One update carries both legs, so level books stay in step with the
+        // order book (the original's visible quantity leaves its level).
+        let mut inc = self.add_order(replacement.clone());
+        if let Some(removed) = removed {
+            inc.changes.splice(0..0, removed.changes);
+        }
         if filled > 0 {
             self.cum_filled.insert(new_id.to_string(), filled);
         }

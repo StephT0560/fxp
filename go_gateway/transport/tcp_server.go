@@ -10,6 +10,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -180,6 +181,59 @@ func ForwardToTCPServer(wsConn *websocket.Conn, msg *protobuf.FXPMessage, frame 
 	slog.Debug("WebSocket order forwarded to FXP Core")
 }
 
+// writeSubscription sends on the dedicated market-data connection when the
+// pool has one (tests may install a pool without it).
+func writeSubscription(frame []byte) error {
+	if mdConn == nil {
+		return writeToCore(frame)
+	}
+	return writeVia(mdConn, frame)
+}
+
+// mdAwaiting holds replayed symbols the core has not yet answered with a
+// snapshot.
+var mdAwaiting sync.Map
+
+// replaySubscriptions re-sends one MarketDataRequest for every symbol that
+// still has a WebSocket subscriber (only those still awaiting a snapshot when
+// pendingOnly) and returns how many it requested.
+func replaySubscriptions(pc *pooledConn, pendingOnly bool) (int, error) {
+	var symbols []string
+	clientSubs.Range(func(k, v any) bool {
+		s, ok := k.(string)
+		if !ok || s == "" {
+			return true
+		}
+		live := false
+		v.(*sync.Map).Range(func(_, _ any) bool { live = true; return false })
+		if !live {
+			mdAwaiting.Delete(s)
+			return true
+		}
+		if _, waiting := mdAwaiting.Load(s); pendingOnly && !waiting {
+			return true
+		}
+		symbols = append(symbols, s)
+		return true
+	})
+	if len(symbols) == 0 {
+		return 0, nil
+	}
+	sort.Strings(symbols)
+	if !pendingOnly {
+		for _, s := range symbols {
+			mdAwaiting.Store(s, struct{}{})
+		}
+	}
+	raw, err := proto.Marshal(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{
+		MarketDataRequest: &protobuf.MarketDataRequest{Symbols: symbols},
+	}})
+	if err != nil {
+		return 0, err
+	}
+	return len(symbols), pc.write(frameBytes(raw))
+}
+
 func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
 	// Filter out empty symbol strings — Rust would spawn a ghost order book task for them
 	filtered := make([]string, 0, len(request.Symbols))
@@ -207,9 +261,7 @@ func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
 	frame := make([]byte, 4+len(raw))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
 	copy(frame[4:], raw)
-	pc := acquire()
-	defer release(pc)
-	if err := pc.write(frame); err != nil {
+	if err := writeSubscription(frame); err != nil {
 		log.Printf("❌ Failed to send MarketDataRequest to Rust Core: %v", err)
 		return
 	}

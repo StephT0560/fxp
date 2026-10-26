@@ -375,12 +375,23 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         self.remember_status(&outputs);
         outputs
     }
+    /// Snapshot for the new subscriber, then the current phase and (in a call)
+    /// the indicative: both are otherwise only published on change.
     pub fn subscribe(&mut self, owner: R) -> Vec<Output<R>> {
         let mut outputs = self.tick();
-        outputs.push(Output::Snapshot(
-            owner,
-            snapshot(&self.book, self.clock.now()),
-        ));
+        let now = self.clock.now();
+        outputs.push(Output::Snapshot(owner, snapshot(&self.book, now)));
+        outputs.push(Output::TradingSessionStatus(fxp::TradingSessionStatus {
+            symbol: self.symbol.clone(),
+            phase: self.phase as i32,
+            timestamp: Some(Timestamp {
+                seconds: now.seconds,
+                nanos: now.nanos,
+            }),
+        }));
+        // Re-publish the current indicative so a late joiner sees the call.
+        self.last_indicative = None;
+        self.publish_indicative(now, &mut outputs);
         outputs
     }
     pub fn tick(&mut self) -> Vec<Output<R>> {
@@ -646,18 +657,6 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 output_tx: cr_msg.output_tx.clone(),
                             };
 
-                            if let Some(orig) = original.as_ref()
-                                && (orig.display_quantity > 0 || replacement.display_quantity > 0)
-                            {
-                                let md = book.generate_incremental_update(
-                                    MarketUpdateType::CancelOrder,
-                                    orig.price,
-                                    original_visible,
-                                    orig.side,
-                                );
-                                outputs.push(Output::MarketData(build_md_update(&md, &ts)));
-                            }
-
                             send_replace_reports(
                                 ids,
                                 &mut outputs,
@@ -677,7 +676,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 let md = book.generate_incremental_update(
                                     MarketUpdateType::CancelOrder,
                                     orig.price,
-                                    orig.quantity,
+                                    original_visible,
                                     orig.side,
                                 );
                                 outputs.push(Output::MarketData(build_md_update(&md, &ts)));
@@ -1825,7 +1824,7 @@ mod tests {
         assert_eq!(engine.book.order_lookup["B"].timestamp, 123_456);
 
         let outputs = engine.new_order(order("S", fxp::OrderSide::Sell), 2);
-        assert_eq!(outputs.len(), 6);
+        assert_eq!(outputs.len(), 7);
         let ack = report(&outputs[0], 2, "X2");
         assert_eq!(ack.execution_type, fxp::ExecutionType::ExecNew as i32);
         for (output, owner, id) in [(&outputs[1], 1, "X3"), (&outputs[2], 2, "X4")] {
@@ -1862,6 +1861,11 @@ mod tests {
                 nanos: 456_000_000
             })
         );
+        let Output::TradingSessionStatus(status) = &outputs[1] else {
+            panic!("expected current phase after snapshot");
+        };
+        assert_eq!(status.phase, fxp::TradingPhase::Continuous as i32);
+        assert_eq!(status.timestamp, snapshot.timestamp);
         let outputs = engine.cancel(CancelMsg {
             order_id: "missing".into(),
             sender: "T".into(),
