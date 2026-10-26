@@ -25,7 +25,7 @@ export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
   const crossed = isCrossed(bids, asks);
   const spread = bids[0] && asks[0] ? asks[0].price - bids[0].price : undefined;
   return (
-    <section className="flex w-72 shrink-0 flex-col border-r border-neutral-800" data-testid="ladder">
+    <section className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-neutral-800" data-testid="ladder">
       <div className="flex justify-between border-b border-neutral-800 px-3 py-1 text-xs text-neutral-400">
         <span>Depth · {symbol}</span>
         {!book?.synced && <span className="text-amber-400" data-testid="book-unsynced">awaiting snapshot</span>}

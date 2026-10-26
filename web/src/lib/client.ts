@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: MIT
-import type { FXPMessage } from "../gen/fxp_pb";
-import { decodeFrame, logonFrame, subscribeFrame } from "./proto";
-import { useBook, useSession, useTape } from "./stores";
+import type { ExecutionReport, FXPMessage } from "../gen/fxp_pb";
+import { newOrderId, trackCancel, trackNew, trackReplace, type OrderRow } from "./orders";
+import {
+  cancelFrame,
+  decodeFrame,
+  logonFrame,
+  massCancelFrame,
+  newOrderFrame,
+  replaceFrame,
+  statusRequestFrame,
+  subscribeFrame,
+  type ReplaceChange,
+} from "./proto";
+import { useBook, useOrders, useSession, useTape } from "./stores";
+import type { OrderDraft } from "./validate";
 
 export interface ClientOptions {
   user: string;
@@ -55,6 +67,15 @@ export function dispatch(msg: FXPMessage): void {
     case "auctionInfo":
       useSession.getState().onAuction(p.value);
       break;
+    case "executionReport":
+      useOrders.getState().onReport(p.value);
+      break;
+    case "orderMassCancelReport":
+      useOrders.getState().onMassCancel(p.value);
+      break;
+    case "errorMessage":
+      useOrders.getState().note("reject", `gateway error: ${p.value.errorMessage}`);
+      break;
     default:
       break;
   }
@@ -72,6 +93,9 @@ export class ConsoleClient {
   private retryTimer?: ReturnType<typeof setTimeout>;
   private resubTimer?: ReturnType<typeof setInterval>;
   private readonly opts: Required<ClientOptions>;
+  private loggedOn = false;
+  private statusRequest?: string;
+  private statusReports: ExecutionReport[] = [];
 
   constructor(opts: ClientOptions) {
     this.opts = {
@@ -130,21 +154,91 @@ export class ConsoleClient {
           return;
         }
         loggedOn = true;
+        this.loggedOn = true;
         this.attempt = 0;
         useSession.getState().setConn("live");
         this.subscribe(ws, this.opts.symbols());
+        // Rebuild the blotter from the core rather than trusting local state.
+        this.requestStatus();
         clearInterval(this.resubTimer);
         this.resubTimer = setInterval(() => this.resubscribeUnsynced(ws), this.opts.resubscribeMs);
         return;
       }
-      if (loggedOn) dispatch(msg);
+      if (!loggedOn) return;
+      if (msg.payload.case === "orderStatusResponse") this.onStatusResponse(msg.payload.value);
+      else dispatch(msg);
     };
     ws.onclose = (ev: CloseEvent) => {
       if (this.ws !== ws) return;
       clearInterval(this.resubTimer);
+      this.loggedOn = false;
       useBook.getState().unsync();
+      useOrders.getState().markStale();
       this.retry(ev.reason || `connection closed (${ev.code})`);
     };
+  }
+
+  get ready(): boolean {
+    return this.loggedOn && this.ws !== undefined && this.ws.readyState === this.ws.OPEN;
+  }
+
+  private send(frame: Uint8Array): boolean {
+    if (!this.ready) return false;
+    this.ws!.send(frame);
+    return true;
+  }
+
+  /** Sends a validated order; returns its client order id, or undefined when offline. */
+  placeOrder(d: OrderDraft): string | undefined {
+    if (!this.ready) return undefined;
+    const id = newOrderId();
+    trackNew(useOrders.getState().blotter, id, d);
+    useOrders.getState().touch();
+    this.send(newOrderFrame(id, d));
+    return id;
+  }
+
+  cancel(row: OrderRow): boolean {
+    if (!this.ready) return false;
+    trackCancel(useOrders.getState().blotter, row.orderId);
+    useOrders.getState().touch();
+    return this.send(cancelFrame(row.orderId, row.symbol, newOrderId()));
+  }
+
+  replace(row: OrderRow, change: ReplaceChange): string | undefined {
+    if (!this.ready) return undefined;
+    const id = newOrderId();
+    trackReplace(useOrders.getState().blotter, row.orderId, id, change);
+    useOrders.getState().touch();
+    this.send(replaceFrame(row.orderId, id, row.symbol, change));
+    return id;
+  }
+
+  /** Mass cancel of this user's orders, all symbols or one. */
+  cancelAll(symbol?: string): boolean {
+    if (!this.ready) return false;
+    useOrders.getState().note("request", `cancel-all (${symbol ?? "all symbols"})`);
+    return this.send(massCancelFrame(newOrderId(), symbol));
+  }
+
+  requestStatus(): void {
+    this.statusRequest = newOrderId();
+    this.statusReports = [];
+    this.send(statusRequestFrame(this.statusRequest));
+  }
+
+  private onStatusResponse(r: { requestId: string; reports: ExecutionReport[]; complete: boolean; rejectReason: string }): void {
+    if (r.requestId !== this.statusRequest) return;
+    if (r.rejectReason) {
+      this.statusRequest = undefined;
+      useOrders.getState().note("reject", `order status rejected — ${r.rejectReason}`);
+      return;
+    }
+    this.statusReports.push(...r.reports);
+    if (!r.complete) return;
+    this.statusRequest = undefined;
+    useOrders.getState().onStatus(this.statusReports);
+    this.statusReports = [];
   }
 
   private subscribe(ws: WebSocket, symbols: string[]): void {
@@ -167,3 +261,6 @@ export class ConsoleClient {
     this.retryTimer = setTimeout(() => void this.connect(), delay);
   }
 }
+
+/** The signed-in session's client, for components that send orders. */
+export const activeClient: { current?: ConsoleClient } = {};
