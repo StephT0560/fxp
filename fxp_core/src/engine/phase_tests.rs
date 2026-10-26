@@ -687,3 +687,25 @@ fn opening_uncross_elects_stops_then_cascades_in_continuous_phase() {
             nanos: 0
         })));
 }
+
+#[test]
+fn late_subscriber_gets_phase_and_unchanged_indicative() {
+    let (mut e, _clock) = setup(11);
+    e.new_order(buy("B", fxp::TimeInForce::Gtc, 5, 101), 7);
+    let first = infos(&e.new_order(sell("S", fxp::TimeInForce::Gtc, 3, 100), 8))
+        .last()
+        .copied()
+        .cloned()
+        .expect("indicative while in call");
+    let outputs = e.subscribe(9);
+    let late = infos(&outputs);
+    assert_eq!(
+        late.len(),
+        1,
+        "current indicative re-published to the joiner"
+    );
+    assert_eq!(late[0].indicative_price, first.indicative_price);
+    assert_eq!(late[0].indicative_volume, 3);
+    assert!(outputs.iter().any(|o| matches!(o,
+        Output::TradingSessionStatus(s) if s.phase == e.phase() as i32)));
+}

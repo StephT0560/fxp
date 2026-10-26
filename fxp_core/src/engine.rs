@@ -375,8 +375,8 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         self.remember_status(&outputs);
         outputs
     }
-    /// Snapshot for the new subscriber, then the current phase: phases are
-    /// otherwise only published on transitions, which a late joiner misses.
+    /// Snapshot for the new subscriber, then the current phase and (in a call)
+    /// the indicative: both are otherwise only published on change.
     pub fn subscribe(&mut self, owner: R) -> Vec<Output<R>> {
         let mut outputs = self.tick();
         let now = self.clock.now();
@@ -389,6 +389,9 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                 nanos: now.nanos,
             }),
         }));
+        // Re-publish the current indicative so a late joiner sees the call.
+        self.last_indicative = None;
+        self.publish_indicative(now, &mut outputs);
         outputs
     }
     pub fn tick(&mut self) -> Vec<Output<R>> {
