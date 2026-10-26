@@ -275,11 +275,14 @@ func (s *simulator) release(run chan struct{}) error {
 // stopRun stops run if it is still the current one; a newer run is left alone.
 func (s *simulator) stopRun(run chan struct{}) {
 	s.mu.Lock()
-	current := s.done == run
-	s.mu.Unlock()
-	if current {
-		s.stop(false)
+	cancel := s.cancel
+	if s.done != run || cancel == nil {
+		s.mu.Unlock()
+		return
 	}
+	cancel()
+	s.mu.Unlock()
+	<-run
 }
 
 func (s *simulator) stop(shutdown bool) {
