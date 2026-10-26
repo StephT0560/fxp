@@ -10,6 +10,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -187,6 +188,31 @@ func writeSubscription(frame []byte) error {
 		return writeToCore(frame)
 	}
 	return writeVia(mdConn, frame)
+}
+
+// replaySubscriptions re-sends one MarketDataRequest for every symbol that
+// still has a WebSocket subscriber.
+func replaySubscriptions(pc *pooledConn) error {
+	var symbols []string
+	clientSubs.Range(func(k, v any) bool {
+		live := false
+		v.(*sync.Map).Range(func(_, _ any) bool { live = true; return false })
+		if s, ok := k.(string); ok && s != "" && live {
+			symbols = append(symbols, s)
+		}
+		return true
+	})
+	if len(symbols) == 0 {
+		return nil
+	}
+	sort.Strings(symbols)
+	raw, err := proto.Marshal(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{
+		MarketDataRequest: &protobuf.MarketDataRequest{Symbols: symbols},
+	}})
+	if err != nil {
+		return err
+	}
+	return pc.write(frameBytes(raw))
 }
 
 func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {

@@ -5,10 +5,15 @@ package transport
 import (
 	"io"
 	"net"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"go_gateway/protobuf"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // Each core connection that sends a MarketDataRequest becomes a separate core
@@ -55,4 +60,68 @@ func readCoreFrame(r io.Reader) ([]byte, error) {
 	body := make([]byte, n)
 	_, err := io.ReadFull(r, body)
 	return body, err
+}
+
+// When the core drops the market-data connection, the gateway must redial
+// and replay subscriptions without waiting for a client request.
+func TestMarketDataConnectionRestoresSubscriptions(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conns := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conns <- c
+		}
+	}()
+	oldAddr, oldMD := coreAddr, mdConn
+	coreAddr = ln.Addr().String()
+	pc, err := newPooledConn(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc.md = true
+	mdConn = pc
+	subs := &sync.Map{}
+	subs.Store("client", true)
+	clientSubs.Store("RESTORE", subs)
+	t.Cleanup(func() {
+		pc.shutdown()
+		_ = ln.Close()
+		clientSubs.Delete("RESTORE")
+		coreAddr, mdConn = oldAddr, oldMD
+	})
+	go poolReader(pc)
+
+	accept := func() net.Conn {
+		select {
+		case c := <-conns:
+			t.Cleanup(func() { _ = c.Close() })
+			return c
+		case <-time.After(5 * time.Second):
+			t.Fatal("no core connection")
+			return nil
+		}
+	}
+	_ = accept().Close()
+	second := accept()
+	_ = second.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		body, err := readCoreFrame(second)
+		if err != nil {
+			t.Fatalf("no replayed subscription: %v", err)
+		}
+		var msg protobuf.FXPMessage
+		if proto.Unmarshal(body, &msg) == nil && msg.GetMarketDataRequest() != nil {
+			if got := msg.GetMarketDataRequest().Symbols; !slices.Contains(got, "RESTORE") {
+				t.Fatalf("replayed %v", got)
+			}
+			return
+		}
+	}
 }

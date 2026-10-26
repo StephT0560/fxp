@@ -28,6 +28,7 @@ import (
 	"net"
 	"runtime"
 	"sync"
+	"time"
 
 	"go_gateway/coreauth"
 	"go_gateway/protobuf"
@@ -51,6 +52,8 @@ var errConnDown = errors.New("pool connection is down")
 // poolReader goroutine owns its read side for the pool's lifetime. reconnect
 // swaps conn and wakes that reader instead of starting another one.
 type pooledConn struct {
+	// md marks the dedicated market-data connection (see mdConn).
+	md      bool
 	mu      sync.Mutex
 	changed *sync.Cond // signalled when conn is replaced or the pool shuts down
 	conn    net.Conn
@@ -127,6 +130,48 @@ func (p *pooledConn) reconnect() error {
 	return nil
 }
 
+// redial dials only if the connection is down, so it never replaces a
+// connection a concurrent writer already re-established.
+func (p *pooledConn) redial() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return net.ErrClosed
+	}
+	if p.conn != nil {
+		return nil
+	}
+	c, err := dialCore(coreAddr)
+	if err != nil {
+		return err
+	}
+	p.conn = c
+	p.changed.Broadcast()
+	return nil
+}
+
+// restoreMarketData reconnects the market-data connection without waiting
+// for a write and replays every active subscription: the core forgets
+// subscribers whose connection closed, and synced clients never re-request.
+func restoreMarketData(pc *pooledConn) {
+	delay := 100 * time.Millisecond
+	for {
+		err := pc.redial()
+		if errors.Is(err, net.ErrClosed) {
+			return
+		}
+		if err == nil {
+			if err = replaySubscriptions(pc); err == nil {
+				log.Printf("🔄 Market-data subscriptions replayed on pool conn %d", pc.id)
+				return
+			}
+		}
+		log.Printf("⚠️ Market-data restore on pool conn %d: %v", pc.id, err)
+		time.Sleep(delay)
+		delay = min(2*delay, 5*time.Second)
+	}
+}
+
 // nextConn blocks until a live connection is available, or returns nil once
 // the pool connection is shut down.
 func (p *pooledConn) nextConn() net.Conn {
@@ -190,6 +235,7 @@ func InitPool() error {
 				return
 			}
 			if i == 0 {
+				pc.md = true
 				mdConn = pc
 			}
 			corePool <- pc
@@ -295,6 +341,9 @@ func poolReader(pc *pooledConn) {
 		err := readCoreFrames(c)
 		log.Printf("⚠️ Pool reader %d: %v — waiting for reconnect", pc.id, err)
 		pc.markDead(c)
+		if pc.md {
+			go restoreMarketData(pc)
+		}
 	}
 }
 
