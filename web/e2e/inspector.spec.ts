@@ -51,6 +51,9 @@ for (const body of [
 test("WS frames, redacted Logon, filters, hex and authoritative FIX comparison", async ({
   page,
 }) => {
+  // The preceding smoke test leaves the simulator running. Stop it before
+  // login so the bounded 200-frame history retains the handshake we inspect.
+  await page.request.post("/api/sim/stop");
   let jwt = "";
   page.on("response", async (res) => {
     if (res.url().endsWith("/api/token") && res.ok())
