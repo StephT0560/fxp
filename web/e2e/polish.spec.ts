@@ -83,6 +83,7 @@ test("Quick demo uses alice, waits for live and shares simulator defaults", asyn
 test("an uninitialized market explains how to get data", async ({ page }) => {
   await page.routeWebSocket(/\/ws$/, () => { /* Deliberately no snapshot or print. */ });
   await page.goto("/"); await page.getByTestId("login-alice").click();
+  await expect(page.getByTestId("chart")).toContainText("No trades yet");
   for (const panel of ["ladder", "tape"]) await expect(page.getByTestId(panel)).toContainText("No market data yet. Start the simulator or use Quick demo.");
 });
 

@@ -99,8 +99,25 @@ test("WS frames, redacted Logon, filters, hex and authoritative FIX comparison",
   await expect(page.getByRole("status")).toContainText("8=FIX.4.4|");
   await expect(page.getByRole("status")).toContainText("55=DEMO|");
   await expect(page.getByRole("status")).toContainText(
-    /FXP \d+ bytes · FIX 4.4 \d+ bytes/,
+    /FXP \d+ B/,
   );
+  await expect(page.getByRole("heading", { name: /FIX 4.4 \d+ B/ })).toBeVisible();
+  await expect(page.getByRole("table", { name: "FIX preview fields" })).toContainText("BeginString");
+  await expect(page.getByTestId("frame-table").locator('[aria-selected="true"]')).toHaveCount(1);
+  await expect(page.getByRole("status")).toContainText("No protocol speed ranking");
+  const fxpCard = page.getByRole("heading", { name: /^FXP \d+ B$/ }).locator("..");
+  const fixCard = page.getByRole("heading", { name: /^FIX 4.4 \d+ B$/ }).locator("..");
+  const wideFXP = await fxpCard.boundingBox();
+  const wideFIX = await fixCard.boundingBox();
+  expect(wideFXP!.y).toBe(wideFIX!.y);
+  expect(wideFXP!.x).toBeLessThan(wideFIX!.x);
+  await page.setViewportSize({ width: 860, height: 1080 });
+  await expect(async () => {
+    const a = await fxpCard.boundingBox();
+    const b = await fixCard.boundingBox();
+    expect(a!.x).toBe(b!.x);
+    expect(a!.y + a!.height).toBeLessThan(b!.y);
+  }).toPass();
   await page
     .getByLabel("Frame direction", { exact: true })
     .selectOption("received");

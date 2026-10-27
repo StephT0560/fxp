@@ -89,3 +89,5 @@ Without ffmpeg, retain the WebM or convert it later on another machine. Do not
 commit either format. Upload the final MP4 to GitHub and replace the README's
 video placeholder manually. Publishing a prebuilt demo image is also a separate,
 optional maintainer step; this harness publishes nothing.
+
+The video placeholder is an HTML comment in the root README Demo section; the maintainer should replace that comment with the uploaded video link.
