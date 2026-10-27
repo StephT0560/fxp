@@ -59,3 +59,7 @@ demo:
 
 demo-down:
 	bash scripts/demo.sh down
+
+.PHONY: record
+record:
+	cd web && npm run record

@@ -127,52 +127,48 @@ def parse_message(data):
     ]
     return fields
 
+class FIXReader:
+    """Incremental frame reader: timeouts never discard a partial FIX frame."""
+
+    def __init__(self, sock):
+        self.sock = sock
+        self.buffer = bytearray()
+        self.frame_size = None
+
+    def read(self):
+        while True:
+            if self.frame_size is None:
+                first = self.buffer.find(b'\x01')
+                header_end = self.buffer.find(b'\x01', first + 1) if first >= 0 else -1
+                if header_end >= 0:
+                    header = bytes(self.buffer[:header_end]).split(b'\x01')
+                    if len(header) != 2 or header[0] != b'8=FIX.4.4' or not header[1].startswith(b'9='):
+                        raise ValueError('invalid FIX frame header')
+                    body_length = int(header[1][2:])
+                    if body_length < 0 or body_length > 1_000_000:
+                        raise ValueError('invalid FIX BodyLength')
+                    self.frame_size = header_end + 1 + body_length + 7
+            if self.frame_size is not None and len(self.buffer) >= self.frame_size:
+                frame = bytes(self.buffer[:self.frame_size])
+                del self.buffer[:self.frame_size]
+                self.frame_size = None
+                if not frame[-7:].startswith(b'10=') or frame[-1:] != b'\x01':
+                    raise ValueError('invalid FIX checksum trailer')
+                return parse_message(frame)
+            # Read exactly one frame: synchronous read_message callers may make
+            # another reader for the next frame, so never consume its bytes.
+            count = 1 if self.frame_size is None else self.frame_size - len(self.buffer)
+            chunk = self.sock.recv(count)
+            if not chunk:
+                if self.buffer:
+                    raise EOFError('connection closed in a partial FIX frame')
+                return None
+            self.buffer.extend(chunk)
+
+
 def read_message(sock):
-    """Read one complete FIX message from the socket using BodyLength."""
-    buf = b''
-    while True:
-        chunk = sock.recv(1)
-        if not chunk:
-            return None
-        buf += chunk
-        if buf.count(b'\x01') >= 2:
-            break
-
-    raw = buf.decode(errors='replace')
-    body_len = None
-    for pair in raw.split(SOH):
-        if pair.startswith('9='):
-            try:
-                body_len = int(pair[2:])
-            except ValueError:
-                pass
-            break
-
-    if body_len is None:
-        return None
-
-    remaining = body_len
-    while remaining > 0:
-        chunk = sock.recv(remaining)
-        if not chunk:
-            return None
-        buf += chunk
-        remaining -= len(chunk)
-
-    # BodyLength stops before tag 10 — read the trailing "10=XXX\x01" field
-    if not buf.endswith(b'\x01'):
-        return None
-    trailer = b''
-    while not trailer.endswith(b'\x01'):
-        chunk = sock.recv(1)
-        if not chunk:
-            return None
-        trailer += chunk
-    if not trailer.startswith(b'10='):
-        return None
-    buf += trailer
-
-    return parse_message(buf)
+    """Synchronous one-frame API; socket timeouts propagate to the caller."""
+    return FIXReader(sock).read()
 
 # ── Session ───────────────────────────────────────────────────────────────────
 
@@ -210,15 +206,22 @@ class FIXSession:
         self.out_seqs = []            # (MsgType, MsgSeqNum) of every bridge message, in wire order
         self._stop   = threading.Event()
         self._thread = None
+        self._outbound = queue.Queue()
+        self._logon = threading.Event()
+        self._receive_error = None
+        self._peer_logout = False
 
     def connect(self):
         self.sock = connect_socket(self.host, self.port)
+        # One worker owns both SSL reads and writes. SSLSocket operations must
+        # not race across the caller and receiver threads.
+        self.sock.settimeout(0.05)
         self._thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._thread.start()
 
     def logon(self, extra=()):
         self.send('A', [(98, '0'), (108, '30'), (141, 'Y'), (554, FIX_PASSWORD)] + list(extra), 'Logon')
-        time.sleep(0.6)  # wait for logon ack + gateway connect
+        self.wait_for_logon()
 
     def logout(self):
         self.send('5', [(58, 'Normal logout')], 'Logout')
@@ -230,7 +233,15 @@ class FIXSession:
         frame = build_message(msg_type, self.sender, self.target, self.seq, fields)
         if self.verbose:
             print(f'  → [{description or msg_type}] seq={self.seq}')
-        self.sock.sendall(frame)
+        if self._receive_error is not None:
+            raise RuntimeError(f'FIX transport failed for {self.sender}') from self._receive_error
+        completed = threading.Event()
+        result = []
+        self._outbound.put((frame, completed, result))
+        if not completed.wait(5):
+            raise TimeoutError(f'FIX send did not complete for {self.sender}')
+        if result:
+            raise RuntimeError(f'FIX transport failed for {self.sender}') from result[0]
         self.seq += 1
         time.sleep(0.15)
 
@@ -331,12 +342,30 @@ class FIXSession:
             except queue.Empty:
                 break
 
+    def wait_for_logon(self, timeout=5.0):
+        if not self._logon.wait(timeout):
+            raise TimeoutError(f'FIX Logon acknowledgement missing for {self.sender}') from self._receive_error
+
     def _recv_loop(self):
+        reader = FIXReader(self.sock)
         while not self._stop.is_set():
             try:
-                self.sock.settimeout(1.0)
-                msg = read_message(self.sock)
+                while True:
+                    try:
+                        frame, completed, result = self._outbound.get_nowait()
+                    except queue.Empty:
+                        break
+                    try:
+                        self.sock.sendall(frame)
+                    except Exception as exc:
+                        result.append(exc)
+                        raise
+                    finally:
+                        completed.set()
+                msg = reader.read()
                 if msg is None:
+                    if not self._stop.is_set() and not self._peer_logout:
+                        raise EOFError('FIX peer closed the connection')
                     break
 
                 msg_type = msg.get(35, '?')
@@ -354,7 +383,9 @@ class FIXSession:
                     print()
 
                 # Route to inbox for test assertions
-                if msg_type in ('8', '9'):
+                if msg_type == 'A':
+                    self._logon.set()
+                elif msg_type in ('8', '9'):
                     self.inbox.put(msg)
                 elif msg_type in ('W', 'X'):
                     self.md_inbox.put(msg)
@@ -363,11 +394,15 @@ class FIXSession:
                 elif msg_type == 'r':
                     self.mass_inbox.put(msg)
                 elif msg_type == '5':
+                    self._peer_logout = True
                     self.logout_inbox.put(msg)
 
             except socket.timeout:
                 continue
-            except Exception:
+            except Exception as exc:
+                self._receive_error = exc
+                if not self._stop.is_set():
+                    print(f"FIX transport failed for {self.sender}: {exc!r}", file=sys.stderr)
                 break
 
 # ── Test runner ───────────────────────────────────────────────────────────────
@@ -1082,7 +1117,7 @@ def durable_before_kill(args, r):
     sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
     sess.connect()
     sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset)')
-    time.sleep(0.6)
+    sess.wait_for_logon()
     oid = order_id('DUR')
     sess.new_order(oid, 'DURX', '1', 10, '2', price=5.00, description='BUY 10 DURX @5.00')
     er = sess.wait_for(order_id=oid, exec_type='0', timeout=3.0)
@@ -1113,7 +1148,7 @@ def durable_after_restart(args, r):
     sess.connect()
     try:
         sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset) after restart')
-        time.sleep(0.6)
+        sess.wait_for_logon()
         ack = sess.out_seqs[:1]
         want = [('A', state['last_out'] + 1)]
         if ack == want:
@@ -1141,7 +1176,7 @@ def graceful_shutdown(args, r):
     sess.connect()
     try:
         sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset)')
-        time.sleep(0.6)
+        sess.wait_for_logon()
         oid = order_id('GRACE')
         sess.new_order(oid, 'GRACEX', '2', 10, '2', price=5.00, description='resting sell')
         ack = sess.wait_for(order_id=oid, exec_type='0', timeout=3.0)
@@ -1204,7 +1239,7 @@ def graceful_after_restart(args, r):
     sess.connect()
     try:
         sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset)')
-        time.sleep(0.6)
+        sess.wait_for_logon()
         if sess.out_seqs[:1] == [('A', state['logout_seq'] + 1)]:
             print('  ✅ Logon sequence resumed after graceful shutdown')
             r.passed += 1
@@ -1231,7 +1266,7 @@ def cod_disconnect(args, r):
     sess = FIXSession(args.host, args.port, args.sender, args.target, verbose=args.verbose)
     sess.connect()
     sess.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD), (8013, 'Y')], 'Logon 8013=Y')
-    time.sleep(0.6)
+    sess.wait_for_logon()
     rest, stop = order_id('CDL'), order_id('CDS')
     sess.new_order(rest, 'CODX', '1', 10, '2', price=5.00, description='BUY 10 CODX @5.00')
     sess.new_order(stop, 'CODX', '1', 10, '3', stop_px=9.00, description='BUY STOP 10 CODX @9.00')
@@ -1259,7 +1294,7 @@ def cod_disconnect(args, r):
     again.connect()
     try:
         again.send('A', LOGON_NO_RESET + [(554, FIX_PASSWORD)], 'Logon (no reset) after disconnect')
-        time.sleep(0.6)
+        again.wait_for_logon()
         check(r, again.out_seqs[:1] == [('A', last_out + 3)],
               'Logon ack sequence accounts for the two stored cancels', again.out_seqs[:1])
         again.send('2', [(7, str(last_out + 1)), (16, '0')], f'ResendRequest {last_out + 1}..0')

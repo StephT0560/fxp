@@ -220,8 +220,9 @@ other token. Demo users can trigger it through the BFF; this is a local demo
 control, not an operator console.
 
 `DEMO` is configured but never traded by the simulator, which makes it the
-place to try fills between two users. The 90-second walkthrough is in
-[demo-script.md](demo-script.md).
+place to try fills between two users. The ~75-second three-beat walkthrough is in
+[demo-script.md](demo-script.md); the longer two-window tour is preserved in
+[demo-script-extended.md](demo-script-extended.md).
 
 
 ## Latency panel (v0.2)
