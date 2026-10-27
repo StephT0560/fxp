@@ -46,3 +46,16 @@ test("simulator call counts down without inventing a scenario deadline", async (
   await page.request.post("/api/sim/stop");
   await expect(countdown).toBeHidden({ timeout: 15000 });
 });
+
+test("the compact ticket keeps advanced controls disclosed and GTD expiry required", async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 }); await login(page);
+  await expect(page.getByTestId("ticket-display")).toBeHidden();
+  await expect(page.getByTestId("ticket-stp")).toBeHidden();
+  expect(await page.getByTestId("ticket").evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+  await page.getByTestId("ticket-advanced").click();
+  await expect(page.getByTestId("ticket-display")).toBeVisible();
+  await expect(page.getByTestId("ticket-stp-group")).toBeVisible();
+  await page.getByTestId("ticket-advanced").click();
+  await page.getByTestId("ticket-tif").selectOption("7");
+  await expect(page.getByTestId("ticket-expiry")).toBeVisible();
+});

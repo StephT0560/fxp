@@ -1,3 +1,4 @@
+import { openAdvanced } from "./helpers";
 // SPDX-License-Identifier: MIT
 import { expect, test } from "@playwright/test";
 
@@ -77,6 +78,7 @@ test("WS frames, redacted Logon, filters, hex and authoritative FIX comparison",
   await page.getByTestId("symbol-DEMO").click();
   await page.getByTestId("ticket-price").fill("49.00");
   await page.getByTestId("ticket-qty").fill("1");
+  await openAdvanced(page);
   await page.getByTestId("ticket-stp").selectOption("0");
   await page.getByTestId("ticket-submit").click();
   await page

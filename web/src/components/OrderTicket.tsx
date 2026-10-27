@@ -90,7 +90,7 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
 
   return (
     <form
-      className="order-ticket flex min-h-0 shrink-0 flex-col overflow-y-auto gap-1.5 border-r border-neutral-800 p-3 text-sm"
+      className="order-ticket flex min-h-0 shrink-0 flex-col overflow-y-auto gap-1 border-r border-neutral-800 p-2 text-sm"
       data-testid="ticket"
       onSubmit={(e) => {
         e.preventDefault();
@@ -143,10 +143,6 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
           quantity
           <input data-testid="ticket-qty" className={input} inputMode="numeric" value={t.qty} onChange={(e) => set("qty", e.target.value)} />
         </label>
-        <label className="text-xs text-neutral-400" title="Iceberg: visible quantity (MaxFloor); empty or 0 shows all">
-          display qty
-          <input data-testid="ticket-display" className={input} inputMode="numeric" value={t.displayQty} onChange={(e) => set("displayQty", e.target.value)} />
-        </label>
         {needsPrice(t.type) && (
           <label className="text-xs text-neutral-400">
             limit price
@@ -165,6 +161,15 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
             <input data-testid="ticket-expiry" type="date" className={input} min={todayUtc()} value={t.expireDate} onChange={(e) => set("expireDate", e.target.value)} />
           </label>
         )}
+
+      </div>
+      <details>
+        <summary data-testid="ticket-advanced" className="cursor-pointer rounded text-xs text-neutral-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">Advanced</summary>
+        <div className="mt-1 grid grid-cols-2 gap-1">
+        <label className="text-xs text-neutral-400" title="Iceberg: visible quantity (MaxFloor); empty or 0 shows all">
+          display qty
+          <input data-testid="ticket-display" className={input} inputMode="numeric" value={t.displayQty} onChange={(e) => set("displayQty", e.target.value)} />
+        </label>
         <label className="text-xs text-neutral-400">
           STP mode
           <select data-testid="ticket-stp" className={input} value={t.stpMode} onChange={(e) => set("stpMode", Number(e.target.value))}>
@@ -179,7 +184,8 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
           STP group
           <input data-testid="ticket-stp-group" className={input} value={t.stpGroup} onChange={(e) => set("stpGroup", e.target.value)} />
         </label>
-      </div>
+        </div>
+      </details>
       {shownErrors.length > 0 && (
         <ul className="text-xs text-red-400" data-testid="ticket-errors">
           {shownErrors.map((e) => (
@@ -191,12 +197,12 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
         type="submit"
         data-testid="ticket-submit"
         disabled={!live || inFlight !== undefined}
-        className={`rounded py-1 font-medium disabled:opacity-40 ${t.side === OrderSide.BUY ? "bg-emerald-700 hover:bg-emerald-600" : "bg-red-700 hover:bg-red-600"}`}
+        className={`shrink-0 rounded py-0.5 font-medium disabled:opacity-40 ${t.side === OrderSide.BUY ? "bg-emerald-700 hover:bg-emerald-600" : "bg-red-700 hover:bg-red-600"}`}
       >
         {inFlight ? "Sending…" : `${t.side === OrderSide.BUY ? "Buy" : "Sell"} ${rules.symbol}`}
       </button>
       {row && (
-        <div className={`text-xs ${row.state === "rejected" ? "text-red-400" : "text-neutral-400"}`} data-testid="ticket-result">
+        <div className={`shrink-0 truncate text-xs ${row.state === "rejected" ? "text-red-400" : "text-neutral-400"}`} data-testid="ticket-result">
           {row.orderId}: {row.state}
           {row.state === "rejected" && row.reason ? ` — ${row.reason}` : ""}
         </div>
