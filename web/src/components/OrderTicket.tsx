@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useEffect, useRef, useState } from "react";
 import { OrderSide, OrderType, SelfTradePrevention, TimeInForce } from "../gen/fxp_pb";
+import { formatPrice } from "../lib/format";
 import { activeClient } from "../lib/client";
 import { useOrders, useSession } from "../lib/stores";
 import { needsPrice, needsStop, todayUtc, validateTicket, type Field, type SymbolRules, type TicketInput } from "../lib/validate";
@@ -33,7 +34,8 @@ const MIN_RESUBMIT_MS = 600;
 
 const input = "num w-full rounded bg-neutral-800 px-1 py-0.5";
 
-export function OrderTicket({ rules }: { rules: SymbolRules }) {
+export function OrderTicket({ rules, pricePick }: { rules: SymbolRules; pricePick?: { price: bigint } }) {
+  const quantityInput = useRef<HTMLInputElement>(null);
   const live = useSession((s) => s.conn === "live");
   useOrders((s) => s.version);
   const [t, setT] = useState<Omit<TicketInput, "symbol">>({
@@ -48,6 +50,11 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
     stpMode: SelfTradePrevention.UNSPECIFIED,
     stpGroup: "",
   });
+  useEffect(() => {
+    if (!pricePick) return;
+    setT((s) => ({ ...s, price: formatPrice(pricePick.price, rules.price_scale) }));
+    quantityInput.current?.focus();
+  }, [pricePick, rules.price_scale]);
   const [attempted, setAttempted] = useState(false);
   const [inFlight, setInFlight] = useState<string>();
   // Synchronous guard: clicks that land before React re-renders are dropped.
@@ -90,7 +97,7 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
 
   return (
     <form
-      className="flex w-80 shrink-0 flex-col gap-1.5 border-r border-neutral-800 p-3 text-sm"
+      className="order-ticket flex min-h-0 shrink-0 flex-col overflow-y-auto gap-1 border-r border-neutral-800 p-2 text-sm"
       data-testid="ticket"
       onSubmit={(e) => {
         e.preventDefault();
@@ -141,11 +148,7 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
         </label>
         <label className="text-xs text-neutral-400">
           quantity
-          <input data-testid="ticket-qty" className={input} inputMode="numeric" value={t.qty} onChange={(e) => set("qty", e.target.value)} />
-        </label>
-        <label className="text-xs text-neutral-400" title="Iceberg: visible quantity (MaxFloor); empty or 0 shows all">
-          display qty
-          <input data-testid="ticket-display" className={input} inputMode="numeric" value={t.displayQty} onChange={(e) => set("displayQty", e.target.value)} />
+          <input ref={quantityInput} data-testid="ticket-qty" className={input} inputMode="numeric" value={t.qty} onChange={(e) => set("qty", e.target.value)} />
         </label>
         {needsPrice(t.type) && (
           <label className="text-xs text-neutral-400">
@@ -165,6 +168,15 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
             <input data-testid="ticket-expiry" type="date" className={input} min={todayUtc()} value={t.expireDate} onChange={(e) => set("expireDate", e.target.value)} />
           </label>
         )}
+
+      </div>
+      <details>
+        <summary data-testid="ticket-advanced" className="cursor-pointer rounded text-xs text-neutral-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">Advanced</summary>
+        <div className="mt-1 grid grid-cols-2 gap-1">
+        <label className="text-xs text-neutral-400" title="Iceberg: visible quantity (MaxFloor); empty or 0 shows all">
+          display qty
+          <input data-testid="ticket-display" className={input} inputMode="numeric" value={t.displayQty} onChange={(e) => set("displayQty", e.target.value)} />
+        </label>
         <label className="text-xs text-neutral-400">
           STP mode
           <select data-testid="ticket-stp" className={input} value={t.stpMode} onChange={(e) => set("stpMode", Number(e.target.value))}>
@@ -179,7 +191,8 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
           STP group
           <input data-testid="ticket-stp-group" className={input} value={t.stpGroup} onChange={(e) => set("stpGroup", e.target.value)} />
         </label>
-      </div>
+        </div>
+      </details>
       {shownErrors.length > 0 && (
         <ul className="text-xs text-red-400" data-testid="ticket-errors">
           {shownErrors.map((e) => (
@@ -191,12 +204,12 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
         type="submit"
         data-testid="ticket-submit"
         disabled={!live || inFlight !== undefined}
-        className={`rounded py-1 font-medium disabled:opacity-40 ${t.side === OrderSide.BUY ? "bg-emerald-700 hover:bg-emerald-600" : "bg-red-700 hover:bg-red-600"}`}
+        className={`shrink-0 rounded py-0.5 font-medium disabled:opacity-40 ${t.side === OrderSide.BUY ? "bg-emerald-700 hover:bg-emerald-600" : "bg-red-700 hover:bg-red-600"}`}
       >
         {inFlight ? "Sending…" : `${t.side === OrderSide.BUY ? "Buy" : "Sell"} ${rules.symbol}`}
       </button>
       {row && (
-        <div className={`text-xs ${row.state === "rejected" ? "text-red-400" : "text-neutral-400"}`} data-testid="ticket-result">
+        <div className={`shrink-0 truncate text-xs ${row.state === "rejected" ? "text-red-400" : "text-neutral-400"}`} data-testid="ticket-result">
           {row.orderId}: {row.state}
           {row.state === "rejected" && row.reason ? ` — ${row.reason}` : ""}
         </div>

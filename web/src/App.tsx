@@ -10,6 +10,10 @@ import { SimControls } from "./components/SimControls";
 import { StatusBar } from "./components/StatusBar";
 import { SymbolList } from "./components/SymbolList";
 import { TapeView } from "./components/TapeView";
+import { SIMULATOR_DEFAULTS } from "./lib/simulator";
+import { confirmSimulatorStart } from "./lib/auction-clock";
+import { useAuctionTimers } from "./lib/auction-clock";
+import { buttonFocus } from "./lib/styles";
 import { activeClient, ConsoleClient } from "./lib/client";
 import { formatPrice, formatQty } from "./lib/format";
 import {
@@ -50,9 +54,15 @@ function Stats({ symbol, scale }: { symbol: string; scale: number }) {
 
 export function App() {
   const user = useSession((s) => s.user);
+  useAuctionTimers(Boolean(user));
   const setUser = useSession((s) => s.setUser);
   const { list, selected, setList } = useSymbols();
   const client = useRef<ConsoleClient>(undefined);
+  const [quickDemo, setQuickDemo] = useState(false);
+  const quickStarted = useRef(false);
+  const conn = useSession((s) => s.conn);
+  const [pricePick, setPricePick] = useState<{ symbol: string; price: bigint }>();
+  useEffect(() => setPricePick(undefined), [selected]);
   const [panel, setPanel] = useState("market");
   const [error, setError] = useState<string>();
 
@@ -85,19 +95,31 @@ export function App() {
     };
   }, [user]);
 
-  if (!user) return <Login onLogin={setUser} />;
+  useEffect(() => {
+    if (!quickDemo || user !== "alice" || conn !== "live" || quickStarted.current) return;
+    quickStarted.current = true;
+    const c = new AbortController();
+    fetch("/api/sim/start", { method: "POST", signal: c.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...SIMULATOR_DEFAULTS, opening_auction_sec: 10 }) })
+      .then(async (r) => { if (r.ok) { confirmSimulatorStart(await r.json()); return; } if (!r.ok) {const text = (await r.text()).trim(); if (!(r.status === 409 && /already running/i.test(text))) throw Error(text); } })
+      .catch((e: Error) => { if (!c.signal.aborted) setError(`Quick demo: ${e.message}`); })
+      .finally(() => { if (!c.signal.aborted) setQuickDemo(false); });
+    return () => c.abort();
+  }, [quickDemo, user, conn]);
+
+  if (!user) return <Login onLogin={(u) => { setQuickDemo(false); setUser(u); }} onQuickDemo={() => { quickStarted.current = false; setQuickDemo(true); useSymbols.getState().select("AAPL"); setUser("alice"); }} />;
   const info = list.find((s) => s.symbol === selected);
   const scale = info?.price_scale ?? 2;
   return (
     <div className="flex h-full flex-col">
-      <StatusBar symbol={selected} onLogout={() => setUser(undefined)} />
+      <StatusBar symbol={selected} onLogout={() => { setQuickDemo(false); setUser(undefined); }} />
       <nav
-        className="flex gap-4 border-b border-neutral-800 px-4 py-2"
+        className="flex gap-1 border-b border-neutral-800 bg-neutral-950 px-4 py-2"
         aria-label="Console panels"
       >
         {["market", "scenarios", "latency", "protocol"].map((v) => (
           <button
             key={v}
+            className={`rounded px-3 py-1 text-sm text-neutral-400 hover:bg-neutral-800 aria-pressed:bg-neutral-700 aria-pressed:text-white ${buttonFocus}`}
             aria-pressed={panel === v}
             onClick={() => setPanel(v)}
           >
@@ -129,9 +151,9 @@ export function App() {
           <SymbolList />
           {selected && (
             <>
-              <Ladder symbol={selected} scale={scale} />
+              <Ladder symbol={selected} scale={scale} onPrice={(price) => setPricePick({ symbol: selected, price })} />
               <main className="flex min-w-0 flex-1 flex-col gap-2 p-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <Stats symbol={selected} scale={scale} />
                   <SimControls />
                 </div>
@@ -142,8 +164,8 @@ export function App() {
           )}
         </div>
         {info && (
-          <div className="flex h-72 shrink-0 border-t border-neutral-800">
-            <OrderTicket key={selected} rules={info} />
+          <div className="trading-panel flex min-h-0 shrink-0 border-t border-neutral-800">
+            <OrderTicket key={selected} rules={info} pricePick={pricePick?.symbol === selected ? pricePick : undefined} />
             <Blotter symbol={selected!} />
           </div>
         )}

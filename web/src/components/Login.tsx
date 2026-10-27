@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useEffect, useState } from "react";
 
-export function Login({ onLogin }: { onLogin: (user: string) => void }) {
+export function Login({ onLogin, onQuickDemo }: { onLogin: (user: string) => void; onQuickDemo: () => void }) {
   const [users, setUsers] = useState<string[]>([]);
   const [error, setError] = useState<string>();
   useEffect(() => {
@@ -17,7 +17,8 @@ export function Login({ onLogin }: { onLogin: (user: string) => void }) {
         <p className="mb-4 text-sm text-neutral-400">Local demo. Pick a demo user to connect.</p>
         {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
         <div className="flex flex-col gap-2">
-          {users.map((u) => (
+          <button data-testid="quick-demo" onClick={onQuickDemo} className="rounded bg-blue-700 px-3 py-2 font-medium hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">Quick demo</button>
+          {users.filter((u) => u !== "market-maker").map((u) => (
             <button
               key={u}
               data-testid={`login-${u}`}

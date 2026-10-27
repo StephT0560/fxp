@@ -85,3 +85,13 @@ describe("formatPrice", () => {
     expect(formatPrice(undefined, 2)).toBe("—");
   });
 });
+
+it("retains the first observed price beyond the tape window and ignores stale movement", () => {
+  const tape = emptyTape();
+  for (let i = 1; i <= TAPE_LIMIT + 2; i++) applyTrade(tape, tr(BigInt(i), BigInt(i)));
+  expect(tape.firstPrice).toBe(1n);
+  expect(tape.previousPrice).toBe(BigInt(TAPE_LIMIT + 1));
+  applyTrade(tape, tr(1n, 999n));
+  expect(tape.firstPrice).toBe(1n); expect(tape.previousPrice).toBe(BigInt(TAPE_LIMIT + 1));
+  expect(tape.lastPrice).toBe(BigInt(TAPE_LIMIT + 2));
+});

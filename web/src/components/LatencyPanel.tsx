@@ -39,7 +39,7 @@ export default function LatencyPanel() {
   }, []);
   const s = data?.scenarios.find((v) => v.id === selected);
   return (
-    <section className="p-4 overflow-auto" aria-label="Latency panel">
+    <section className="min-h-0 min-w-0 overflow-auto p-4" aria-label="Latency panel">
       <h2>Recorded ACK latency</h2>
       <p>
         Plaintext loopback only. Median and min/max across independent
@@ -151,7 +151,7 @@ export default function LatencyPanel() {
             </tbody>
           </table>
           <div
-            className="mt-4 border border-neutral-700 p-3"
+            className="mt-4 break-words border border-neutral-700 p-3"
             data-testid="environment-card"
           >
             <h3>Measurement environment</h3>
