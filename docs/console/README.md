@@ -296,3 +296,11 @@ server-side gateway sessions. The browser watches the narration timeline and
 highlighted ladder/tape/observer blotter; one run at a time, with stop and
 cleanup. See [scenarios.md](scenarios.md) for each assertion, the SSE/API contract,
 determinism boundaries, symbol-admission settings and isolated FIX recovery.
+
+### Own orders in depth
+
+A blue quantity marker shows the sum of your working leaves at a known price,
+separately on bids and asks. Only prices entered in this console are known;
+status reports do not supply limit prices. Footers count working orders outside
+the displayed ten levels, and working orders whose price is unknown. No price
+is inferred after a reload.

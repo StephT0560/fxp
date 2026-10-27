@@ -19,3 +19,16 @@ test("panel tabs have a visible active state and keyboard focus", async ({ page 
   await expect(market).toHaveAttribute("aria-pressed", "true");
   expect(await market.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
 });
+
+test("a resting limit marks its own ladder level until canceled", async ({ page }) => {
+  await login(page);
+  await page.getByTestId("symbol-DEMO").click();
+  await page.getByTestId("ticket-qty").fill("7");
+  await page.getByTestId("ticket-price").fill("31.23");
+  await page.getByTestId("ticket-submit").click();
+  const level = page.getByTestId("ladder").getByTestId("bid-row").filter({ hasText: "31.23" });
+  await expect(level.getByTestId("own-order-marker")).toContainText("7");
+  const row = page.getByTestId("order-row").filter({ hasText: "31.23" });
+  await row.getByTestId("order-cancel").click();
+  await expect(level.getByTestId("own-order-marker")).toHaveCount(0);
+});

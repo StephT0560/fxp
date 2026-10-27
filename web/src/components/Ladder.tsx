@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 import { DEPTH, isCrossed, topAsks, topBids, type Level } from "../lib/book";
 import { formatPrice, formatQty } from "../lib/format";
-import { useBook } from "../lib/stores";
+import { ownLevels } from "../lib/own-levels";
+import { useBook, useOrders } from "../lib/stores";
 
-function Row({ level, side, scale, max }: { level?: Level; side: "bid" | "ask"; scale: number; max: number }) {
+function Row({ level, side, scale, max, own }: { level?: Level; side: "bid" | "ask"; scale: number; max: number; own?: number }) {
   const pct = level && max > 0 ? Math.round((level.qty / max) * 100) : 0;
   const color = side === "bid" ? "text-emerald-400" : "text-red-400";
   const bar = side === "bid" ? "bg-emerald-900/40" : "bg-red-900/40";
@@ -11,16 +12,18 @@ function Row({ level, side, scale, max }: { level?: Level; side: "bid" | "ask"; 
     <div className="relative grid h-6 grid-cols-2 items-center px-3 text-sm" data-testid={level ? `${side}-row` : undefined}>
       <div className={`absolute inset-y-0 right-0 ${bar}`} style={{ width: `${pct}%` }} />
       <span className={`num relative ${color}`}>{level ? formatPrice(level.price, scale) : ""}</span>
-      <span className="num relative text-right">{level ? formatQty(level.qty) : ""}</span>
+      <span className="num relative text-right">{own ? <span data-testid="own-order-marker" className="mr-2 rounded bg-sky-950 px-1 text-xs text-sky-300" title="Your known-price working quantity">● {formatQty(own)}</span> : null}{level ? formatQty(level.qty) : ""}</span>
     </div>
   );
 }
 
 export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
   useBook((s) => s.version);
+  useOrders((s) => s.version);
   const book = useBook.getState().books.get(symbol);
   const bids = book ? topBids(book, DEPTH) : [];
   const asks = book ? topAsks(book, DEPTH) : [];
+  const own = ownLevels(useOrders.getState().blotter.rows.values(), symbol, bids, asks);
   const max = Math.max(1, ...bids.map((l) => l.qty), ...asks.map((l) => l.qty));
   const crossed = isCrossed(bids, asks);
   const spread = bids[0] && asks[0] ? asks[0].price - bids[0].price : undefined;
@@ -32,14 +35,15 @@ export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
         {crossed && <span className="text-red-400" data-testid="book-crossed">crossed</span>}
       </div>
       {Array.from({ length: DEPTH }, (_, i) => (
-        <Row key={`a${i}`} level={asks[DEPTH - 1 - i]} side="ask" scale={scale} max={max} />
+        <Row key={`a${i}`} level={asks[DEPTH - 1 - i]} side="ask" scale={scale} max={max} own={own.sell.get(asks[DEPTH - 1 - i]?.price ?? -1n)} />
       ))}
       <div className="num border-y border-neutral-800 px-3 py-1 text-center text-xs text-neutral-400">
         spread {formatPrice(spread, scale)}
       </div>
       {Array.from({ length: DEPTH }, (_, i) => (
-        <Row key={`b${i}`} level={bids[i]} side="bid" scale={scale} max={max} />
+        <Row key={`b${i}`} level={bids[i]} side="bid" scale={scale} max={max} own={own.buy.get(bids[i]?.price ?? -1n)} />
       ))}
+      {(own.offLadder > 0 || own.unknown > 0) && <div className="border-t border-neutral-800 px-2 py-1 text-xs text-sky-300">{own.offLadder > 0 && <p>+{own.offLadder} working off-ladder</p>}{own.unknown > 0 && <p>{own.unknown} working orders, price not in status reports</p>}</div>}
     </section>
   );
 }
