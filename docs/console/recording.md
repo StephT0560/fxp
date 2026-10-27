@@ -28,9 +28,8 @@ It uses real gateway sessions and the existing BFF, not mocked frames or data.
 From the repository root, with the Compose stack already up:
 
 ```bash
-cd web
-npm run record
-cd ..
+make record
+# Equivalent: cd web && npm run record
 ```
 
 The harness records only Alice's 1920×1080 browser context. Bob acts in a separate
