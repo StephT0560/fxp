@@ -1,24 +1,19 @@
-# FXP Console: 90-second demo script
+# FXP Console: three-beat demo (~75 seconds)
 
-The walkthrough for the README recording. It covers the v0.1 success path
-(spec §10) with no terminal after `make demo`. Use two browser windows side by
-side: **A** logged in as `alice`, **B** as `bob`.
+One recorded window, logged in as **alice**. A separate, unrecorded **bob**
+context supplies the counterparty orders. Run the [recording harness](recording.md)
+after `make demo`; it performs these real actions and assertions, without mocked
+market data. The [extended walkthrough](demo-script-extended.md) retains the
+longer two-window tour, including rejects, cancel-all and reconnect.
 
-| Time | Action | What to show |
+| Time | Action | Narration |
 |---|---|---|
-| 0:00 | Open http://127.0.0.1:3000 in A, pick **alice**. | Status bar turns **live**; symbol list and empty ladder. |
-| 0:05 | Select **AAPL**. Leave **open with auction** checked (20 s), press **Start simulator**. | Phase shows **Opening call**; the amber auction banner shows the indicative price, volume and imbalance moving as orders arrive. |
-| 0:15 | In B, pick **bob**, select **DEMO**. In A, select **DEMO** too. | DEMO is in the call as well; the simulator never trades it, so your orders are the only ones. |
-| 0:20 | A: Buy 25 @ 60.00, time in force **At open**. B: Sell 25 @ 60.00, **At open**. | Both blotters show the orders working; nothing fills during the call. |
-| 0:30 | Wait for the uncross. Switch A to AAPL. | Phase goes to **Continuous**; the tape fills with **AUC** prints at the uncross price; the book and chart start moving. A's **Own fills** tab shows the DEMO auction fill. |
-| 0:45 | On DEMO, A: Buy 100 @ 50.00 GTC. | The bid appears in the ladder and in A's working orders. |
-| 0:50 | B: Sell 40 @ 50.00. | Print on the public tape; B's order **filled**, A's **partial** (cum 40, leaves 60) in both blotters' own fills. |
-| 1:00 | A: **Replace** the order to 50.10. | The original moves to Completed as **replaced**; the replacement works at 50.10 with leaves 60. |
-| 1:08 | A: Replace again with quantity 30. | The core rejects it (*quantity not above filled quantity*); the reason shows on the row and the order is unchanged. |
-| 1:15 | A: **Cancel** the order, then place two more and press **Cancel all**. | Cancel and the mass-cancel result line (`cancel-all (all symbols): 2 canceled`). |
-| 1:22 | Reload A and log in again as alice. | The blotter is rebuilt from the FXP order-status request (see the Exec reports tab). |
-| 1:30 | End. | |
+| 0:00–0:20 | Log in as Alice, select **DEMO**. Start seed **42**, ten-second opening auction. Bob sells 25 @ 60.00 **At open**; Alice buys the same. Show the countdown, then the **AUC** tape print at the uncross. | “Orders queue during the opening call. The countdown is an estimate from observed phase arrival. At the uncross, the core matches them and publishes an auction print.” |
+| 0:20–0:48 | Stop the simulator after the uncross. Bob rests a sell for 40 @ 50.00 GTC. Alice buys 100 @ 50.00 GTC: show the tape print, **cum 40 / leaves 60**, and Alice’s ladder marker. Replace Alice’s remainder to **50.10**, keeping total quantity 100. | “Alice crosses Bob’s resting order. Forty fill; sixty remain. Replace moves the remainder to a new price and loses its previous queue priority. The blue marker identifies our locally known resting quantity.” |
+| 0:48–1:15 | Open **Protocol inspector**, filter sent `newOrder` / `DEMO`, select Alice’s 100-lot order, then **FXP vs FIX for this order**. Show decoded fields, raw hex and byte counts. Switch to **Latency**, show both ACK series, repetition spread and environment. | “These are the same order’s FXP bytes and authoritative FIX 4.4 translation from fix_bridge, with SOH displayed as a pipe. Byte counts are a fixture comparison, not a speed ranking. Recorded latency separates intended-time ACK from post-send ACK and shows min/max across repetitions. Plaintext loopback only: a tested knee, not an SLO, and no WAN or cross-protocol ranking claim.” |
 
-Tips: enter a price with too many decimals (e.g. 50.001) to show client-side
-validation before anything is sent. Start the simulator only once per take: a
-second start while it runs is refused.
+The `DEMO` book is configured but never traded by the simulator. The harness
+uses two 25-lot at-open orders for a predictable auction print, then a 40/100
+continuous cross for the partial fill. A fixed seed controls simulator random
+choices; live scheduling, timestamps and generated order IDs still vary between
+takes. The recording has no audio; the narration above is a voiceover guide.
