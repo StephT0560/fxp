@@ -11,7 +11,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "size": "node scripts/check-bundle-size.mjs",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "record": "playwright test --config playwright.record.config.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.16.0",
