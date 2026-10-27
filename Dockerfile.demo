@@ -42,7 +42,8 @@ RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
     bash scripts/gen_proto.sh \
     && (cd demo_api && go build -trimpath -o /out/demo_api .) \
-    && (cd go_gateway && go build -trimpath -o /out/simday ./simulation)
+    && (cd go_gateway && go build -trimpath -o /out/simday ./simulation) \
+    && (cd fix_bridge && go build -trimpath -o /out/fix_bridge .)
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -50,12 +51,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && useradd --system --uid 10001 --home-dir /data --create-home fxp
 COPY --from=api-build /out/demo_api /usr/local/bin/demo_api
 COPY --from=api-build /out/simday /usr/local/bin/simday
+COPY --from=api-build /out/fix_bridge /usr/local/bin/fix_bridge
 COPY --from=web-build /src/web/dist /app/web/dist
 COPY config/ /etc/fxp/config/
 COPY benchmarks/console.json /app/benchmarks/console.json
 COPY docs/performance/profile-r4.md /app/docs/performance/profile-r4.md
 USER fxp
 WORKDIR /app
-ENV FXP_DEMO_STATIC_DIR=/app/web/dist FXP_DEMO_SIM_BINARY=/usr/local/bin/simday
+ENV FXP_DEMO_STATIC_DIR=/app/web/dist FXP_DEMO_SIM_BINARY=/usr/local/bin/simday FXP_DEMO_FIX_BINARY=/usr/local/bin/fix_bridge
 EXPOSE 3000
 CMD ["demo_api"]

@@ -75,6 +75,8 @@ type symbolView struct {
 	MaxQuantity uint32 `json:"max_quantity"`
 }
 type app struct {
+	activityMu sync.Mutex
+	scenarios  scenarioManager
 	cfg        config
 	originHost string
 	symbols    []symbolView
@@ -116,6 +118,10 @@ func newApp(cfg config) (*app, error) {
 		a.symbols = append(a.symbols, symbolView{name, r.PriceScale, fmt.Sprint(r.TickSize), r.LotSize, r.MinQuantity, r.MaxQuantity})
 	}
 	sort.Slice(a.symbols, func(i, j int) bool { return a.symbols[i].Symbol < a.symbols[j].Symbol })
+	a.mux.HandleFunc("GET /api/scenarios", a.scenariosList)
+	a.mux.HandleFunc("POST /api/scenarios/{id}/run", a.scenarioStart)
+	a.mux.HandleFunc("POST /api/scenarios/{id}/stop", a.scenarioStop)
+	a.mux.HandleFunc("GET /api/scenarios/{id}/events", a.scenarioEvents)
 	a.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -215,6 +221,19 @@ func (a *app) token(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "expires_in": int(a.cfg.tokenTTL / time.Second)})
 }
 func (a *app) simStart(w http.ResponseWriter, r *http.Request) {
+	a.activityMu.Lock()
+	defer a.activityMu.Unlock()
+	a.scenarios.mu.Lock()
+	active := a.scenarios.run
+	a.scenarios.mu.Unlock()
+	if active != nil {
+		select {
+		case <-active.done:
+		default:
+			http.Error(w, "stop the scenario before starting the simulator", http.StatusConflict)
+			return
+		}
+	}
 	var p simParams
 	if !decodeJSON(w, r, &p) {
 		return
@@ -292,6 +311,7 @@ func (a *app) static(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(file.Name()), stat.ModTime(), file)
 }
 func (a *app) close() {
+	a.scenarios.close()
 	a.mu.Lock()
 	a.closed = true
 	for conn := range a.sockets {

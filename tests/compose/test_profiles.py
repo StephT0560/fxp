@@ -49,3 +49,16 @@ class ComposeTests(unittest.TestCase):
             self.assertEqual(services[name]['environment']['FXP_TLS_REQUIRED'], 'false')
             self.assertEqual(services[name]['environment']['FXP_ALLOW_PLAINTEXT'], 'true')
         self.assertIn('INSECURE', str(services['gateway']['command']))
+
+    def test_demo_admits_fresh_scenario_symbols(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith('FXP_')}
+        env.update(FXP_JWT_SECRET='x' * 32, FXP_FIX_CREDENTIALS='TEST:fixture-password',
+                   FXP_SYMBOLS='SHOULD-NOT-LEAK')
+        result = subprocess.run(['docker', 'compose', '--env-file', '/dev/null',
+            '-f', 'docker-compose.dev.yml', '-f', 'docker-compose.demo.yml',
+            '--profile', 'dev', '--profile', 'demo', 'config', '--format', 'json'],
+            cwd=ROOT, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        core = json.loads(result.stdout)['services']['core']['environment']
+        self.assertNotIn('FXP_SYMBOLS', core)
+        self.assertEqual(str(core['FXP_MAX_SYMBOLS']), '4096')

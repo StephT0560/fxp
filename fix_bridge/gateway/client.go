@@ -39,6 +39,7 @@ import (
 
 	"context"
 	"go_gateway/protobuf"
+	"go_gateway/startup"
 	"go_gateway/tlsconfig"
 
 	"google.golang.org/protobuf/proto"
@@ -116,7 +117,8 @@ func dialGateway(addr string) (net.Conn, error) {
 // Connect dials the gateway, sends the Logon frame, and starts the read/write loops.
 // Blocks until the connection is closed.
 func (c *Client) Connect() error {
-	conn, err := dialGateway(gatewayAddr)
+	address := startup.Address("FXP_FIX_GATEWAY_ADDR", gatewayAddr)
+	conn, err := dialGateway(address)
 	if err != nil {
 		return fmt.Errorf("dial gateway %s: %w", gatewayAddr, err)
 	}
