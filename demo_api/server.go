@@ -121,6 +121,9 @@ func newApp(cfg config) (*app, error) {
 	})
 	a.mux.HandleFunc("GET /api/users", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, demoUsers) })
 	a.mux.HandleFunc("GET /api/symbols", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, a.symbols) })
+	a.mux.HandleFunc("GET /api/bench", a.bench)
+	a.mux.HandleFunc("GET /api/bench/profile-r4", a.benchProfile)
+	a.mux.HandleFunc("POST /api/inspect/fix", a.inspectFIX)
 	a.mux.HandleFunc("POST /api/token", a.token)
 	a.mux.HandleFunc("POST /api/sim/start", a.simStart)
 	a.mux.HandleFunc("POST /api/sim/stop", func(w http.ResponseWriter, r *http.Request) {

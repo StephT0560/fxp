@@ -110,3 +110,41 @@ sample durations add to intended ACK latency, but their independently computed
 percentiles do **not** add; do not subtract p50s to estimate a causal fraction.
 `max_send_lag_ns` retains its original meaning. Attribution is available for
 closed mode too, where no predetermined arrival schedule exists.
+
+## Read-only console evidence schema (v1)
+
+`benchmarks/console.json` is a deterministic projection of the five primary R4
+pacing/closed scenarios. `python3 scripts/export_console_bench.py` regenerates it;
+`--check` verifies byte-for-byte agreement with the original `.json.gz` files and
+their SHA-256 digests. It copies all configuration, environment, per-run endpoint
+statistics and summaries verbatim, removing only bulky per-run HDR snapshots.
+It never runs a workload, rounds values, pools distributions or subtracts
+percentiles. The full HDR evidence remains in `benchmarks/round4/`.
+
+| Field | v1 contract |
+|---|---|
+| `schema_version` | Integer `1` |
+| `profile` | `/api/bench/profile-r4`, serving the checked-in profiling report |
+| `scenarios` | Nonempty array; unique nonempty `id` |
+| `source`, `source_sha256` | `benchmarks/round4/<id>.json.gz`; lowercase 64-hex digest of the compressed artifact |
+| `git_sha`, `created_utc` | Measured revision (40 lowercase hex, matching `environment.revision`); RFC3339 measurement time |
+| `network`, `protocol` | This dataset accepts only `loopback`, `FXP`; other populations require a separate schema/dataset and view |
+| `config` | Original harness config, including `mode` (`open`/`closed`), nonempty `pacer`, `pinning_notes`, integer `repetitions >= 2` |
+| `environment` | Original string map; nonempty `cpu`, `os`, `arch`, `go`, `rustc_local`, `revision`, `pinning_notes` required |
+| `runs` | Exactly `config.repetitions` original per-run records, excluding HDR snapshots; positive endpoint sample counts |
+| `summary` | Original map of `{median,min,max}` finite nonnegative numbers, with `min <= median <= max` |
+
+Required chart metrics are `ack_p50_ns`, `ack_p99_ns`,
+`ack_after_send_p50_ns`, and `ack_after_send_p99_ns`. The BFF checks their spreads
+against the per-run `ack` / `ack_after_send` percentiles, including even-N medians.
+Missing fields, null values, unsupported populations, duplicate ids, invalid
+metadata, or inconsistent summaries make the complete document unavailable
+(HTTP 503). The browser validates again before converting ns to ms. It charts
+one scenario at a time with asymmetric error bars and an accompanying numeric
+median [min–max] table. Compiler metadata is explicitly local compiler evidence;
+it must not be upgraded into a claim about an unverified remote core build.
+
+These records describe the measured historical build, not the current BFF
+binary or live browser traffic. No capacity metric is inferred from these five
+scenarios. Any capacity discussion uses **tested knee**, references the finite
+load and environment in R4, and never promises an SLO or ranks protocols.
