@@ -98,3 +98,11 @@ test("keyboard ladder selection prefills a scaled price and focuses quantity", a
   await expect(page.getByTestId("tape")).toContainText("Time");
   await expect(page.getByTestId("tape")).toContainText("green buy · red sell · amber AUC");
 });
+
+test("symbol movement is labeled as change since first print seen", async ({ page }) => {
+  await login(page);
+  await page.getByTestId("sim-start").click();
+  await expect(page.getByTestId("symbol-AAPL")).toContainText("since first print seen", { timeout: 30000 });
+  await expect(page.getByTestId("symbol-AAPL").getByTestId("symbol-last")).toHaveAttribute("data-direction", /-1|0|1/);
+  await page.request.post("/api/sim/stop");
+});

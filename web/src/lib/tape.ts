@@ -23,6 +23,8 @@ export interface Tape {
   /** Next expected per-symbol seq; 0n until the first print. */
   expected: bigint;
   lastPrice?: bigint;
+  firstPrice?: bigint;
+  previousPrice?: bigint;
   /** Volume of prints observed since this console joined, not the session total. */
   volume: bigint;
   gapCount: number;
@@ -63,6 +65,8 @@ export function applyTrade(tape: Tape, tr: TradeCaptureReport): boolean {
     tape.lastGap = { from: tape.expected, to: tr.seq - 1n };
   }
   tape.expected = tr.seq + 1n;
+  tape.firstPrice ??= tr.tradePrice;
+  tape.previousPrice = tape.lastPrice;
   tape.lastPrice = tr.tradePrice;
   tape.volume += BigInt(tr.tradeQuantity);
   tape.prints.unshift({
