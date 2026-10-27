@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { neutralButton } from "../lib/styles";
 import { TradingPhase } from "../gen/fxp_pb";
 import { useSession, type ConnState } from "../lib/stores";
 
@@ -41,7 +42,7 @@ export function StatusBar({ symbol, onLogout }: { symbol?: string; onLogout: () 
         {symbol ?? "—"}: <span className="text-neutral-100">{phaseName(phase)}</span>
       </span>
       <span className="ml-auto text-neutral-400">{user}</span>
-      <button onClick={onLogout} className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700">
+      <button onClick={onLogout} className={neutralButton}>
         Log out
       </button>
     </header>

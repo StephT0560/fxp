@@ -10,6 +10,7 @@ import { SimControls } from "./components/SimControls";
 import { StatusBar } from "./components/StatusBar";
 import { SymbolList } from "./components/SymbolList";
 import { TapeView } from "./components/TapeView";
+import { buttonFocus } from "./lib/styles";
 import { activeClient, ConsoleClient } from "./lib/client";
 import { formatPrice, formatQty } from "./lib/format";
 import {
@@ -92,12 +93,13 @@ export function App() {
     <div className="flex h-full flex-col">
       <StatusBar symbol={selected} onLogout={() => setUser(undefined)} />
       <nav
-        className="flex gap-4 border-b border-neutral-800 px-4 py-2"
+        className="flex gap-1 border-b border-neutral-800 bg-neutral-950 px-4 py-2"
         aria-label="Console panels"
       >
         {["market", "scenarios", "latency", "protocol"].map((v) => (
           <button
             key={v}
+            className={`rounded px-3 py-1 text-sm text-neutral-400 hover:bg-neutral-800 aria-pressed:bg-neutral-700 aria-pressed:text-white ${buttonFocus}`}
             aria-pressed={panel === v}
             onClick={() => setPanel(v)}
           >

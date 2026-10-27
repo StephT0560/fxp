@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { buttonFocus, neutralButton } from "../lib/styles";
 import { useState } from "react";
 
 export function SimControls() {
@@ -54,11 +55,11 @@ export function SimControls() {
         onClick={() =>
           void call("/api/sim/start", { seed, symbols: 10, participants: 20, duration, ...(auction ? { opening_auction_sec: auctionSec } : {}) })
         }
-        className="rounded bg-blue-700 px-2 py-1 hover:bg-blue-600"
+        className={`rounded bg-blue-700 px-2 py-1 hover:bg-blue-600 ${buttonFocus}`}
       >
         Start simulator
       </button>
-      <button data-testid="sim-stop" onClick={() => void call("/api/sim/stop")} className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700">
+      <button data-testid="sim-stop" onClick={() => void call("/api/sim/stop")} className={neutralButton}>
         Stop
       </button>
       {msg && (
