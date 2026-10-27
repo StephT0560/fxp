@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { buttonFocus, neutralButton } from "../lib/styles";
+import { confirmSimulatorStart } from "../lib/auction-clock";
 import { useState } from "react";
 
 export function SimControls() {
@@ -15,6 +16,7 @@ export function SimControls() {
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (res.ok && path.endsWith("start")) confirmSimulatorStart(await res.json());
     setMsg(
       res.ok
         ? path.endsWith("start")

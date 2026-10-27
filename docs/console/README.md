@@ -304,3 +304,15 @@ separately on bids and asks. Only prices entered in this console are known;
 status reports do not supply limit prices. Footers count working orders outside
 the displayed ten levels, and working orders whose price is unknown. No price
 is inferred after a reload.
+
+### Observed auction countdown
+
+Simulator opening calls show an estimate from the browser's observed
+OPENING_CALL arrival plus the simulator's configured duration. It ticks once
+per second and clamps to “uncrossing…”. The tooltip identifies this as an
+observed-arrival estimate, not a scheduled core timestamp. Duplicate status
+messages do not restart it. Unknown durations, scenario calls and late-join
+snapshots without an attributable start show no countdown. Quick demo and
+Start simulator confirm their own run metadata so a fresh first call can be
+attributed without guessing. One shared interval serves every banner and is
+cleaned up when unused.

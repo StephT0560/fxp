@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import type { CallObservation } from "./auction";
+import { TradingPhase as Phase } from "../gen/fxp_pb";
 import { create } from "zustand";
 import type {
   AuctionInfo,
@@ -24,6 +26,7 @@ export interface SessionState {
   attempt: number;
   error?: string;
   phases: Record<string, TradingPhase>;
+  openingCalls: Record<string, CallObservation>;
   auctions: Record<string, AuctionInfo>;
   setConn: (conn: ConnState, error?: string, attempt?: number) => void;
   setUser: (user?: string) => void;
@@ -35,10 +38,19 @@ export const useSession = create<SessionState>((set) => ({
   conn: "idle",
   attempt: 0,
   phases: {},
+  openingCalls: {},
   auctions: {},
   setConn: (conn, error, attempt = 0) => set({ conn, error, attempt }),
   setUser: (user) => set({ user }),
-  onStatus: (symbol, phase) => set((s) => ({ phases: { ...s.phases, [symbol]: phase } })),
+  onStatus: (symbol, phase) => set((s) => {
+    let openingCalls = s.openingCalls;
+    if (s.phases[symbol] !== phase) {
+      openingCalls = { ...openingCalls };
+      if (phase === Phase.OPENING_CALL) openingCalls[symbol] = { at: Date.now(), knownTransition: s.phases[symbol] !== undefined };
+      else delete openingCalls[symbol];
+    }
+    return { phases: { ...s.phases, [symbol]: phase }, openingCalls };
+  }),
   onAuction: (a) => set((s) => ({ auctions: { ...s.auctions, [a.symbol]: a } })),
 }));
 

@@ -10,6 +10,7 @@ import { SimControls } from "./components/SimControls";
 import { StatusBar } from "./components/StatusBar";
 import { SymbolList } from "./components/SymbolList";
 import { TapeView } from "./components/TapeView";
+import { useAuctionTimers } from "./lib/auction-clock";
 import { buttonFocus } from "./lib/styles";
 import { activeClient, ConsoleClient } from "./lib/client";
 import { formatPrice, formatQty } from "./lib/format";
@@ -51,6 +52,7 @@ function Stats({ symbol, scale }: { symbol: string; scale: number }) {
 
 export function App() {
   const user = useSession((s) => s.user);
+  useAuctionTimers(Boolean(user));
   const setUser = useSession((s) => s.setUser);
   const { list, selected, setList } = useSymbols();
   const client = useRef<ConsoleClient>(undefined);

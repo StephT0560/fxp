@@ -32,3 +32,17 @@ test("a resting limit marks its own ladder level until canceled", async ({ page 
   await row.getByTestId("order-cancel").click();
   await expect(level.getByTestId("own-order-marker")).toHaveCount(0);
 });
+
+test("simulator call counts down without inventing a scenario deadline", async ({ page }) => {
+  await page.request.post("/api/sim/stop");
+  await login(page);
+  await page.getByTestId("symbol-DEMO").click();
+  await page.getByTestId("sim-auction-secs").fill("10");
+  await page.getByTestId("sim-start").click();
+  const countdown = page.getByTestId("auction-countdown");
+  await expect(countdown).toContainText(/uncross in \d+ s/);
+  const before = await countdown.innerText();
+  await expect(countdown).not.toHaveText(before, { timeout: 2500 });
+  await page.request.post("/api/sim/stop");
+  await expect(countdown).toBeHidden({ timeout: 15000 });
+});
