@@ -10,6 +10,8 @@ import { SimControls } from "./components/SimControls";
 import { StatusBar } from "./components/StatusBar";
 import { SymbolList } from "./components/SymbolList";
 import { TapeView } from "./components/TapeView";
+import { SIMULATOR_DEFAULTS } from "./lib/simulator";
+import { confirmSimulatorStart } from "./lib/auction-clock";
 import { useAuctionTimers } from "./lib/auction-clock";
 import { buttonFocus } from "./lib/styles";
 import { activeClient, ConsoleClient } from "./lib/client";
@@ -56,6 +58,9 @@ export function App() {
   const setUser = useSession((s) => s.setUser);
   const { list, selected, setList } = useSymbols();
   const client = useRef<ConsoleClient>(undefined);
+  const [quickDemo, setQuickDemo] = useState(false);
+  const quickStarted = useRef(false);
+  const conn = useSession((s) => s.conn);
   const [panel, setPanel] = useState("market");
   const [error, setError] = useState<string>();
 
@@ -88,12 +93,23 @@ export function App() {
     };
   }, [user]);
 
-  if (!user) return <Login onLogin={setUser} />;
+  useEffect(() => {
+    if (!quickDemo || user !== "alice" || conn !== "live" || quickStarted.current) return;
+    quickStarted.current = true;
+    const c = new AbortController();
+    fetch("/api/sim/start", { method: "POST", signal: c.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...SIMULATOR_DEFAULTS, opening_auction_sec: 10 }) })
+      .then(async (r) => { if (r.ok) { confirmSimulatorStart(await r.json()); return; } if (!r.ok) {const text = (await r.text()).trim(); if (!(r.status === 409 && /already running/i.test(text))) throw Error(text); } })
+      .catch((e: Error) => { if (!c.signal.aborted) setError(`Quick demo: ${e.message}`); })
+      .finally(() => { if (!c.signal.aborted) setQuickDemo(false); });
+    return () => c.abort();
+  }, [quickDemo, user, conn]);
+
+  if (!user) return <Login onLogin={(u) => { setQuickDemo(false); setUser(u); }} onQuickDemo={() => { quickStarted.current = false; setQuickDemo(true); useSymbols.getState().select("AAPL"); setUser("alice"); }} />;
   const info = list.find((s) => s.symbol === selected);
   const scale = info?.price_scale ?? 2;
   return (
     <div className="flex h-full flex-col">
-      <StatusBar symbol={selected} onLogout={() => setUser(undefined)} />
+      <StatusBar symbol={selected} onLogout={() => { setQuickDemo(false); setUser(undefined); }} />
       <nav
         className="flex gap-1 border-b border-neutral-800 bg-neutral-950 px-4 py-2"
         aria-label="Console panels"

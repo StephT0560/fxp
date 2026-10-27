@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 import { DEPTH, isCrossed, topAsks, topBids, type Level } from "../lib/book";
 import { formatPrice, formatQty } from "../lib/format";
+import { MARKET_EMPTY } from "../lib/simulator";
 import { ownLevels } from "../lib/own-levels";
-import { useBook, useOrders } from "../lib/stores";
+import { useBook, useOrders, useTape } from "../lib/stores";
 
 function Row({ level, side, scale, max, own }: { level?: Level; side: "bid" | "ask"; scale: number; max: number; own?: number }) {
   const pct = level && max > 0 ? Math.round((level.qty / max) * 100) : 0;
@@ -20,6 +21,7 @@ function Row({ level, side, scale, max, own }: { level?: Level; side: "bid" | "a
 export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
   useBook((s) => s.version);
   useOrders((s) => s.version);
+  useTape((s) => s.version);
   const book = useBook.getState().books.get(symbol);
   const bids = book ? topBids(book, DEPTH) : [];
   const asks = book ? topAsks(book, DEPTH) : [];
@@ -34,6 +36,7 @@ export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
         {!book?.synced && <span className="text-amber-400" data-testid="book-unsynced">awaiting snapshot</span>}
         {crossed && <span className="text-red-400" data-testid="book-crossed">crossed</span>}
       </div>
+      {!book?.synced && !useTape.getState().tapes.get(symbol)?.prints.length ? <p className="p-3 text-sm text-neutral-400">{MARKET_EMPTY}</p> : <>
       {Array.from({ length: DEPTH }, (_, i) => (
         <Row key={`a${i}`} level={asks[DEPTH - 1 - i]} side="ask" scale={scale} max={max} own={own.sell.get(asks[DEPTH - 1 - i]?.price ?? -1n)} />
       ))}
@@ -43,6 +46,7 @@ export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
       {Array.from({ length: DEPTH }, (_, i) => (
         <Row key={`b${i}`} level={bids[i]} side="bid" scale={scale} max={max} own={own.buy.get(bids[i]?.price ?? -1n)} />
       ))}
+      </>}
       {(own.offLadder > 0 || own.unknown > 0) && <div className="border-t border-neutral-800 px-2 py-1 text-xs text-sky-300">{own.offLadder > 0 && <p>+{own.offLadder} working off-ladder</p>}{own.unknown > 0 && <p>{own.unknown} working orders, price not in status reports</p>}</div>}
     </section>
   );

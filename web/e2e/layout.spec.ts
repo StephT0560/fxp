@@ -5,6 +5,12 @@ for (const [width, height] of [[960,1080],[1280,720],[1366,768],[1920,1080]]) {
     await page.setViewportSize({ width: width!, height: height! });
     await page.goto("/"); await page.getByTestId("login-alice").click();
     await expect(page.getByTestId("chart")).toBeVisible();
+    if (width! < 1200) await page.getByTestId("symbol-select").selectOption("DEMO");
+    else await page.getByTestId("symbol-DEMO").click();
+    await page.getByTestId("ticket-qty").fill("1");
+    await page.getByTestId("ticket-price").fill("27.00");
+    await page.getByTestId("ticket-submit").click();
+    await expect(page.getByTestId("ladder").getByTestId("bid-row").first()).toBeVisible();
     const metrics = await page.evaluate(() => {
       const ladder = document.querySelector('[data-testid="ladder"]')!;
       const bounds = ladder.getBoundingClientRect();

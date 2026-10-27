@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 import { buttonFocus, neutralButton } from "../lib/styles";
 import { confirmSimulatorStart } from "../lib/auction-clock";
+import { SIMULATOR_DEFAULTS } from "../lib/simulator";
 import { useState } from "react";
 
 export function SimControls() {
-  const [seed, setSeed] = useState(42);
-  const [duration, setDuration] = useState(120);
+  const [seed, setSeed] = useState(SIMULATOR_DEFAULTS.seed);
+  const [duration, setDuration] = useState(SIMULATOR_DEFAULTS.duration);
   const [auction, setAuction] = useState(true);
-  const [auctionSec, setAuctionSec] = useState(20);
+  const [auctionSec, setAuctionSec] = useState(SIMULATOR_DEFAULTS.opening_auction_sec);
   const [msg, setMsg] = useState<string>();
   const call = async (path: string, body?: unknown) => {
     setMsg(undefined);
@@ -55,7 +56,7 @@ export function SimControls() {
       <button
         data-testid="sim-start"
         onClick={() =>
-          void call("/api/sim/start", { seed, symbols: 10, participants: 20, duration, ...(auction ? { opening_auction_sec: auctionSec } : {}) })
+          void call("/api/sim/start", { ...SIMULATOR_DEFAULTS, seed, duration, opening_auction_sec: auction ? auctionSec : 0, ...(auction ? { opening_auction_sec: auctionSec } : {}) })
         }
         className={`rounded bg-blue-700 px-2 py-1 hover:bg-blue-600 ${buttonFocus}`}
       >

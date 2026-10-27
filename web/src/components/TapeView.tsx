@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 import { OrderSide } from "../gen/fxp_pb";
 import { formatPrice, formatQty } from "../lib/format";
-import { useTape } from "../lib/stores";
+import { MARKET_EMPTY } from "../lib/simulator";
+import { useBook, useTape } from "../lib/stores";
 
 export function TapeView({ symbol, scale }: { symbol: string; scale: number }) {
   useTape((s) => s.version);
+  useBook((s) => s.version);
   const tape = useTape.getState().tapes.get(symbol);
   return (
     <section className="tape-panel flex min-h-0 shrink-0 flex-col border-l border-neutral-800" data-testid="tape">
@@ -21,6 +23,7 @@ export function TapeView({ symbol, scale }: { symbol: string; scale: number }) {
         </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {!useBook.getState().books.get(symbol)?.synced && !tape?.prints.length && <p className="p-3 text-sm text-neutral-400">{MARKET_EMPTY}</p>}
         {tape?.prints.map((p) => (
           <div key={p.key} className="grid grid-cols-4 gap-1 px-2 text-xs" data-testid="tape-row">
             <span className="num text-neutral-500">{new Date(p.timeMs).toLocaleTimeString("en-GB")}</span>

@@ -59,3 +59,29 @@ test("the compact ticket keeps advanced controls disclosed and GTD expiry requir
   await page.getByTestId("ticket-tif").selectOption("7");
   await expect(page.getByTestId("ticket-expiry")).toBeVisible();
 });
+
+test("Quick demo uses alice, waits for live and shares simulator defaults", async ({ page }) => {
+  await page.request.post("/api/sim/stop");
+  await page.goto("/");
+  await expect(page.getByTestId("login-market-maker")).toHaveCount(0);
+  const started = page.waitForRequest((r) => r.url().endsWith("/api/sim/start") && r.method() === "POST");
+  await page.getByTestId("quick-demo").click();
+  const request = await started;
+  expect(request.postDataJSON()).toEqual({ seed: 42, symbols: 10, participants: 20, duration: 120, opening_auction_sec: 10 });
+  await expect(page.getByTestId("conn-state")).toContainText("live");
+  await expect(page.getByTestId("phase")).toContainText("AAPL");
+  await expect(page.getByTestId("tape-row").first()).toBeVisible({ timeout: 30000 });
+  await page.getByRole("button", { name: "Log out" }).click();
+  const duplicate = page.waitForResponse((r) => r.url().endsWith("/api/sim/start") && r.request().method() === "POST");
+  await page.getByTestId("quick-demo").click();
+  expect((await duplicate).status()).toBe(409);
+  await expect(page.getByTestId("conn-state")).toContainText("live");
+  await expect(page.getByText(/Quick demo:/)).toHaveCount(0);
+  await page.request.post("/api/sim/stop");
+});
+
+test("an uninitialized market explains how to get data", async ({ page }) => {
+  await page.routeWebSocket(/\/ws$/, () => { /* Deliberately no snapshot or print. */ });
+  await page.goto("/"); await page.getByTestId("login-alice").click();
+  for (const panel of ["ladder", "tape"]) await expect(page.getByTestId(panel)).toContainText("No market data yet. Start the simulator or use Quick demo.");
+});

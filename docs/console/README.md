@@ -24,8 +24,9 @@ docker compose --env-file .env.demo -p fxp-demo \
 ```
 
 The demo image builds `web/` with `npm ci && npm run build` if its package manifest
-is present. It always contains `demo_api`, `simday`, and symbol config. No UI
-sources, hosted multiplexing, TLS termination, or metrics are added in this PR.
+is present. It contains `demo_api`, `simday`, the owned `fix_bridge` executable,
+built UI assets and symbol config. Hosted multiplexing, TLS termination and
+backend metrics remain out of scope.
 
 For a native run, generate bindings (`bash scripts/gen_proto.sh`), start core and
 gateway, build `go build -o bin/simday ./go_gateway/simulation`, and run
@@ -316,3 +317,12 @@ snapshots without an attributable start show no countdown. Quick demo and
 Start simulator confirm their own run metadata so a fresh first call can be
 attributed without guessing. One shared interval serves every banner and is
 cleaned up when unused.
+
+### First run and Quick demo
+
+**Quick demo** logs in as Alice, waits for the live gateway connection, selects
+AAPL and starts the usual seeded simulator defaults with a shorter ten-second
+opening call. An already-running simulator is treated as success. Plain Alice
+and Bob login buttons remain available; the market-maker service identity is
+kept out of this login list. Before any snapshot or print arrives, depth and tape
+explain how to start receiving market data.
