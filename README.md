@@ -10,8 +10,10 @@ counter, price chart, session phase/auction banner, simulator controls and an
 order blotter. The [~75-second script](docs/console/demo-script.md) follows three
 beats in Alice's browser; Bob supplies the counterparty in an unrecorded context.
 
+<!--
 **Video:** _Maintainer upload pending — the recording harness generates a WebM
 for local MP4 conversion; replace this line with the uploaded final video._
+-->
 
 ![Opening auction: ladder, tape and observed countdown](docs/media/console-auction.png)
 
