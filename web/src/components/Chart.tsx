@@ -2,6 +2,7 @@
 import { createChart, LineSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef } from "react";
 import type { Print } from "../lib/tape";
+import { chartViewport } from "../lib/chart-viewport";
 import { useTape } from "../lib/stores";
 
 /** One point per second (last print wins), oldest first, as lightweight-charts requires. */
@@ -23,14 +24,21 @@ export function Chart({ symbol, scale }: { symbol: string; scale: number }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi>(undefined);
   const series = useRef<ISeriesApi<"Line">>(undefined);
+  const manual = useRef(false);
+  const previousMode = useRef("keep");
+  const previousCount = useRef(0);
   const version = useTape((s) => s.version);
 
   useEffect(() => {
     if (!el.current) return;
+    manual.current = false;
+    previousMode.current = "keep";
+    previousCount.current = 0;
     const c = createChart(el.current, {
       autoSize: true,
       layout: { background: { color: "#0a0a0a" }, textColor: "#a3a3a3" },
       grid: { vertLines: { color: "#1f1f1f" }, horzLines: { color: "#1f1f1f" } },
+      rightPriceScale: { scaleMargins: { top: 0.15, bottom: 0.15 } },
       timeScale: { timeVisible: true, secondsVisible: true },
     });
     chart.current = c;
@@ -44,8 +52,31 @@ export function Chart({ symbol, scale }: { symbol: string; scale: number }) {
 
   useEffect(() => {
     const prints = useTape.getState().tapes.get(symbol)?.prints ?? [];
-    series.current?.setData(chartPoints(prints, scale));
+    const points = chartPoints(prints, scale);
+    const mode = chartViewport(points.length, manual.current);
+    series.current?.setData(points);
+    const time = chart.current?.timeScale();
+    if (mode === "fit" && (previousMode.current !== mode || previousCount.current !== points.length)) time?.fitContent();
+    if (mode === "follow" && previousMode.current !== mode) {
+      time?.applyOptions({ barSpacing: 6, rightOffset: 0 });
+      time?.scrollToPosition(0, false);
+    }
+    previousMode.current = mode;
+    previousCount.current = points.length;
   }, [symbol, scale, version]);
 
-  return <div ref={el} className="min-h-0 flex-1" data-testid="chart" />;
+  const markManual = () => {
+    manual.current = true;
+    chart.current?.timeScale().applyOptions({ shiftVisibleRangeOnNewBar: false });
+  };
+  const empty = !(useTape.getState().tapes.get(symbol)?.prints.length);
+  return (
+    <div className="relative min-h-0 flex-1" data-testid="chart"
+      onPointerDownCapture={markManual}
+      onWheelCapture={markManual}
+      onTouchStartCapture={markManual}>
+      <div ref={el} className="absolute inset-0" />
+      {empty && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-neutral-500">No trades yet</div>}
+    </div>
+  );
 }
