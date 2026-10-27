@@ -88,7 +88,7 @@ Auction price selection maximizes volume, minimizes imbalance, prefers the refer
 
 ---
 
-## Proto Schema (v2.5)
+## Proto Schema (v2.6)
 
 Full institutional-grade message coverage:
 
@@ -106,7 +106,7 @@ ErrorMessage            — structured error responses
 OrderMassCancelRequest / OrderMassCancelReport — owner-scoped mass cancel
 ```
 
-Version 2.5 adds `TradeCaptureReport.aggressor_side`, `seq` and `is_auction` for the anonymous public trade feed, which the core now emits once per fill to every market-data subscriber of the symbol; see [market data](docs/market-data.md). Version 2.4 adds optional iceberg display quantities on entry/replacement and execution reports; see [iceberg behavior](docs/iceberg-orders.md). Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
+Version 2.6 adds optional `SessionControl.symbol` (field 4), letting a local scenario open a call on just its own book; an empty value retains all-symbol behavior. Version 2.5 adds `TradeCaptureReport.aggressor_side`, `seq` and `is_auction` for the anonymous public trade feed, which the core now emits once per fill to every market-data subscriber of the symbol; see [market data](docs/market-data.md). Version 2.4 adds optional iceberg display quantities on entry/replacement and execution reports; see [iceberg behavior](docs/iceberg-orders.md). Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
 **TimeInForce:** `TIME_IN_FORCE_UNSPECIFIED=0` · `DAY=1` · `GTC=2` · `IOC=3` · `FOK=4` · `AT_OPEN=5` · `AT_CLOSE=6` · `GTD=7`
 
@@ -390,6 +390,7 @@ and a `seqnums` file replaced atomically on every change.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `FXP_FIX_GATEWAY_ADDR` | `127.0.0.1:8082` | Bridge upstream gateway address; owned scenario bridge inherits the BFF gateway |
 | `FXP_FIX_STORE_DIR` | native `fix_store`; Compose `/data/fix_store` | Store root; set empty for in-memory state (lost on restart) |
 | `FXP_FIX_STORE_FSYNC` | `strict` | `strict`: fsync every write; `group`: fsync every `FXP_FIX_STORE_GROUP_INTERVAL` (default `10ms`); `async`: never fsync. All modes survive a killed process; they differ only on power loss |
 | `FXP_FIX_STORE_MAX_MESSAGES` | `100000` | Outbound messages retained for resend; older ones are answered with SequenceReset-GapFill |
@@ -462,7 +463,7 @@ bursts and loopback figures are not production capacity or WAN SLO claims.
 ```text
 fxp/
 ├── .github/                    CI, benchmark/release workflows and Dependabot
-├── fxp_core/                   Rust matching engine, protobuf v2.5, Criterion
+├── fxp_core/                   Rust matching engine, protobuf v2.6, Criterion
 │   └── src/                    server/core auth, engine, order_book, event log,
 │                               schedule, symbol configuration and regressions
 ├── go_gateway/                 Native TCP/WebSocket gateway
@@ -662,6 +663,7 @@ See [deployment, reload and client examples](docs/tls-trust.md) and the
 | `FXP_DEMO_ORIGIN` | `http://127.0.0.1:3000` | Exact browser Origin and Host accepted by the BFF |
 | `FXP_DEMO_GATEWAY_WS_URL` | `ws://127.0.0.1:8081/ws` | Private gateway WebSocket upstream |
 | `FXP_DEMO_STATIC_DIR` | `web/dist` | Static UI directory (`-static-dir` overrides); placeholder when absent |
+| `FXP_DEMO_FIX_BINARY` | `bin/fix_bridge` | Trusted owned bridge subprocess for seeded FIX restart scenarios |
 | `FXP_DEMO_SIM_BINARY` | `bin/simday` | Trusted simulator executable |
 | `FXP_DEMO_TOKEN_TTL_SEC` | `900` | Demo JWT lifetime, 1–900 seconds |
 | `FXP_DEMO_TOKEN_RATE_PER_MIN` | `10` | Token attempts per IP/minute, 1–120 |
@@ -708,3 +710,7 @@ Auto-merge is not enabled.
 First-release preparation and exact maintainer-only tagging commands are in
 [the release process](docs/release-process.md); the prepared changelog does not
 indicate an existing release. Manual release builds create artifacts only.
+
+Seeded, narrated [console scenarios](docs/console/scenarios.md) demonstrate
+auction uncross, stop cascades, five STP modes, iceberg priority, COD and FIX
+restart/resend recovery. Run them from the Scenarios page with `make demo`.

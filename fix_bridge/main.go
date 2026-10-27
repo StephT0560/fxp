@@ -142,7 +142,7 @@ func main() {
 	}
 	log.Printf("🌉 FXP FIX Bridge listening on %s", *listenAddr)
 	log.Printf("   SenderCompID: %s", *bridgeCompID)
-	log.Printf("   Gateway:      127.0.0.1:8082")
+	log.Printf("   Gateway:      %s", startup.Address("FXP_FIX_GATEWAY_ADDR", "127.0.0.1:8082"))
 	log.Printf("   FXP_JWT_SECRET: set ✓")
 	log.Printf("   FIX CompIDs allowed: %d", len(creds))
 

@@ -13,6 +13,7 @@ import (
 )
 
 type config struct {
+	fixBinary                                                                    string
 	addr, origin, upstream, staticDir, simBinary, simGateway, secret, symbolFile string
 	tokenTTL                                                                     time.Duration
 	tokenRate                                                                    int
@@ -22,14 +23,14 @@ type config struct {
 func defaultConfig() config {
 	return config{
 		addr: "127.0.0.1:3000", origin: "http://127.0.0.1:3000", upstream: "ws://127.0.0.1:8081/ws",
-		staticDir: "web/dist", simBinary: "bin/simday", simGateway: "127.0.0.1:8082", tokenTTL: 15 * time.Minute, tokenRate: 10,
+		fixBinary: "bin/fix_bridge", staticDir: "web/dist", simBinary: "bin/simday", simGateway: "127.0.0.1:8082", tokenTTL: 15 * time.Minute, tokenRate: 10,
 	}
 }
 func configFromEnv() (config, error) {
 	c := defaultConfig()
 	for name, dst := range map[string]*string{
 		"FXP_DEMO_ADDR": &c.addr, "FXP_DEMO_ORIGIN": &c.origin, "FXP_DEMO_GATEWAY_WS_URL": &c.upstream,
-		"FXP_DEMO_STATIC_DIR": &c.staticDir, "FXP_DEMO_SIM_BINARY": &c.simBinary, "FXP_SIM_GATEWAY_ADDR": &c.simGateway,
+		"FXP_DEMO_FIX_BINARY": &c.fixBinary, "FXP_DEMO_STATIC_DIR": &c.staticDir, "FXP_DEMO_SIM_BINARY": &c.simBinary, "FXP_SIM_GATEWAY_ADDR": &c.simGateway,
 	} {
 		if v := os.Getenv(name); v != "" {
 			*dst = v

@@ -20,6 +20,7 @@ import {
   type SymbolInfo,
 } from "./lib/stores";
 
+const ScenariosPage = lazy(() => import("./components/ScenariosPage"));
 const LatencyPanel = lazy(() => import("./components/LatencyPanel"));
 import { ProtocolInspector } from "./components/ProtocolInspector";
 import { useInspector } from "./lib/inspector";
@@ -94,7 +95,7 @@ export function App() {
         className="flex gap-4 border-b border-neutral-800 px-4 py-2"
         aria-label="Console panels"
       >
-        {["market", "latency", "protocol"].map((v) => (
+        {["market", "scenarios", "latency", "protocol"].map((v) => (
           <button
             key={v}
             aria-pressed={panel === v}
@@ -102,12 +103,19 @@ export function App() {
           >
             {v === "market"
               ? "Market"
-              : v === "latency"
-                ? "Latency"
-                : "Protocol inspector"}
+              : v === "scenarios"
+                ? "Scenarios"
+                : v === "latency"
+                  ? "Latency"
+                  : "Protocol inspector"}
           </button>
         ))}
       </nav>
+      {panel === "scenarios" && (
+        <Suspense fallback={<p>Loading scenarios…</p>}>
+          <ScenariosPage />
+        </Suspense>
+      )}
       {panel === "latency" && (
         <Suspense fallback={<p>Loading latency panel…</p>}>
           <LatencyPanel />

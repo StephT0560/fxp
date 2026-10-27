@@ -7,6 +7,20 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Seeded console scenarios v0.2
+- Six narrated, self-checking real-gateway scenarios on fresh SCN-* books,
+  with SSE replay, deterministic same-seed outcomes, single-flight execution,
+  cancellation and verified cleanup. Reuses the ladder, tape and order stores.
+- Owned FIX bridge restart/resend demonstration with a temporary strict
+  FileStore and ephemeral loopback port; no Docker socket.
+- Additive protocol v2.6 SessionControl.symbol (field 4) isolates auction calls.
+  Empty retains all-symbol behavior. Demo symbol admission allows SCN-* books
+  with a 4096-book lifetime cap; new trusted FXP_DEMO_FIX_BINARY setting and
+  optional FXP_FIX_GATEWAY_ADDR bridge upstream address.
+- Six Playwright scenarios, each repeated with the same seed, plus assertion,
+  cleanup, SSE and symbol-isolation regression tests.
+
+
 ### Console latency and protocol inspector v0.2
 - Read-only validated benchmark evidence, separate intended-time/post-send ACK
   charts with median and full repetition spread, historical build/environment

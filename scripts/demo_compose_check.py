@@ -16,9 +16,12 @@ ports = [(service, port) for service, cfg in config['services'].items()
 assert len(ports) == 1, 'demo must publish exactly one port'
 service, port = ports[0]
 assert service == 'core' and str(port['published']) == '3000' and port['host_ip'] == '127.0.0.1'
+core_env = config['services']['core']['environment']
+assert 'FXP_SYMBOLS' not in core_env, 'scenario symbols must not be blocked by an inherited allow-list'
+assert str(core_env['FXP_MAX_SYMBOLS']) == '4096'
 secret = next(line.split('=', 1)[1] for line in Path('.env.demo').read_text().splitlines()
               if line.startswith('FXP_JWT_SECRET='))
-for path in ['/healthz', '/api/users', '/api/symbols', '/api/sim/status', '/']:
+for path in ['/healthz', '/api/users', '/api/symbols', '/api/sim/status', '/api/scenarios', '/']:
     with urllib.request.urlopen('http://127.0.0.1:3000' + path) as response:
         assert secret.encode() not in response.read(), 'secret exposed in response'
 print('PASS demo: only 127.0.0.1:3000 published; private core/gateway; no secret in API/static responses')

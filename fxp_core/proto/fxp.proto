@@ -9,7 +9,7 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.5 adds public trade-feed fields.
+// FXP Protocol — v2.6 adds optional symbol-scoped session control.
 // v2.3 added order-status requests/replies.
 // v2.2 added self-trade prevention, cancel-on-disconnect and mass cancel.
 // v2.1 added auction/session messages.
@@ -459,12 +459,14 @@ message OrderStatusResponse {
   bool complete = 5; // last batch; response batches carry at most 64 reports
   uint32 total_reports = 6;
 }
+// v2.6 (operator): optionally scope a call; empty symbol retains v2.5 behavior.
 // v2.5 (operator): every symbol enters an opening call now and uncrosses after
 // opening_call_seconds. The gateway forwards it only for operator tokens.
 message SessionControl {
   string request_id = 1;
   string sender = 2;
   uint32 opening_call_seconds = 3; // 1..=3600
+  string symbol = 4; // optional single symbol; empty means every symbol
 }
 message SessionControlReport {
   string request_id = 1;

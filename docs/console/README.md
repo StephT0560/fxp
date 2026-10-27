@@ -45,6 +45,7 @@ not a list of all possible symbols.
 | `FXP_ALLOW_PLAINTEXT` | `false` | Explicitly permit a non-loopback listener; demo Compose enables this inside its namespace |
 | `FXP_DEMO_GATEWAY_WS_URL` | `ws://127.0.0.1:8081/ws` | Private upstream WebSocket URL; no credentials/query |
 | `FXP_DEMO_STATIC_DIR` | `web/dist` | Built assets; also overridable with `-static-dir` |
+| `FXP_DEMO_FIX_BINARY` | `bin/fix_bridge` | Trusted subprocess for FIX recovery scenarios; demo image sets `/usr/local/bin/fix_bridge` |
 | `FXP_DEMO_SIM_BINARY` | `bin/simday` | Trusted simulator executable, never supplied by an API caller |
 | `FXP_SIM_GATEWAY_ADDR` | `127.0.0.1:8082` | Simulator upstream TCP address |
 | `FXP_DEMO_TOKEN_TTL_SEC` | `900` | Token lifetime, integer 1–900 seconds |
@@ -287,3 +288,11 @@ Python field/checksum construction). `console-e2e` automatically includes
 provenance, spread and malformed-data empty states. An existing system Chromium
 can be selected for local tests with `FXP_CONSOLE_CHROMIUM=/usr/bin/chromium`.
 No `/metrics` tiles, benchmark runner, hosted mode or admin API is added.
+
+## Scenarios (v0.2)
+
+The **Scenarios** page runs six seeded, self-checking demonstrations through
+server-side gateway sessions. The browser watches the narration timeline and
+highlighted ladder/tape/observer blotter; one run at a time, with stop and
+cleanup. See [scenarios.md](scenarios.md) for each assertion, the SSE/API contract,
+determinism boundaries, symbol-admission settings and isolated FIX recovery.
