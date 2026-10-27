@@ -1244,8 +1244,13 @@ async fn session_control(
     let mut symbols_affected = 0;
     if reject.is_empty() {
         // Configured symbols that have not traded yet join the call too.
-        let mut symbols = router.symbols().await;
-        symbols.extend(router.symbol_config.symbols().map(str::to_string));
+        let mut symbols = if request.symbol.is_empty() {
+            let mut all = router.symbols().await;
+            all.extend(router.symbol_config.symbols().map(str::to_string));
+            all
+        } else {
+            vec![request.symbol.clone()]
+        };
         symbols.sort();
         symbols.dedup();
         for symbol in symbols {
@@ -2244,6 +2249,7 @@ mod report_tests {
             request_id: "SC".into(),
             sender: "operator".into(),
             opening_call_seconds: 60,
+            symbol: String::new(),
         };
         session_control(&router, request.clone(), &a).await;
         let report = next_session_report(&mut a_rx).await;
@@ -2280,6 +2286,41 @@ mod report_tests {
             let report = next_session_report(&mut a_rx).await;
             assert_eq!(report.symbols_affected, 0);
             assert!(report.reject_reason.contains("1..=3600"));
+        }
+    }
+
+    #[tokio::test]
+    async fn scoped_session_control_leaves_other_symbols_continuous() {
+        let router = SymbolRouter::new(None);
+        let selected = router.get_or_admit("SCN-TEST").await.unwrap();
+        let normal = router.get_or_admit("NORMAL").await.unwrap();
+        let (out, mut rx) = conn();
+        session_control(
+            &router,
+            fxp::SessionControl {
+                request_id: "scoped".into(),
+                sender: "operator".into(),
+                opening_call_seconds: 60,
+                symbol: "SCN-TEST".into(),
+            },
+            &out,
+        )
+        .await;
+        let report = next_session_report(&mut rx).await;
+        assert_eq!(report.symbols_affected, 1);
+        for (tx, symbol, accepted) in [(&selected, "SCN-TEST", true), (&normal, "NORMAL", false)] {
+            let order = fxp::NewOrderSingle {
+                time_in_force: fxp::TimeInForce::AtOpen as i32,
+                ..nos(symbol, "T", BUY, 100, 5, LIMIT, GTC)
+            };
+            send_order(tx, order, &out).await;
+            let ack = next(&mut rx).await;
+            assert_eq!(
+                ack.execution_type == fxp::ExecutionType::ExecNew as i32,
+                accepted,
+                "{symbol}: {}",
+                ack.reject_reason
+            );
         }
     }
 
