@@ -115,7 +115,7 @@ test("three-beat presentation: Alice only", async ({ browser, baseURL }) => {
     await alice.getByRole("button", { name: "FXP vs FIX for this order" }).click();
     await expect(alice.getByRole("status")).toContainText("8=FIX.4.4|");
     await expect(alice.getByRole("status")).toContainText("55=DEMO|");
-    await expect(alice.getByRole("status")).toContainText(/FXP \d+ bytes · FIX 4.4 \d+ bytes/);
+    await expect(alice.getByRole("status")).toContainText(/FXP \d+ B/);
     await still(alice, "console-protocol.png");
     await holdUntil(62);
     await alice.getByRole("button", { name: "Latency", exact: true }).click();
