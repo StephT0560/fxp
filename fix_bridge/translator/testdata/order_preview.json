@@ -1,0 +1,39 @@
+[
+  {
+    "name": "limit",
+    "order": {
+      "clientOrderId": "limit",
+      "orderId": "limit",
+      "symbol": "DEMO",
+      "side": 1,
+      "quantity": 10,
+      "orderType": 2,
+      "timeInForce": 1,
+      "price": "12345",
+      "timestamp": "2026-10-26T12:34:56.789Z",
+      "stpMode": 0
+    },
+    "fix": "8=FIX.4.4|9=132|35=D|49=CONSOLE|56=FXPBRIDGE|34=1|52=20261026-12:34:56.789|11=limit|55=DEMO|54=1|38=10|40=2|59=0|60=20261026-12:34:56.789|44=123.45|10=168|"
+  },
+  {
+    "name": "stop-limit-gtd",
+    "order": {
+      "clientOrderId": "stop-limit-gtd",
+      "orderId": "stop-limit-gtd",
+      "symbol": "DEMO",
+      "side": 2,
+      "quantity": 10,
+      "orderType": 4,
+      "timeInForce": 7,
+      "price": "12345",
+      "timestamp": "2026-10-26T12:34:56.789Z",
+      "stpMode": 5,
+      "stopPrice": "12400",
+      "expireDate": "2026-12-31",
+      "displayQuantity": 2,
+      "stpGroup": "group-a",
+      "account": "demo"
+    },
+    "fix": "8=FIX.4.4|9=198|35=D|49=CONSOLE|56=FXPBRIDGE|34=1|52=20261026-12:34:56.789|11=stop-limit-gtd|55=DEMO|54=2|38=10|40=4|59=6|60=20261026-12:34:56.789|44=123.45|99=124.00|1=demo|432=20261231|111=2|2964=99|2362=group-a|10=187|"
+  }
+]

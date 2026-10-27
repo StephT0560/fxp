@@ -8,7 +8,7 @@ const bff = process.env.FXP_CONSOLE_BFF ?? "http://127.0.0.1:3000";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  build: { target: "es2022", sourcemap: false },
+  build: { target: "es2022", sourcemap: false, manifest: true },
   server: {
     proxy: {
       "/api": bff,

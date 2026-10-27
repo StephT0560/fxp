@@ -1,0 +1,1811 @@
+{
+  "schema_version": 1,
+  "profile": "/api/bench/profile-r4",
+  "scenarios": [
+    {
+      "id": "open-c1-sleep",
+      "source": "benchmarks/round4/open-c1-sleep.json.gz",
+      "source_sha256": "0586a3a5cf51109a29bb5fc71794e3cb1473b273f6c1e6d315cf5904a8a85d9c",
+      "git_sha": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+      "created_utc": "2026-10-25T19:00:17Z",
+      "network": "loopback",
+      "protocol": "FXP",
+      "config": {
+        "tls": {
+          "enabled": false,
+          "mtls": false
+        },
+        "market_data_subscribers": 0,
+        "pacer": "sleep",
+        "mode": "open",
+        "gateway": "127.0.0.1:8082",
+        "connections": 1,
+        "measured_orders_per_connection": 1000,
+        "warmup_orders_per_connection": 100,
+        "repetitions": 5,
+        "open_loop_orders_per_second_per_connection": 1000,
+        "response_timeout_ns": 30000000000,
+        "symbol": "BENCH",
+        "symbol_mode": "single",
+        "quantity": 1,
+        "default_price_minor_units": 300000,
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs"
+      },
+      "environment": {
+        "arch": "amd64",
+        "client_cpu_affinity": "2",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "go": "go1.26.10",
+        "gomaxprocs": "1",
+        "launch_env_FXP_GW_RATE": "1000000",
+        "launch_env_FXP_GW_RATE_BURST": "1000000",
+        "launch_env_FXP_SYMBOL_CONFIG": "",
+        "launch_env_RUST_LOG": "error",
+        "launch_env_TOKIO_WORKER_THREADS": "1",
+        "logical_cpus": "1",
+        "os": "linux",
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+        "revision": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+        "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+      },
+      "runs": [
+        {
+          "market_data_updates_received": 0,
+          "index": 1,
+          "orders": 1000,
+          "elapsed_ns": 1001561917,
+          "orders_per_second": 998.4405187802282,
+          "max_send_lag_ns": 1642306,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 680447,
+            "p90_ns": 1172479,
+            "p99_ns": 1560575,
+            "p99_9_ns": 2084863,
+            "max_ns": 2301951
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 492799,
+            "p90_ns": 930815,
+            "p99_ns": 1058815,
+            "p99_9_ns": 1497087,
+            "max_ns": 1642495
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 196735,
+            "p90_ns": 350975,
+            "p99_ns": 736767,
+            "p99_9_ns": 1748991,
+            "max_ns": 1765375
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1224703,
+            "p90_ns": 2045951,
+            "p99_ns": 2396159,
+            "p99_9_ns": 2949119,
+            "max_ns": 3088383
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 2,
+          "orders": 1000,
+          "elapsed_ns": 1000068644,
+          "orders_per_second": 999.9313607116753,
+          "max_send_lag_ns": 110666999,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 857087,
+            "p90_ns": 19726335,
+            "p99_ns": 108527615,
+            "p99_9_ns": 117440511,
+            "max_ns": 118423551
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 639487,
+            "p90_ns": 11780095,
+            "p99_ns": 100794367,
+            "p99_9_ns": 109707263,
+            "max_ns": 110690303
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 225279,
+            "p90_ns": 7716863,
+            "p99_ns": 7979007,
+            "p99_9_ns": 8171519,
+            "max_ns": 11411455
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1514495,
+            "p90_ns": 20725759,
+            "p99_ns": 109510655,
+            "p99_9_ns": 118423551,
+            "max_ns": 119406591
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 3,
+          "orders": 1000,
+          "elapsed_ns": 999696371,
+          "orders_per_second": 1000.3037212185699,
+          "max_send_lag_ns": 2445062,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 704511,
+            "p90_ns": 1243135,
+            "p99_ns": 2195455,
+            "p99_9_ns": 3870719,
+            "max_ns": 4333567
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 498431,
+            "p90_ns": 953855,
+            "p99_ns": 1199103,
+            "p99_9_ns": 2271231,
+            "max_ns": 2445311
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 200959,
+            "p90_ns": 367615,
+            "p99_ns": 1376255,
+            "p99_9_ns": 2625535,
+            "max_ns": 3622911
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1302527,
+            "p90_ns": 2177023,
+            "p99_ns": 2969599,
+            "p99_9_ns": 4374527,
+            "max_ns": 5337087
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 4,
+          "orders": 1000,
+          "elapsed_ns": 1000769231,
+          "orders_per_second": 999.2313602615146,
+          "max_send_lag_ns": 2003931,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 711167,
+            "p90_ns": 1218559,
+            "p99_ns": 2371583,
+            "p99_9_ns": 7290879,
+            "max_ns": 8273919
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 494591,
+            "p90_ns": 924671,
+            "p99_ns": 1133567,
+            "p99_9_ns": 1681407,
+            "max_ns": 2003967
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 201599,
+            "p90_ns": 370175,
+            "p99_ns": 1424383,
+            "p99_9_ns": 6811647,
+            "max_ns": 7872511
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1271807,
+            "p90_ns": 2142207,
+            "p99_ns": 3227647,
+            "p99_9_ns": 8290303,
+            "max_ns": 9289727
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 5,
+          "orders": 1000,
+          "elapsed_ns": 1000655143,
+          "orders_per_second": 999.3452859313392,
+          "max_send_lag_ns": 1452290,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 751615,
+            "p90_ns": 1277951,
+            "p99_ns": 1886207,
+            "p99_9_ns": 2478079,
+            "max_ns": 2854911
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 507135,
+            "p90_ns": 931327,
+            "p99_ns": 1054719,
+            "p99_9_ns": 1406975,
+            "max_ns": 1453055
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 202239,
+            "p90_ns": 413695,
+            "p99_ns": 1306623,
+            "p99_9_ns": 1647615,
+            "max_ns": 1956863
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1316863,
+            "p90_ns": 2125823,
+            "p99_ns": 2811903,
+            "p99_9_ns": 3485695,
+            "max_ns": 3868671
+          }
+        }
+      ],
+      "summary": {
+        "ack_after_send_max_ns": {
+          "median": 3622911,
+          "min": 1765375,
+          "max": 11411455
+        },
+        "ack_after_send_p50_ns": {
+          "median": 201599,
+          "min": 196735,
+          "max": 225279
+        },
+        "ack_after_send_p90_ns": {
+          "median": 370175,
+          "min": 350975,
+          "max": 7716863
+        },
+        "ack_after_send_p99_9_ns": {
+          "median": 2625535,
+          "min": 1647615,
+          "max": 8171519
+        },
+        "ack_after_send_p99_ns": {
+          "median": 1376255,
+          "min": 736767,
+          "max": 7979007
+        },
+        "ack_max_ns": {
+          "median": 4333567,
+          "min": 2301951,
+          "max": 118423551
+        },
+        "ack_p50_ns": {
+          "median": 711167,
+          "min": 680447,
+          "max": 857087
+        },
+        "ack_p90_ns": {
+          "median": 1243135,
+          "min": 1172479,
+          "max": 19726335
+        },
+        "ack_p99_9_ns": {
+          "median": 3870719,
+          "min": 2084863,
+          "max": 117440511
+        },
+        "ack_p99_ns": {
+          "median": 2195455,
+          "min": 1560575,
+          "max": 108527615
+        },
+        "fill_max_ns": {
+          "median": 5337087,
+          "min": 3088383,
+          "max": 119406591
+        },
+        "fill_p50_ns": {
+          "median": 1302527,
+          "min": 1224703,
+          "max": 1514495
+        },
+        "fill_p90_ns": {
+          "median": 2142207,
+          "min": 2045951,
+          "max": 20725759
+        },
+        "fill_p99_9_ns": {
+          "median": 4374527,
+          "min": 2949119,
+          "max": 118423551
+        },
+        "fill_p99_ns": {
+          "median": 2969599,
+          "min": 2396159,
+          "max": 109510655
+        },
+        "max_send_lag_ns": {
+          "median": 2003931,
+          "min": 1452290,
+          "max": 110666999
+        },
+        "orders_per_second": {
+          "median": 999.3452859313392,
+          "min": 998.4405187802282,
+          "max": 1000.3037212185699
+        },
+        "send_lag_max_ns": {
+          "median": 2003967,
+          "min": 1453055,
+          "max": 110690303
+        },
+        "send_lag_p50_ns": {
+          "median": 498431,
+          "min": 492799,
+          "max": 639487
+        },
+        "send_lag_p90_ns": {
+          "median": 931327,
+          "min": 924671,
+          "max": 11780095
+        },
+        "send_lag_p99_9_ns": {
+          "median": 1681407,
+          "min": 1406975,
+          "max": 109707263
+        },
+        "send_lag_p99_ns": {
+          "median": 1133567,
+          "min": 1054719,
+          "max": 100794367
+        }
+      }
+    },
+    {
+      "id": "open-c1-busy-spin",
+      "source": "benchmarks/round4/open-c1-busy-spin.json.gz",
+      "source_sha256": "cbe126a96cf6d9fe54f1a3bb465bfed1fa03bad77c3306809b8267c4353b43a6",
+      "git_sha": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+      "created_utc": "2026-10-25T19:00:23Z",
+      "network": "loopback",
+      "protocol": "FXP",
+      "config": {
+        "tls": {
+          "enabled": false,
+          "mtls": false
+        },
+        "market_data_subscribers": 0,
+        "pacer": "busy-spin",
+        "mode": "open",
+        "gateway": "127.0.0.1:8082",
+        "connections": 1,
+        "measured_orders_per_connection": 1000,
+        "warmup_orders_per_connection": 100,
+        "repetitions": 5,
+        "open_loop_orders_per_second_per_connection": 1000,
+        "response_timeout_ns": 30000000000,
+        "symbol": "BENCH",
+        "symbol_mode": "single",
+        "quantity": 1,
+        "default_price_minor_units": 300000,
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs"
+      },
+      "environment": {
+        "arch": "amd64",
+        "client_cpu_affinity": "2",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "go": "go1.26.10",
+        "gomaxprocs": "1",
+        "launch_env_FXP_GW_RATE": "1000000",
+        "launch_env_FXP_GW_RATE_BURST": "1000000",
+        "launch_env_FXP_SYMBOL_CONFIG": "",
+        "launch_env_RUST_LOG": "error",
+        "launch_env_TOKIO_WORKER_THREADS": "1",
+        "logical_cpus": "1",
+        "os": "linux",
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+        "revision": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+        "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+      },
+      "runs": [
+        {
+          "market_data_updates_received": 0,
+          "index": 1,
+          "orders": 1000,
+          "elapsed_ns": 1000041526,
+          "orders_per_second": 999.9584757243371,
+          "max_send_lag_ns": 3357297,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 10248191,
+            "p90_ns": 18563071,
+            "p99_ns": 21446655,
+            "p99_9_ns": 23445503,
+            "max_ns": 23871487
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 214,
+            "p90_ns": 279807,
+            "p99_ns": 1406975,
+            "p99_9_ns": 3229695,
+            "max_ns": 3358719
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 10182655,
+            "p90_ns": 18530303,
+            "p99_ns": 20856831,
+            "p99_9_ns": 23330815,
+            "max_ns": 23756799
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 10903551,
+            "p90_ns": 19251199,
+            "p99_ns": 21987327,
+            "p99_9_ns": 24444927,
+            "max_ns": 24870911
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 2,
+          "orders": 1000,
+          "elapsed_ns": 999708074,
+          "orders_per_second": 1000.292011245675,
+          "max_send_lag_ns": 483743,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 9838591,
+            "p90_ns": 18268159,
+            "p99_ns": 20086783,
+            "p99_9_ns": 22626303,
+            "max_ns": 23609343
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 173,
+            "p90_ns": 53631,
+            "p99_ns": 302079,
+            "p99_9_ns": 431615,
+            "max_ns": 483839
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 9838591,
+            "p90_ns": 18235391,
+            "p99_ns": 20070399,
+            "p99_9_ns": 22626303,
+            "max_ns": 23609343
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 10362879,
+            "p90_ns": 18677759,
+            "p99_ns": 20922367,
+            "p99_9_ns": 22626303,
+            "max_ns": 23625727
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 3,
+          "orders": 1000,
+          "elapsed_ns": 999713557,
+          "orders_per_second": 1000.2865250731015,
+          "max_send_lag_ns": 2586259,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 9846783,
+            "p90_ns": 18251775,
+            "p99_ns": 20283391,
+            "p99_9_ns": 21626879,
+            "max_ns": 22626303
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 208,
+            "p90_ns": 47519,
+            "p99_ns": 1015295,
+            "p99_9_ns": 2067455,
+            "max_ns": 2586623
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 9814015,
+            "p90_ns": 18251775,
+            "p99_ns": 20135935,
+            "p99_9_ns": 21626879,
+            "max_ns": 22626303
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 10305535,
+            "p90_ns": 18694143,
+            "p99_ns": 21004287,
+            "p99_9_ns": 21774335,
+            "max_ns": 22642687
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 4,
+          "orders": 1000,
+          "elapsed_ns": 999836111,
+          "orders_per_second": 1000.163915864007,
+          "max_send_lag_ns": 1993904,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 10092543,
+            "p90_ns": 18366463,
+            "p99_ns": 20250623,
+            "p99_9_ns": 23248895,
+            "max_ns": 24231935
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 186,
+            "p90_ns": 5611,
+            "p99_ns": 305151,
+            "p99_9_ns": 1029631,
+            "max_ns": 1994751
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 10092543,
+            "p90_ns": 18366463,
+            "p99_ns": 20152319,
+            "p99_9_ns": 22921215,
+            "max_ns": 23527423
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 10665983,
+            "p90_ns": 18939903,
+            "p99_ns": 21102591,
+            "p99_9_ns": 23248895,
+            "max_ns": 24248319
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 5,
+          "orders": 1000,
+          "elapsed_ns": 999823198,
+          "orders_per_second": 1000.1768332644749,
+          "max_send_lag_ns": 1017943,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 10051583,
+            "p90_ns": 18300927,
+            "p99_ns": 20430847,
+            "p99_9_ns": 23281663,
+            "max_ns": 23281663
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 199,
+            "p90_ns": 39807,
+            "p99_ns": 414719,
+            "p99_9_ns": 978943,
+            "max_ns": 1018367
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 10002431,
+            "p90_ns": 18300927,
+            "p99_ns": 20299775,
+            "p99_9_ns": 23248895,
+            "max_ns": 23281663
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 10797055,
+            "p90_ns": 19054591,
+            "p99_ns": 21299199,
+            "p99_9_ns": 24281087,
+            "max_ns": 24281087
+          }
+        }
+      ],
+      "summary": {
+        "ack_after_send_max_ns": {
+          "median": 23527423,
+          "min": 22626303,
+          "max": 23756799
+        },
+        "ack_after_send_p50_ns": {
+          "median": 10002431,
+          "min": 9814015,
+          "max": 10182655
+        },
+        "ack_after_send_p90_ns": {
+          "median": 18300927,
+          "min": 18235391,
+          "max": 18530303
+        },
+        "ack_after_send_p99_9_ns": {
+          "median": 22921215,
+          "min": 21626879,
+          "max": 23330815
+        },
+        "ack_after_send_p99_ns": {
+          "median": 20152319,
+          "min": 20070399,
+          "max": 20856831
+        },
+        "ack_max_ns": {
+          "median": 23609343,
+          "min": 22626303,
+          "max": 24231935
+        },
+        "ack_p50_ns": {
+          "median": 10051583,
+          "min": 9838591,
+          "max": 10248191
+        },
+        "ack_p90_ns": {
+          "median": 18300927,
+          "min": 18251775,
+          "max": 18563071
+        },
+        "ack_p99_9_ns": {
+          "median": 23248895,
+          "min": 21626879,
+          "max": 23445503
+        },
+        "ack_p99_ns": {
+          "median": 20283391,
+          "min": 20086783,
+          "max": 21446655
+        },
+        "fill_max_ns": {
+          "median": 24248319,
+          "min": 22642687,
+          "max": 24870911
+        },
+        "fill_p50_ns": {
+          "median": 10665983,
+          "min": 10305535,
+          "max": 10903551
+        },
+        "fill_p90_ns": {
+          "median": 18939903,
+          "min": 18677759,
+          "max": 19251199
+        },
+        "fill_p99_9_ns": {
+          "median": 23248895,
+          "min": 21774335,
+          "max": 24444927
+        },
+        "fill_p99_ns": {
+          "median": 21102591,
+          "min": 20922367,
+          "max": 21987327
+        },
+        "max_send_lag_ns": {
+          "median": 1993904,
+          "min": 483743,
+          "max": 3357297
+        },
+        "orders_per_second": {
+          "median": 1000.1768332644749,
+          "min": 999.9584757243371,
+          "max": 1000.292011245675
+        },
+        "send_lag_max_ns": {
+          "median": 1994751,
+          "min": 483839,
+          "max": 3358719
+        },
+        "send_lag_p50_ns": {
+          "median": 199,
+          "min": 173,
+          "max": 214
+        },
+        "send_lag_p90_ns": {
+          "median": 47519,
+          "min": 5611,
+          "max": 279807
+        },
+        "send_lag_p99_9_ns": {
+          "median": 1029631,
+          "min": 431615,
+          "max": 3229695
+        },
+        "send_lag_p99_ns": {
+          "median": 414719,
+          "min": 302079,
+          "max": 1406975
+        }
+      }
+    },
+    {
+      "id": "open-c1-hybrid",
+      "source": "benchmarks/round4/open-c1-hybrid.json.gz",
+      "source_sha256": "596554f47f07b3193690dcba1c58c90413be1da58ba723a546147c49e038ab20",
+      "git_sha": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+      "created_utc": "2026-10-25T19:00:29Z",
+      "network": "loopback",
+      "protocol": "FXP",
+      "config": {
+        "tls": {
+          "enabled": false,
+          "mtls": false
+        },
+        "market_data_subscribers": 0,
+        "pacer": "hybrid",
+        "mode": "open",
+        "gateway": "127.0.0.1:8082",
+        "connections": 1,
+        "measured_orders_per_connection": 1000,
+        "warmup_orders_per_connection": 100,
+        "repetitions": 5,
+        "open_loop_orders_per_second_per_connection": 1000,
+        "response_timeout_ns": 30000000000,
+        "symbol": "BENCH",
+        "symbol_mode": "single",
+        "quantity": 1,
+        "default_price_minor_units": 300000,
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs"
+      },
+      "environment": {
+        "arch": "amd64",
+        "client_cpu_affinity": "2",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "go": "go1.26.10",
+        "gomaxprocs": "1",
+        "launch_env_FXP_GW_RATE": "1000000",
+        "launch_env_FXP_GW_RATE_BURST": "1000000",
+        "launch_env_FXP_SYMBOL_CONFIG": "",
+        "launch_env_RUST_LOG": "error",
+        "launch_env_TOKIO_WORKER_THREADS": "1",
+        "logical_cpus": "1",
+        "os": "linux",
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+        "revision": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+        "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+      },
+      "runs": [
+        {
+          "market_data_updates_received": 0,
+          "index": 1,
+          "orders": 1000,
+          "elapsed_ns": 1000550153,
+          "orders_per_second": 999.450149501901,
+          "max_send_lag_ns": 2045858,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 653823,
+            "p90_ns": 1094655,
+            "p99_ns": 1692671,
+            "p99_9_ns": 2603007,
+            "max_ns": 3131391
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 422143,
+            "p90_ns": 829951,
+            "p99_ns": 959487,
+            "p99_9_ns": 1599487,
+            "max_ns": 2045951
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 200703,
+            "p90_ns": 369663,
+            "p99_ns": 1078271,
+            "p99_9_ns": 1639423,
+            "max_ns": 2177023
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1176575,
+            "p90_ns": 2024447,
+            "p99_ns": 2375679,
+            "p99_9_ns": 3176447,
+            "max_ns": 3608575
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 2,
+          "orders": 1000,
+          "elapsed_ns": 1000780221,
+          "orders_per_second": 999.2203872702236,
+          "max_send_lag_ns": 1552938,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 664063,
+            "p90_ns": 1112063,
+            "p99_ns": 2062335,
+            "p99_9_ns": 2592767,
+            "max_ns": 3043327
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 444927,
+            "p90_ns": 858111,
+            "p99_ns": 1022975,
+            "p99_9_ns": 1524735,
+            "max_ns": 1553407
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 208511,
+            "p90_ns": 379647,
+            "p99_ns": 1390591,
+            "p99_9_ns": 1970175,
+            "max_ns": 2009087
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1211391,
+            "p90_ns": 2042879,
+            "p99_ns": 2689023,
+            "p99_9_ns": 3575807,
+            "max_ns": 3596287
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 3,
+          "orders": 1000,
+          "elapsed_ns": 1000120752,
+          "orders_per_second": 999.8792625792851,
+          "max_send_lag_ns": 2284269,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 663039,
+            "p90_ns": 1129471,
+            "p99_ns": 2189311,
+            "p99_9_ns": 4558847,
+            "max_ns": 5541887
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 404735,
+            "p90_ns": 840191,
+            "p99_ns": 1019903,
+            "p99_9_ns": 2077695,
+            "max_ns": 2285567
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 200959,
+            "p90_ns": 427775,
+            "p99_ns": 1540095,
+            "p99_9_ns": 3923967,
+            "max_ns": 4984831
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1196031,
+            "p90_ns": 2041855,
+            "p99_ns": 3084287,
+            "p99_9_ns": 5550079,
+            "max_ns": 6549503
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 4,
+          "orders": 1000,
+          "elapsed_ns": 1000746670,
+          "orders_per_second": 999.2538871001188,
+          "max_send_lag_ns": 2071558,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 652799,
+            "p90_ns": 1127423,
+            "p99_ns": 1928191,
+            "p99_9_ns": 2478079,
+            "max_ns": 2709503
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 462335,
+            "p90_ns": 859647,
+            "p99_ns": 955391,
+            "p99_9_ns": 1768447,
+            "max_ns": 2072575
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 194175,
+            "p90_ns": 366335,
+            "p99_ns": 1232895,
+            "p99_9_ns": 1824767,
+            "max_ns": 1854463
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1220607,
+            "p90_ns": 2073599,
+            "p99_ns": 2381823,
+            "p99_9_ns": 3481599,
+            "max_ns": 3715071
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 5,
+          "orders": 1000,
+          "elapsed_ns": 1000768217,
+          "orders_per_second": 999.2323727043381,
+          "max_send_lag_ns": 2662699,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 653823,
+            "p90_ns": 1094655,
+            "p99_ns": 1832959,
+            "p99_9_ns": 3141631,
+            "max_ns": 3178495
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 425983,
+            "p90_ns": 839167,
+            "p99_ns": 972799,
+            "p99_9_ns": 1913855,
+            "max_ns": 2664447
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 197247,
+            "p90_ns": 340223,
+            "p99_ns": 1058815,
+            "p99_9_ns": 1639423,
+            "max_ns": 1729535
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 1177599,
+            "p90_ns": 2030591,
+            "p99_ns": 2621439,
+            "p99_9_ns": 4028415,
+            "max_ns": 4147199
+          }
+        }
+      ],
+      "summary": {
+        "ack_after_send_max_ns": {
+          "median": 2009087,
+          "min": 1729535,
+          "max": 4984831
+        },
+        "ack_after_send_p50_ns": {
+          "median": 200703,
+          "min": 194175,
+          "max": 208511
+        },
+        "ack_after_send_p90_ns": {
+          "median": 369663,
+          "min": 340223,
+          "max": 427775
+        },
+        "ack_after_send_p99_9_ns": {
+          "median": 1824767,
+          "min": 1639423,
+          "max": 3923967
+        },
+        "ack_after_send_p99_ns": {
+          "median": 1232895,
+          "min": 1058815,
+          "max": 1540095
+        },
+        "ack_max_ns": {
+          "median": 3131391,
+          "min": 2709503,
+          "max": 5541887
+        },
+        "ack_p50_ns": {
+          "median": 653823,
+          "min": 652799,
+          "max": 664063
+        },
+        "ack_p90_ns": {
+          "median": 1112063,
+          "min": 1094655,
+          "max": 1129471
+        },
+        "ack_p99_9_ns": {
+          "median": 2603007,
+          "min": 2478079,
+          "max": 4558847
+        },
+        "ack_p99_ns": {
+          "median": 1928191,
+          "min": 1692671,
+          "max": 2189311
+        },
+        "fill_max_ns": {
+          "median": 3715071,
+          "min": 3596287,
+          "max": 6549503
+        },
+        "fill_p50_ns": {
+          "median": 1196031,
+          "min": 1176575,
+          "max": 1220607
+        },
+        "fill_p90_ns": {
+          "median": 2041855,
+          "min": 2024447,
+          "max": 2073599
+        },
+        "fill_p99_9_ns": {
+          "median": 3575807,
+          "min": 3176447,
+          "max": 5550079
+        },
+        "fill_p99_ns": {
+          "median": 2621439,
+          "min": 2375679,
+          "max": 3084287
+        },
+        "max_send_lag_ns": {
+          "median": 2071558,
+          "min": 1552938,
+          "max": 2662699
+        },
+        "orders_per_second": {
+          "median": 999.2538871001188,
+          "min": 999.2203872702236,
+          "max": 999.8792625792851
+        },
+        "send_lag_max_ns": {
+          "median": 2072575,
+          "min": 1553407,
+          "max": 2664447
+        },
+        "send_lag_p50_ns": {
+          "median": 425983,
+          "min": 404735,
+          "max": 462335
+        },
+        "send_lag_p90_ns": {
+          "median": 840191,
+          "min": 829951,
+          "max": 859647
+        },
+        "send_lag_p99_9_ns": {
+          "median": 1768447,
+          "min": 1524735,
+          "max": 2077695
+        },
+        "send_lag_p99_ns": {
+          "median": 972799,
+          "min": 955391,
+          "max": 1022975
+        }
+      }
+    },
+    {
+      "id": "closed-c1",
+      "source": "benchmarks/round4/closed-c1.json.gz",
+      "source_sha256": "e8624f153e90ad9d8a4c4323ab125d83e35282235861e8c7714eb4ecd581f2b1",
+      "git_sha": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+      "created_utc": "2026-10-25T19:00:30Z",
+      "network": "loopback",
+      "protocol": "FXP",
+      "config": {
+        "tls": {
+          "enabled": false,
+          "mtls": false
+        },
+        "market_data_subscribers": 0,
+        "pacer": "sleep",
+        "mode": "closed",
+        "gateway": "127.0.0.1:8082",
+        "connections": 1,
+        "measured_orders_per_connection": 1000,
+        "warmup_orders_per_connection": 100,
+        "repetitions": 5,
+        "open_loop_orders_per_second_per_connection": 1000,
+        "response_timeout_ns": 30000000000,
+        "symbol": "BENCH",
+        "symbol_mode": "single",
+        "quantity": 1,
+        "default_price_minor_units": 300000,
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs"
+      },
+      "environment": {
+        "arch": "amd64",
+        "client_cpu_affinity": "2",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "go": "go1.26.10",
+        "gomaxprocs": "1",
+        "launch_env_FXP_GW_RATE": "1000000",
+        "launch_env_FXP_GW_RATE_BURST": "1000000",
+        "launch_env_FXP_SYMBOL_CONFIG": "",
+        "launch_env_RUST_LOG": "error",
+        "launch_env_TOKIO_WORKER_THREADS": "1",
+        "logical_cpus": "1",
+        "os": "linux",
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+        "revision": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+        "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+      },
+      "runs": [
+        {
+          "market_data_updates_received": 0,
+          "index": 1,
+          "orders": 1000,
+          "elapsed_ns": 176215344,
+          "orders_per_second": 5674.87471465595,
+          "max_send_lag_ns": 66812,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 141695,
+            "p90_ns": 250751,
+            "p99_ns": 520191,
+            "p99_9_ns": 1095679,
+            "max_ns": 1543167
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 436,
+            "p90_ns": 618,
+            "p99_ns": 961,
+            "p99_9_ns": 1891,
+            "max_ns": 66815
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 141183,
+            "p90_ns": 250111,
+            "p99_ns": 518911,
+            "p99_9_ns": 1094655,
+            "max_ns": 1542143
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 256383,
+            "p90_ns": 421119,
+            "p99_ns": 756735,
+            "p99_9_ns": 1683455,
+            "max_ns": 1850367
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 2,
+          "orders": 1000,
+          "elapsed_ns": 222951586,
+          "orders_per_second": 4485.278700820724,
+          "max_send_lag_ns": 189456,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 144127,
+            "p90_ns": 281599,
+            "p99_ns": 1776639,
+            "p99_9_ns": 3741695,
+            "max_ns": 4464639
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 439,
+            "p90_ns": 722,
+            "p99_ns": 1203,
+            "p99_9_ns": 84287,
+            "max_ns": 189567
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 143615,
+            "p90_ns": 279295,
+            "p99_ns": 1775615,
+            "p99_9_ns": 3739647,
+            "max_ns": 4464639
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 256511,
+            "p90_ns": 456191,
+            "p99_ns": 2512895,
+            "p99_9_ns": 4481023,
+            "max_ns": 4784127
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 3,
+          "orders": 1000,
+          "elapsed_ns": 166026264,
+          "orders_per_second": 6023.143422657514,
+          "max_send_lag_ns": 23004,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 140799,
+            "p90_ns": 219519,
+            "p99_ns": 457215,
+            "p99_9_ns": 1553407,
+            "max_ns": 1564671
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 421,
+            "p90_ns": 567,
+            "p99_ns": 981,
+            "p99_9_ns": 1300,
+            "max_ns": 23007
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 140287,
+            "p90_ns": 219135,
+            "p99_ns": 456191,
+            "p99_9_ns": 1552383,
+            "max_ns": 1563647
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 236799,
+            "p90_ns": 371455,
+            "p99_ns": 760319,
+            "p99_9_ns": 1780735,
+            "max_ns": 1974271
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 4,
+          "orders": 1000,
+          "elapsed_ns": 165360847,
+          "orders_per_second": 6047.380732151184,
+          "max_send_lag_ns": 88419,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 140543,
+            "p90_ns": 212991,
+            "p99_ns": 429311,
+            "p99_9_ns": 1464319,
+            "max_ns": 1675263
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 427,
+            "p90_ns": 560,
+            "p99_ns": 908,
+            "p99_9_ns": 1798,
+            "max_ns": 88447
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 139903,
+            "p90_ns": 212223,
+            "p99_ns": 428543,
+            "p99_9_ns": 1463295,
+            "max_ns": 1674239
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 238719,
+            "p90_ns": 359679,
+            "p99_ns": 706559,
+            "p99_9_ns": 1810431,
+            "max_ns": 1916927
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 5,
+          "orders": 1000,
+          "elapsed_ns": 167136880,
+          "orders_per_second": 5983.11994336618,
+          "max_send_lag_ns": 2048,
+          "ack": {
+            "count": 1000,
+            "p50_ns": 140927,
+            "p90_ns": 223231,
+            "p99_ns": 419327,
+            "p99_9_ns": 1528831,
+            "max_ns": 1787903
+          },
+          "send_lag": {
+            "count": 1000,
+            "p50_ns": 428,
+            "p90_ns": 562,
+            "p99_ns": 836,
+            "p99_9_ns": 1310,
+            "max_ns": 2049
+          },
+          "ack_after_send": {
+            "count": 1000,
+            "p50_ns": 140415,
+            "p90_ns": 222847,
+            "p99_ns": 418815,
+            "p99_9_ns": 1527807,
+            "max_ns": 1787903
+          },
+          "fill": {
+            "count": 1000,
+            "p50_ns": 244095,
+            "p90_ns": 369151,
+            "p99_ns": 674815,
+            "p99_9_ns": 1691647,
+            "max_ns": 2097151
+          }
+        }
+      ],
+      "summary": {
+        "ack_after_send_max_ns": {
+          "median": 1674239,
+          "min": 1542143,
+          "max": 4464639
+        },
+        "ack_after_send_p50_ns": {
+          "median": 140415,
+          "min": 139903,
+          "max": 143615
+        },
+        "ack_after_send_p90_ns": {
+          "median": 222847,
+          "min": 212223,
+          "max": 279295
+        },
+        "ack_after_send_p99_9_ns": {
+          "median": 1527807,
+          "min": 1094655,
+          "max": 3739647
+        },
+        "ack_after_send_p99_ns": {
+          "median": 456191,
+          "min": 418815,
+          "max": 1775615
+        },
+        "ack_max_ns": {
+          "median": 1675263,
+          "min": 1543167,
+          "max": 4464639
+        },
+        "ack_p50_ns": {
+          "median": 140927,
+          "min": 140543,
+          "max": 144127
+        },
+        "ack_p90_ns": {
+          "median": 223231,
+          "min": 212991,
+          "max": 281599
+        },
+        "ack_p99_9_ns": {
+          "median": 1528831,
+          "min": 1095679,
+          "max": 3741695
+        },
+        "ack_p99_ns": {
+          "median": 457215,
+          "min": 419327,
+          "max": 1776639
+        },
+        "fill_max_ns": {
+          "median": 1974271,
+          "min": 1850367,
+          "max": 4784127
+        },
+        "fill_p50_ns": {
+          "median": 244095,
+          "min": 236799,
+          "max": 256511
+        },
+        "fill_p90_ns": {
+          "median": 371455,
+          "min": 359679,
+          "max": 456191
+        },
+        "fill_p99_9_ns": {
+          "median": 1780735,
+          "min": 1683455,
+          "max": 4481023
+        },
+        "fill_p99_ns": {
+          "median": 756735,
+          "min": 674815,
+          "max": 2512895
+        },
+        "max_send_lag_ns": {
+          "median": 66812,
+          "min": 2048,
+          "max": 189456
+        },
+        "orders_per_second": {
+          "median": 5983.11994336618,
+          "min": 4485.278700820724,
+          "max": 6047.380732151184
+        },
+        "send_lag_max_ns": {
+          "median": 66815,
+          "min": 2049,
+          "max": 189567
+        },
+        "send_lag_p50_ns": {
+          "median": 428,
+          "min": 421,
+          "max": 439
+        },
+        "send_lag_p90_ns": {
+          "median": 567,
+          "min": 560,
+          "max": 722
+        },
+        "send_lag_p99_9_ns": {
+          "median": 1798,
+          "min": 1300,
+          "max": 84287
+        },
+        "send_lag_p99_ns": {
+          "median": 961,
+          "min": 836,
+          "max": 1203
+        }
+      }
+    },
+    {
+      "id": "open-c10",
+      "source": "benchmarks/round4/open-c10.json.gz",
+      "source_sha256": "af4145f4bb0e9d3fef27fd060987706874356e063e67dfd5e76fd87285c588d4",
+      "git_sha": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+      "created_utc": "2026-10-25T19:00:37Z",
+      "network": "loopback",
+      "protocol": "FXP",
+      "config": {
+        "tls": {
+          "enabled": false,
+          "mtls": false
+        },
+        "market_data_subscribers": 0,
+        "pacer": "sleep",
+        "mode": "open",
+        "gateway": "127.0.0.1:8082",
+        "connections": 10,
+        "measured_orders_per_connection": 1000,
+        "warmup_orders_per_connection": 100,
+        "repetitions": 5,
+        "open_loop_orders_per_second_per_connection": 1000,
+        "response_timeout_ns": 30000000000,
+        "symbol": "BENCH",
+        "symbol_mode": "spread",
+        "quantity": 1,
+        "default_price_minor_units": 300000,
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs"
+      },
+      "environment": {
+        "arch": "amd64",
+        "client_cpu_affinity": "2",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "go": "go1.26.10",
+        "gomaxprocs": "1",
+        "launch_env_FXP_GW_RATE": "1000000",
+        "launch_env_FXP_GW_RATE_BURST": "1000000",
+        "launch_env_FXP_SYMBOL_CONFIG": "",
+        "launch_env_RUST_LOG": "error",
+        "launch_env_TOKIO_WORKER_THREADS": "1",
+        "logical_cpus": "1",
+        "os": "linux",
+        "pinning_notes": "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs",
+        "revision": "f6148617d493b9aab2df2181130e6714b8ebe89b",
+        "rustc_local": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+      },
+      "runs": [
+        {
+          "market_data_updates_received": 0,
+          "index": 1,
+          "orders": 10000,
+          "elapsed_ns": 1004099060,
+          "orders_per_second": 9959.176737004414,
+          "max_send_lag_ns": 1907557,
+          "ack": {
+            "count": 10000,
+            "p50_ns": 919039,
+            "p90_ns": 1658879,
+            "p99_ns": 3104767,
+            "p99_9_ns": 4300799,
+            "max_ns": 5144575
+          },
+          "send_lag": {
+            "count": 10000,
+            "p50_ns": 448511,
+            "p90_ns": 967167,
+            "p99_ns": 1202175,
+            "p99_9_ns": 1776639,
+            "max_ns": 1907711
+          },
+          "ack_after_send": {
+            "count": 10000,
+            "p50_ns": 447487,
+            "p90_ns": 870399,
+            "p99_ns": 2650111,
+            "p99_9_ns": 3844095,
+            "max_ns": 5062655
+          },
+          "fill": {
+            "count": 10000,
+            "p50_ns": 1550335,
+            "p90_ns": 2498559,
+            "p99_ns": 3926015,
+            "p99_9_ns": 5001215,
+            "max_ns": 6914047
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 2,
+          "orders": 10000,
+          "elapsed_ns": 1006016535,
+          "orders_per_second": 9940.194472052091,
+          "max_send_lag_ns": 2298285,
+          "ack": {
+            "count": 10000,
+            "p50_ns": 947711,
+            "p90_ns": 1683455,
+            "p99_ns": 4218879,
+            "p99_9_ns": 8273919,
+            "max_ns": 10182655
+          },
+          "send_lag": {
+            "count": 10000,
+            "p50_ns": 422399,
+            "p90_ns": 998399,
+            "p99_ns": 1244159,
+            "p99_9_ns": 1940479,
+            "max_ns": 2299903
+          },
+          "ack_after_send": {
+            "count": 10000,
+            "p50_ns": 449279,
+            "p90_ns": 920063,
+            "p99_ns": 3278847,
+            "p99_9_ns": 7327743,
+            "max_ns": 9338879
+          },
+          "fill": {
+            "count": 10000,
+            "p50_ns": 1588223,
+            "p90_ns": 2476031,
+            "p99_ns": 4714495,
+            "p99_9_ns": 8294399,
+            "max_ns": 10264575
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 3,
+          "orders": 10000,
+          "elapsed_ns": 1005364908,
+          "orders_per_second": 9946.63720647787,
+          "max_send_lag_ns": 2205535,
+          "ack": {
+            "count": 10000,
+            "p50_ns": 929279,
+            "p90_ns": 1618943,
+            "p99_ns": 3184639,
+            "p99_9_ns": 5931007,
+            "max_ns": 7053311
+          },
+          "send_lag": {
+            "count": 10000,
+            "p50_ns": 449023,
+            "p90_ns": 999423,
+            "p99_ns": 1212415,
+            "p99_9_ns": 2033663,
+            "max_ns": 2205695
+          },
+          "ack_after_send": {
+            "count": 10000,
+            "p50_ns": 433919,
+            "p90_ns": 842751,
+            "p99_ns": 2332671,
+            "p99_9_ns": 5423103,
+            "max_ns": 6934527
+          },
+          "fill": {
+            "count": 10000,
+            "p50_ns": 1553407,
+            "p90_ns": 2482175,
+            "p99_ns": 3692543,
+            "p99_9_ns": 6578175,
+            "max_ns": 7061503
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 4,
+          "orders": 10000,
+          "elapsed_ns": 1005252037,
+          "orders_per_second": 9947.754027779205,
+          "max_send_lag_ns": 2064987,
+          "ack": {
+            "count": 10000,
+            "p50_ns": 961535,
+            "p90_ns": 1768447,
+            "p99_ns": 13443071,
+            "p99_9_ns": 17694719,
+            "max_ns": 19922943
+          },
+          "send_lag": {
+            "count": 10000,
+            "p50_ns": 470015,
+            "p90_ns": 1019391,
+            "p99_ns": 1320959,
+            "p99_9_ns": 1650687,
+            "max_ns": 2065407
+          },
+          "ack_after_send": {
+            "count": 10000,
+            "p50_ns": 459519,
+            "p90_ns": 979455,
+            "p99_ns": 13238271,
+            "p99_9_ns": 16957439,
+            "max_ns": 18792447
+          },
+          "fill": {
+            "count": 10000,
+            "p50_ns": 1610751,
+            "p90_ns": 2629631,
+            "p99_ns": 13877247,
+            "p99_9_ns": 18448383,
+            "max_ns": 20922367
+          }
+        },
+        {
+          "market_data_updates_received": 0,
+          "index": 5,
+          "orders": 10000,
+          "elapsed_ns": 1006083308,
+          "orders_per_second": 9939.534748746672,
+          "max_send_lag_ns": 1737523,
+          "ack": {
+            "count": 10000,
+            "p50_ns": 949247,
+            "p90_ns": 1723391,
+            "p99_ns": 3661823,
+            "p99_9_ns": 6574079,
+            "max_ns": 8278015
+          },
+          "send_lag": {
+            "count": 10000,
+            "p50_ns": 488447,
+            "p90_ns": 1020415,
+            "p99_ns": 1241087,
+            "p99_9_ns": 1604607,
+            "max_ns": 1737727
+          },
+          "ack_after_send": {
+            "count": 10000,
+            "p50_ns": 451583,
+            "p90_ns": 921599,
+            "p99_ns": 2998271,
+            "p99_9_ns": 5742591,
+            "max_ns": 7086079
+          },
+          "fill": {
+            "count": 10000,
+            "p50_ns": 1589247,
+            "p90_ns": 2568191,
+            "p99_ns": 4427775,
+            "p99_9_ns": 7401471,
+            "max_ns": 8290303
+          }
+        }
+      ],
+      "summary": {
+        "ack_after_send_max_ns": {
+          "median": 7086079,
+          "min": 5062655,
+          "max": 18792447
+        },
+        "ack_after_send_p50_ns": {
+          "median": 449279,
+          "min": 433919,
+          "max": 459519
+        },
+        "ack_after_send_p90_ns": {
+          "median": 920063,
+          "min": 842751,
+          "max": 979455
+        },
+        "ack_after_send_p99_9_ns": {
+          "median": 5742591,
+          "min": 3844095,
+          "max": 16957439
+        },
+        "ack_after_send_p99_ns": {
+          "median": 2998271,
+          "min": 2332671,
+          "max": 13238271
+        },
+        "ack_max_ns": {
+          "median": 8278015,
+          "min": 5144575,
+          "max": 19922943
+        },
+        "ack_p50_ns": {
+          "median": 947711,
+          "min": 919039,
+          "max": 961535
+        },
+        "ack_p90_ns": {
+          "median": 1683455,
+          "min": 1618943,
+          "max": 1768447
+        },
+        "ack_p99_9_ns": {
+          "median": 6574079,
+          "min": 4300799,
+          "max": 17694719
+        },
+        "ack_p99_ns": {
+          "median": 3661823,
+          "min": 3104767,
+          "max": 13443071
+        },
+        "fill_max_ns": {
+          "median": 8290303,
+          "min": 6914047,
+          "max": 20922367
+        },
+        "fill_p50_ns": {
+          "median": 1588223,
+          "min": 1550335,
+          "max": 1610751
+        },
+        "fill_p90_ns": {
+          "median": 2498559,
+          "min": 2476031,
+          "max": 2629631
+        },
+        "fill_p99_9_ns": {
+          "median": 7401471,
+          "min": 5001215,
+          "max": 18448383
+        },
+        "fill_p99_ns": {
+          "median": 4427775,
+          "min": 3692543,
+          "max": 13877247
+        },
+        "max_send_lag_ns": {
+          "median": 2064987,
+          "min": 1737523,
+          "max": 2298285
+        },
+        "orders_per_second": {
+          "median": 9946.63720647787,
+          "min": 9939.534748746672,
+          "max": 9959.176737004414
+        },
+        "send_lag_max_ns": {
+          "median": 2065407,
+          "min": 1737727,
+          "max": 2299903
+        },
+        "send_lag_p50_ns": {
+          "median": 449023,
+          "min": 422399,
+          "max": 488447
+        },
+        "send_lag_p90_ns": {
+          "median": 999423,
+          "min": 967167,
+          "max": 1020415
+        },
+        "send_lag_p99_9_ns": {
+          "median": 1776639,
+          "min": 1604607,
+          "max": 2033663
+        },
+        "send_lag_p99_ns": {
+          "median": 1241087,
+          "min": 1202175,
+          "max": 1320959
+        }
+      }
+    }
+  ]
+}

@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: MIT
-// Fails when the gzipped JS/CSS in dist/ exceeds the budget.
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+// Keep the initial console budget while accounting for the on-demand chart.
+import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
-
-const BUDGET_KB = Number(process.env.FXP_CONSOLE_BUDGET_KB ?? 160);
-const dir = new URL("../dist/assets/", import.meta.url).pathname;
-let total = 0;
-for (const f of readdirSync(dir)) {
-  if (!/\.(js|css)$/.test(f)) continue;
-  const gz = gzipSync(readFileSync(join(dir, f))).length;
-  total += gz;
-  console.log(`${f}\t${(statSync(join(dir, f)).size / 1024).toFixed(1)} kB\t${(gz / 1024).toFixed(1)} kB gzip`);
+const root = new URL("../dist/", import.meta.url);
+const manifest = JSON.parse(readFileSync(new URL(".vite/manifest.json", root), "utf8"));
+const initial = new Set();
+function visit(key) {
+  const chunk = manifest[key];
+  if (!chunk || initial.has(chunk.file)) return;
+  initial.add(chunk.file);
+  for (const css of chunk.css ?? []) initial.add(css);
+  for (const dep of chunk.imports ?? []) visit(dep);
 }
-console.log(`total ${(total / 1024).toFixed(1)} kB gzip (budget ${BUDGET_KB} kB)`);
-if (total > BUDGET_KB * 1024) {
-  console.error("bundle exceeds budget");
-  process.exit(1);
+for (const [key, chunk] of Object.entries(manifest)) if (chunk.isEntry) visit(key);
+const all = new Set();
+for (const c of Object.values(manifest)) { all.add(c.file); for (const css of c.css ?? []) all.add(css); }
+let eager = 0, deferred = 0;
+for (const file of all) {
+  if (!/\.(js|css)$/.test(file)) continue;
+  const kb = gzipSync(readFileSync(new URL(file, root))).length / 1024;
+  if (initial.has(file)) eager += kb; else deferred += kb;
+  console.log(`${file}\t${kb.toFixed(1)} kB gzip\t${initial.has(file) ? "initial" : "deferred"}`);
 }
+const initialBudget = Number(process.env.FXP_CONSOLE_BUDGET_KB ?? 160);
+const deferredBudget = 120;
+console.log(`initial ${eager.toFixed(1)}/${initialBudget} kB; deferred ${deferred.toFixed(1)}/${deferredBudget} kB gzip`);
+if (eager > initialBudget || deferred > deferredBudget) { console.error("bundle exceeds budget"); process.exit(1); }

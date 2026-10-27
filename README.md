@@ -1,5 +1,9 @@
 # FXP Protocol
 
+The local [FXP Console](docs/console/README.md) includes recorded R4 latency
+(intended-time and post-send ACK with repetition spread) and a redacting browser
+protocol inspector with authoritative FIX 4.4 order previews.
+
 A high-performance binary trading protocol and matching engine built as an open-source alternative to FIX 4.x for institutional electronic trading infrastructure.
 
 **Stack:** Rust matching engine · Go gateway · Protobuf binary encoding · JWT authentication

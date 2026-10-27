@@ -35,7 +35,7 @@ WORKDIR /src
 COPY go.work ./
 COPY go_gateway/ go_gateway/
 COPY demo_api/ demo_api/
-COPY fix_bridge/go.mod fix_bridge/go.sum fix_bridge/
+COPY fix_bridge/ fix_bridge/
 COPY fxp_core/proto/ fxp_core/proto/
 COPY scripts/gen_proto.sh scripts/
 RUN --mount=type=secret,id=proxy_ca \
@@ -52,6 +52,8 @@ COPY --from=api-build /out/demo_api /usr/local/bin/demo_api
 COPY --from=api-build /out/simday /usr/local/bin/simday
 COPY --from=web-build /src/web/dist /app/web/dist
 COPY config/ /etc/fxp/config/
+COPY benchmarks/console.json /app/benchmarks/console.json
+COPY docs/performance/profile-r4.md /app/docs/performance/profile-r4.md
 USER fxp
 WORKDIR /app
 ENV FXP_DEMO_STATIC_DIR=/app/web/dist FXP_DEMO_SIM_BINARY=/usr/local/bin/simday
