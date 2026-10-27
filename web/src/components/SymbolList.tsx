@@ -7,7 +7,7 @@ export function SymbolList() {
   useTape((s) => s.version);
   const tapes = useTape.getState().tapes;
   return (
-    <nav className="w-44 shrink-0 overflow-y-auto border-r border-neutral-800 text-sm">
+    <nav className="market-symbols shrink-0 overflow-y-auto border-r border-neutral-800 text-sm">
       {list.map((s) => {
         const t = tapes.get(s.symbol);
         return (

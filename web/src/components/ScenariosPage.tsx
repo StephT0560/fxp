@@ -226,7 +226,7 @@ export default function ScenariosPage() {
           </button>
         )}
       </div>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
         {list.map((s) => (
           <article className="border border-neutral-800 p-2" key={s.id}>
             <h3>{s.name}</h3>
@@ -288,7 +288,7 @@ export default function ScenariosPage() {
             ))}
           {run.scenario === "stp-modes" && (
             <div
-              className="grid grid-cols-5 gap-2"
+              className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5"
               aria-label="STP mode comparison"
             >
               {[...steps.values()]
@@ -322,7 +322,7 @@ export default function ScenariosPage() {
             </details>
           )}
           <AuctionBanner symbol={run.symbol} scale={2} />
-          <div className="grid min-h-64 grid-cols-3 gap-2">
+          <div className="grid min-h-64 grid-cols-1 gap-2 xl:grid-cols-3">
             <div
               data-testid="scenario-ladder"
               data-highlighted={focus === "ladder"}

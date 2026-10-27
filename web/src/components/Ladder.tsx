@@ -9,7 +9,7 @@ function Row({ level, side, scale, max, own }: { level?: Level; side: "bid" | "a
   const color = side === "bid" ? "text-emerald-400" : "text-red-400";
   const bar = side === "bid" ? "bg-emerald-900/40" : "bg-red-900/40";
   return (
-    <div className="relative grid h-6 grid-cols-2 items-center px-3 text-sm" data-testid={level ? `${side}-row` : undefined}>
+    <div className="ladder-row relative grid h-6 grid-cols-2 items-center px-3 text-sm" data-testid={level ? `${side}-row` : undefined}>
       <div className={`absolute inset-y-0 right-0 ${bar}`} style={{ width: `${pct}%` }} />
       <span className={`num relative ${color}`}>{level ? formatPrice(level.price, scale) : ""}</span>
       <span className="num relative text-right">{own ? <span data-testid="own-order-marker" className="mr-2 rounded bg-sky-950 px-1 text-xs text-sky-300" title="Your known-price working quantity">● {formatQty(own)}</span> : null}{level ? formatQty(level.qty) : ""}</span>
@@ -28,7 +28,7 @@ export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
   const crossed = isCrossed(bids, asks);
   const spread = bids[0] && asks[0] ? asks[0].price - bids[0].price : undefined;
   return (
-    <section className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-neutral-800" data-testid="ladder">
+    <section className="ladder-panel flex shrink-0 flex-col overflow-y-auto border-r border-neutral-800" data-testid="ladder">
       <div className="flex justify-between border-b border-neutral-800 px-3 py-1 text-xs text-neutral-400">
         <span>Depth · {symbol}</span>
         {!book?.synced && <span className="text-amber-400" data-testid="book-unsynced">awaiting snapshot</span>}

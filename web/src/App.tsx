@@ -135,7 +135,7 @@ export function App() {
             <>
               <Ladder symbol={selected} scale={scale} />
               <main className="flex min-w-0 flex-1 flex-col gap-2 p-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <Stats symbol={selected} scale={scale} />
                   <SimControls />
                 </div>
@@ -146,7 +146,7 @@ export function App() {
           )}
         </div>
         {info && (
-          <div className="flex h-72 shrink-0 border-t border-neutral-800">
+          <div className="trading-panel flex min-h-0 shrink-0 border-t border-neutral-800">
             <OrderTicket key={selected} rules={info} />
             <Blotter symbol={selected!} />
           </div>

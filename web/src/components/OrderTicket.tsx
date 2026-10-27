@@ -90,7 +90,7 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
 
   return (
     <form
-      className="flex w-80 shrink-0 flex-col gap-1.5 border-r border-neutral-800 p-3 text-sm"
+      className="order-ticket flex min-h-0 shrink-0 flex-col overflow-y-auto gap-1.5 border-r border-neutral-800 p-3 text-sm"
       data-testid="ticket"
       onSubmit={(e) => {
         e.preventDefault();

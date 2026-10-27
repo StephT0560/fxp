@@ -41,14 +41,14 @@ export function ProtocolInspector() {
     }
   }
   return (
-    <section className="p-4 overflow-auto" aria-label="Protocol inspector">
+    <section className="min-h-0 min-w-0 overflow-auto p-4" aria-label="Protocol inspector">
       <h2>Protocol inspector</h2>
       <p>
         Browser WS application frames · latest 200 · memory only. JWTs and
         token-like fields are redacted before storage. Raw bytes are withheld
         when redaction or unknown fields are present.
       </p>
-      <div className="flex gap-3 my-3">
+      <div className="flex flex-wrap gap-3 my-3">
         <label>
           Type{" "}
           <select
@@ -92,7 +92,7 @@ export function ProtocolInspector() {
           Clear frames
         </button>
       </div>
-      <table className="w-full text-left" data-testid="frame-table">
+      <table className="w-full table-fixed break-words text-left text-xs" data-testid="frame-table">
         <thead>
           <tr>
             <th>UTC timestamp / monotonic ms</th>

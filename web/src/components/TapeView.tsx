@@ -7,7 +7,7 @@ export function TapeView({ symbol, scale }: { symbol: string; scale: number }) {
   useTape((s) => s.version);
   const tape = useTape.getState().tapes.get(symbol);
   return (
-    <section className="flex w-80 shrink-0 flex-col border-l border-neutral-800" data-testid="tape">
+    <section className="tape-panel flex min-h-0 shrink-0 flex-col border-l border-neutral-800" data-testid="tape">
       <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-1 text-xs text-neutral-400">
         <span>Trades</span>
         <span
@@ -20,9 +20,9 @@ export function TapeView({ symbol, scale }: { symbol: string; scale: number }) {
             : "gaps 0"}
         </span>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {tape?.prints.map((p) => (
-          <div key={p.key} className="grid grid-cols-4 px-3 text-sm" data-testid="tape-row">
+          <div key={p.key} className="grid grid-cols-4 gap-1 px-2 text-xs" data-testid="tape-row">
             <span className="num text-neutral-500">{new Date(p.timeMs).toLocaleTimeString("en-GB")}</span>
             <span
               className={`num ${

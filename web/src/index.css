@@ -4,3 +4,24 @@
 html, body, #root { height: 100%; }
 body { font-family: ui-sans-serif, system-ui, sans-serif; }
 .num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+/* Keep depth constant; adapt the space around it to the viewport. */
+.market-symbols { width: 9rem; }
+.compact-symbol { display: none; }
+.ladder-panel { width: 15rem; }
+.tape-panel { width: 16rem; }
+.order-ticket { width: 18rem; }
+.trading-panel { height: clamp(208px, 28vh, 248px); }
+@media (min-width: 1536px) {
+  .market-symbols { width: 11rem; }
+  .ladder-panel { width: 18rem; }
+  .tape-panel { width: 20rem; }
+  .order-ticket { width: 20rem; }
+}
+@media (max-width: 1199px) {
+  .market-symbols { display: none; }
+  .compact-symbol { display: inline-block; }
+}
+@media (max-height: 800px) {
+  .ladder-row { height: 17px; line-height: 17px; font-size: 12px; }
+}
