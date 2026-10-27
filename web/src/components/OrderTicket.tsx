@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useEffect, useRef, useState } from "react";
 import { OrderSide, OrderType, SelfTradePrevention, TimeInForce } from "../gen/fxp_pb";
+import { formatPrice } from "../lib/format";
 import { activeClient } from "../lib/client";
 import { useOrders, useSession } from "../lib/stores";
 import { needsPrice, needsStop, todayUtc, validateTicket, type Field, type SymbolRules, type TicketInput } from "../lib/validate";
@@ -33,7 +34,8 @@ const MIN_RESUBMIT_MS = 600;
 
 const input = "num w-full rounded bg-neutral-800 px-1 py-0.5";
 
-export function OrderTicket({ rules }: { rules: SymbolRules }) {
+export function OrderTicket({ rules, pricePick }: { rules: SymbolRules; pricePick?: { price: bigint } }) {
+  const quantityInput = useRef<HTMLInputElement>(null);
   const live = useSession((s) => s.conn === "live");
   useOrders((s) => s.version);
   const [t, setT] = useState<Omit<TicketInput, "symbol">>({
@@ -48,6 +50,11 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
     stpMode: SelfTradePrevention.UNSPECIFIED,
     stpGroup: "",
   });
+  useEffect(() => {
+    if (!pricePick) return;
+    setT((s) => ({ ...s, price: formatPrice(pricePick.price, rules.price_scale) }));
+    quantityInput.current?.focus();
+  }, [pricePick, rules.price_scale]);
   const [attempted, setAttempted] = useState(false);
   const [inFlight, setInFlight] = useState<string>();
   // Synchronous guard: clicks that land before React re-renders are dropped.
@@ -141,7 +148,7 @@ export function OrderTicket({ rules }: { rules: SymbolRules }) {
         </label>
         <label className="text-xs text-neutral-400">
           quantity
-          <input data-testid="ticket-qty" className={input} inputMode="numeric" value={t.qty} onChange={(e) => set("qty", e.target.value)} />
+          <input ref={quantityInput} data-testid="ticket-qty" className={input} inputMode="numeric" value={t.qty} onChange={(e) => set("qty", e.target.value)} />
         </label>
         {needsPrice(t.type) && (
           <label className="text-xs text-neutral-400">

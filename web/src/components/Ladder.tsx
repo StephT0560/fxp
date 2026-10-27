@@ -5,20 +5,20 @@ import { MARKET_EMPTY } from "../lib/simulator";
 import { ownLevels } from "../lib/own-levels";
 import { useBook, useOrders, useTape } from "../lib/stores";
 
-function Row({ level, side, scale, max, own }: { level?: Level; side: "bid" | "ask"; scale: number; max: number; own?: number }) {
+function Row({ level, side, scale, max, own, onPrice }: { level?: Level; side: "bid" | "ask"; scale: number; max: number; own?: number; onPrice?: (price: bigint) => void }) {
   const pct = level && max > 0 ? Math.round((level.qty / max) * 100) : 0;
   const color = side === "bid" ? "text-emerald-400" : "text-red-400";
   const bar = side === "bid" ? "bg-emerald-900/40" : "bg-red-900/40";
   return (
-    <div className="ladder-row relative grid h-6 grid-cols-2 items-center px-3 text-sm" data-testid={level ? `${side}-row` : undefined}>
+    <button type="button" disabled={!level || !onPrice} onClick={() => { if (level) onPrice?.(level.price); }} className="ladder-row w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 relative grid h-6 grid-cols-2 items-center px-3 text-sm" data-testid={level ? `${side}-row` : undefined}>
       <div className={`absolute inset-y-0 right-0 ${bar}`} style={{ width: `${pct}%` }} />
       <span className={`num relative ${color}`}>{level ? formatPrice(level.price, scale) : ""}</span>
       <span className="num relative text-right">{own ? <span data-testid="own-order-marker" className="mr-2 rounded bg-sky-950 px-1 text-xs text-sky-300" title="Your known-price working quantity">● {formatQty(own)}</span> : null}{level ? formatQty(level.qty) : ""}</span>
-    </div>
+    </button>
   );
 }
 
-export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
+export function Ladder({ symbol, scale, onPrice }: { symbol: string; scale: number; onPrice?: (price: bigint) => void }) {
   useBook((s) => s.version);
   useOrders((s) => s.version);
   useTape((s) => s.version);
@@ -38,13 +38,13 @@ export function Ladder({ symbol, scale }: { symbol: string; scale: number }) {
       </div>
       {!book?.synced && !useTape.getState().tapes.get(symbol)?.prints.length ? <p className="p-3 text-sm text-neutral-400">{MARKET_EMPTY}</p> : <>
       {Array.from({ length: DEPTH }, (_, i) => (
-        <Row key={`a${i}`} level={asks[DEPTH - 1 - i]} side="ask" scale={scale} max={max} own={own.sell.get(asks[DEPTH - 1 - i]?.price ?? -1n)} />
+        <Row key={`a${i}`} level={asks[DEPTH - 1 - i]} onPrice={onPrice} side="ask" scale={scale} max={max} own={own.sell.get(asks[DEPTH - 1 - i]?.price ?? -1n)} />
       ))}
       <div className="num border-y border-neutral-800 px-3 py-1 text-center text-xs text-neutral-400">
         spread {formatPrice(spread, scale)}
       </div>
       {Array.from({ length: DEPTH }, (_, i) => (
-        <Row key={`b${i}`} level={bids[i]} side="bid" scale={scale} max={max} own={own.buy.get(bids[i]?.price ?? -1n)} />
+        <Row key={`b${i}`} level={bids[i]} onPrice={onPrice} side="bid" scale={scale} max={max} own={own.buy.get(bids[i]?.price ?? -1n)} />
       ))}
       </>}
       {(own.offLadder > 0 || own.unknown > 0) && <div className="border-t border-neutral-800 px-2 py-1 text-xs text-sky-300">{own.offLadder > 0 && <p>+{own.offLadder} working off-ladder</p>}{own.unknown > 0 && <p>{own.unknown} working orders, price not in status reports</p>}</div>}

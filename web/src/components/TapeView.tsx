@@ -22,6 +22,8 @@ export function TapeView({ symbol, scale }: { symbol: string; scale: number }) {
             : "gaps 0"}
         </span>
       </div>
+      <div className="grid grid-cols-4 gap-1 border-b border-neutral-800 px-2 py-1 text-xs text-neutral-400" title="Green: buy aggressor. Red: sell aggressor. Amber/AUC: auction print."><span>Time</span><span>Price</span><span className="text-right">Qty</span><span className="text-right">Seq</span></div>
+      <div className="px-2 text-xs text-neutral-500" title="Price color follows aggressor side; AUC marks an auction print">green buy · red sell · amber AUC</div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!useBook.getState().books.get(symbol)?.synced && !tape?.prints.length && <p className="p-3 text-sm text-neutral-400">{MARKET_EMPTY}</p>}
         {tape?.prints.map((p) => (
@@ -29,13 +31,13 @@ export function TapeView({ symbol, scale }: { symbol: string; scale: number }) {
             <span className="num text-neutral-500">{new Date(p.timeMs).toLocaleTimeString("en-GB")}</span>
             <span
               className={`num ${
-                p.aggressor === OrderSide.BUY ? "text-emerald-400" : p.aggressor === OrderSide.SELL ? "text-red-400" : "text-amber-300"
+                p.auction ? "text-amber-300" : p.aggressor === OrderSide.BUY ? "text-emerald-400" : p.aggressor === OrderSide.SELL ? "text-red-400" : "text-amber-300"
               }`}
             >
               {formatPrice(p.price, scale)}
             </span>
             <span className="num text-right">{formatQty(p.qty)}</span>
-            <span className="num text-right text-neutral-500">{p.auction ? "AUC" : `#${p.seq}`}</span>
+            <span className="num min-w-0 truncate text-right text-neutral-500">{p.auction ? "AUC" : `#${p.seq}`}</span>
           </div>
         ))}
       </div>

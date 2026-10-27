@@ -61,6 +61,8 @@ export function App() {
   const [quickDemo, setQuickDemo] = useState(false);
   const quickStarted = useRef(false);
   const conn = useSession((s) => s.conn);
+  const [pricePick, setPricePick] = useState<{ symbol: string; price: bigint }>();
+  useEffect(() => setPricePick(undefined), [selected]);
   const [panel, setPanel] = useState("market");
   const [error, setError] = useState<string>();
 
@@ -149,7 +151,7 @@ export function App() {
           <SymbolList />
           {selected && (
             <>
-              <Ladder symbol={selected} scale={scale} />
+              <Ladder symbol={selected} scale={scale} onPrice={(price) => setPricePick({ symbol: selected, price })} />
               <main className="flex min-w-0 flex-1 flex-col gap-2 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Stats symbol={selected} scale={scale} />
@@ -163,7 +165,7 @@ export function App() {
         </div>
         {info && (
           <div className="trading-panel flex min-h-0 shrink-0 border-t border-neutral-800">
-            <OrderTicket key={selected} rules={info} />
+            <OrderTicket key={selected} rules={info} pricePick={pricePick?.symbol === selected ? pricePick : undefined} />
             <Blotter symbol={selected!} />
           </div>
         )}

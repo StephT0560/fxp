@@ -85,3 +85,16 @@ test("an uninitialized market explains how to get data", async ({ page }) => {
   await page.goto("/"); await page.getByTestId("login-alice").click();
   for (const panel of ["ladder", "tape"]) await expect(page.getByTestId(panel)).toContainText("No market data yet. Start the simulator or use Quick demo.");
 });
+
+test("keyboard ladder selection prefills a scaled price and focuses quantity", async ({ page }) => {
+  await login(page); await page.getByTestId("symbol-DEMO").click();
+  await page.getByTestId("ticket-qty").fill("1"); await page.getByTestId("ticket-price").fill("28.37");
+  await page.getByTestId("ticket-submit").click();
+  const level = page.getByTestId("ladder").getByTestId("bid-row").filter({ hasText: "28.37" });
+  await expect(level).toBeVisible(); await page.getByTestId("ticket-price").fill("29.00");
+  await level.focus(); await page.keyboard.press("Enter");
+  await expect(page.getByTestId("ticket-price")).toHaveValue("28.37");
+  await expect(page.getByTestId("ticket-qty")).toBeFocused();
+  await expect(page.getByTestId("tape")).toContainText("Time");
+  await expect(page.getByTestId("tape")).toContainText("green buy · red sell · amber AUC");
+});
