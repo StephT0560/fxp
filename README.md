@@ -1,10 +1,62 @@
 # FXP Protocol
 
-The local [FXP Console](docs/console/README.md) includes recorded R4 latency
-(intended-time and post-send ACK with repetition spread) and a redacting browser
-protocol inspector with authoritative FIX 4.4 order previews.
-
 A high-performance binary trading protocol and matching engine built as an open-source alternative to FIX 4.x for institutional electronic trading infrastructure.
+
+## Demo
+
+The local [FXP Console](docs/console/README.md) shows a real Rust matching engine
+through the Go gateway: a live ten-level ladder, public tape with sequence-gap
+counter, price chart, session phase/auction banner, simulator controls and an
+order blotter. The [~75-second script](docs/console/demo-script.md) follows three
+beats in Alice's browser; Bob supplies the counterparty in an unrecorded context.
+
+**Video:** _Maintainer upload pending — the recording harness generates a WebM
+for local MP4 conversion; replace this line with the uploaded final video._
+
+![Opening auction: ladder, tape and observed countdown](docs/media/console-auction.png)
+
+![Partial fill: cum 40, leaves 60, replaced remainder and own-order ladder marker](docs/media/console-partial-fill.png)
+
+![Protocol inspector: the same order in FXP bytes and authoritative FIX 4.4](docs/media/console-protocol.png)
+
+- **Auction to execution:** the opening call counts down, then uncrosses into
+  amber AUC prints on the tape.
+- **An order's lifecycle:** Alice crosses Bob, partially fills, replaces the
+  remainder and sees her own resting quantity marked in the ladder.
+- **Inspect and measure honestly:** redacted browser frames and authoritative
+  FIX 4.4 order previews; recorded R4 intended-time and post-send ACK latency,
+  min/max repetition spread and environment. Plaintext loopback only; a tested
+  knee, not an SLO, with no WAN or cross-protocol ranking claim.
+
+### Local FXP Console demo
+
+```bash
+make demo
+# Open http://127.0.0.1:3000 and choose Quick demo or alice.
+# When finished:
+make demo-down
+```
+
+Requires Docker Compose >=2.24.4 and Python 3. The command builds the console UI
+and creates a private, gitignored `.env.demo` with random credentials. Only the
+UI/BFF port is published; gateway and core remain private. The BFF offers
+short-lived demo JWTs, a same-origin binary WebSocket proxy and supervised
+simulator control. See [API, configuration and security model](docs/console/README.md).
+
+Regenerate the video and these stills after UI changes with the
+[Playwright recording harness](docs/console/recording.md). The
+[extended script](docs/console/demo-script-extended.md) covers rejects, cancel-all
+and reconnect as well. Seeded, narrated [console scenarios](docs/console/scenarios.md)
+demonstrate auction uncross, stop cascades, five STP modes, iceberg priority, COD
+and FIX restart/resend recovery from the Scenarios page with `make demo`.
+
+### What this demo is and is not
+
+A local-only demonstration with simulator data and no real orders. Its plaintext
+loopback setup is for a disposable, trusted workstation, not a hosted service or
+production deployment. Demo timings and the separate recorded benchmark artifacts
+do not establish WAN performance or a service guarantee. The secure Compose
+setup and its TLS/mTLS caveats remain documented below.
 
 **Stack:** Rust matching engine · Go gateway · Protobuf binary encoding · JWT authentication
 
@@ -301,18 +353,6 @@ go run simulation/trading_day.go -gateway localhost:8082 -tls \
 ```
 
 ---
-
-## Local FXP Console demo
-
-Run `make demo` (Docker Compose >=2.24.4 and Python 3), then open
-**http://127.0.0.1:3000**. `make demo-down` stops it. The command creates a
-private, gitignored `.env.demo` with random credentials. Only the UI/BFF port
-is published; gateway and core remain private. The BFF offers short-lived demo
-JWTs, a same-origin binary WebSocket proxy and supervised simulator control.
-A placeholder is served until the separately scoped UI is built.
-The console UI in `web/` shows the live 10-level book, public trade tape with
-sequence-gap counter, price chart, session phase/auction banner and simulator
-controls. See [console API, configuration and security model](docs/console/README.md).
 
 ## Trading Day Simulation
 
@@ -710,7 +750,3 @@ Auto-merge is not enabled.
 First-release preparation and exact maintainer-only tagging commands are in
 [the release process](docs/release-process.md); the prepared changelog does not
 indicate an existing release. Manual release builds create artifacts only.
-
-Seeded, narrated [console scenarios](docs/console/scenarios.md) demonstrate
-auction uncross, stop cascades, five STP modes, iceberg priority, COD and FIX
-restart/resend recovery. Run them from the Scenarios page with `make demo`.
