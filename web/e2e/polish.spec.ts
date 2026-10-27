@@ -106,3 +106,11 @@ test("symbol movement is labeled as change since first print seen", async ({ pag
   await expect(page.getByTestId("symbol-AAPL").getByTestId("symbol-last")).toHaveAttribute("data-direction", /-1|0|1/);
   await page.request.post("/api/sim/stop");
 });
+
+test("same-origin favicon is served by the BFF and title stays FXP Console", async ({ page }) => {
+  await page.goto("/"); await expect(page).toHaveTitle("FXP Console");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", "/favicon.svg");
+  const icon = await page.request.get("/favicon.svg");
+  expect(icon.ok()).toBe(true); expect(icon.headers()["content-type"]).toContain("image/svg+xml");
+  expect(await icon.text()).toContain("FXP");
+});
