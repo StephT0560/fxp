@@ -28,6 +28,8 @@ func main() {
 	ts := &timestamppb.Timestamp{Seconds: 1_700_000_000, Nanos: 123_000_000}
 	hdr := &protobuf.FXPHeader{ProtocolVersion: "2.1", SequenceNumber: 7}
 	frames := map[string]*protobuf.FXPMessage{
+		"logon":     {Payload: &protobuf.FXPMessage_Logon{Logon: &protobuf.Logon{Token: "fixture-not-a-credential", SessionId: "fixture-session", Timestamp: ts}}},
+		"new_order": {Payload: &protobuf.FXPMessage_NewOrder{NewOrder: &protobuf.NewOrderSingle{OrderId: "fixture-order", ClientOrderId: "fixture-order", Symbol: "DEMO", Side: protobuf.OrderSide_BUY, Quantity: 10, OrderType: protobuf.OrderType_LIMIT, TimeInForce: protobuf.TimeInForce_DAY, Price: 12345, Timestamp: ts}}},
 		"session_status": {Payload: &protobuf.FXPMessage_TradingSessionStatus{TradingSessionStatus: &protobuf.TradingSessionStatus{
 			Symbol: "AAPL", Phase: protobuf.TradingPhase_OPENING_CALL, Timestamp: ts,
 		}}},

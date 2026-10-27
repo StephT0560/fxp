@@ -10,9 +10,20 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
+    launchOptions: process.env.FXP_CONSOLE_CHROMIUM
+      ? { executablePath: process.env.FXP_CONSOLE_CHROMIUM }
+      : {},
     baseURL: process.env.FXP_CONSOLE_URL ?? "http://127.0.0.1:3000",
     trace: "on",
     video: "on",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1600, height: 1000 } } }],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1600, height: 1000 },
+      },
+    },
+  ],
 });

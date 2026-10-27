@@ -7,6 +7,18 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Console latency and protocol inspector v0.2
+- Read-only validated benchmark evidence, separate intended-time/post-send ACK
+  charts with median and full repetition spread, historical build/environment
+  provenance and R4 report. Loopback only; tested knee is never an SLO.
+- In-memory WS inspector with type/symbol/direction filters, timestamps,
+  sanitized decoded frames and safe raw hex. JWT/token-like data is redacted
+  before storage; unknown or malformed raw bytes are withheld.
+- FIX 4.4 previews for captured new orders reuse the fix_bridge translator and
+  report both application-envelope byte sizes without protocol ranking claims.
+- Vitest, independent FIX/protobuf goldens and console-e2e panel coverage.
+
+
 ### Console UI v0.1b
 - Order ticket: limit, market, stop and stop-limit; IOC, FOK, GTC, Day, GTD
   (expiry date) and at-open; iceberg display quantity; STP mode and group.

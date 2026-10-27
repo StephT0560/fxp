@@ -221,3 +221,69 @@ control, not an operator console.
 place to try fills between two users. The 90-second walkthrough is in
 [demo-script.md](demo-script.md).
 
+
+## Latency panel (v0.2)
+
+Select **Latency** after login. `GET /api/bench` serves the checked-in
+`benchmarks/console.json` read-only, validated against the
+[console evidence schema](../benchmark-methodology.md#read-only-console-evidence-schema-v1).
+The fixed projection and its source digests are verified with
+`python3 scripts/export_console_bench.py --check`; no workload can be launched
+from the UI. Native runs use the repository root (or `demo_api/`) as their
+working directory; the demo image includes the evidence and report under `/app`.
+
+Recharts shows **both intended-time ACK and post-send ACK**, p50 and p99, for
+one selected scenario. Error bars and the numeric table show min/max of the
+per-repetition statistics alongside their median. The environment card gives
+hardware, network, open/closed mode, pacer, versions, CPU pinning/quota, measured
+git SHA and artifact digest. **Read profile-r4.md** opens the checked-in report
+through `GET /api/bench/profile-r4`.
+
+The pacer contributes to intended-time latency; post-send includes construction,
+serialization, blocked writes, server hops and decoding. These are historical
+plaintext **loopback** results, never WAN/TLS numbers. Capacity means **tested
+knee** for the specified finite workload, never an SLO. No cross-protocol speed
+ranking is supported. Missing, malformed or inconsistent data shows an explicit
+empty state and no chart. The initial bundle retains its 160 KiB gzip budget;
+the on-demand latency chart has a separate 120 KiB budget (checked using Vite's
+manifest, including static dependencies).
+
+## Protocol inspector (v0.2)
+
+Select **Protocol inspector**. The browser taps every sent/received binary WS
+application frame, including Logon, subscriptions, order/status requests and
+responses. The latest 200 sanitized records stay in memory only (frames over 64 KiB
+retain metadata only) and clear on
+logout/user change. Filter by message type, symbol text and direction; select a
+row for decoded JSON, UTC capture timestamp, monotonic browser timestamp and raw
+hex. These timestamps describe browser observation, not server-hop timing.
+
+Logon JWTs and recursively nested token/credential-like keys and values are
+redacted **before entering inspector history**. Logon hex is always withheld.
+Unknown/noncanonical protobuf bytes, malformed frames and frames containing
+redactions have no stored raw bytes or comparison payload. Safe known messages
+retain their exact original hex; int64 fields remain decimal strings in JSON.
+The inspector batches notifications with the existing animation-frame scheduler.
+
+For a captured new order, **FXP vs FIX for this order** posts its exact FXP
+WS envelope as `{ "frame": "<base64>" }` to `POST /api/inspect/fix`. The BFF calls
+`fix_bridge/translator.RenderNewOrderFIX`, which reuses the bridge's authoritative
+inbound enum mappings and price rules. It does not send an order. The response
+contains `fix` (SOH displayed as `|`), `fxp_bytes`, `fix_bytes` and an explanatory
+`note`. FIX uses an illustrative client header (`CONSOLE` → `FXPBRIDGE`, sequence
+1), with the captured order timestamp. Byte counts include each application
+envelope and exclude WS/TCP/TLS overhead. FXP-only routing/header extensions have
+no FIX equivalent; these sizes do not establish protocol speed or full semantic
+equivalence. Explicit STP NONE has no mapping in the current bridge and returns
+422, as do other unsupported orders; no approximate representation is shown.
+The endpoint accepts only bounded new-order frames, rejects unknown fields and
+FIX delimiter injection, and uses the same Origin/Host controls as other POSTs.
+
+Validation: Vitest covers chart transforms and credential redaction with
+independent Go protobuf goldens; Go endpoint/translator tests use the fixed FIX
+messages in `fix_bridge/translator/testdata/order_preview.json` (independent
+Python field/checksum construction). `console-e2e` automatically includes
+`web/e2e/inspector.spec.ts` for real WS capture, filters, hex, translation,
+provenance, spread and malformed-data empty states. An existing system Chromium
+can be selected for local tests with `FXP_CONSOLE_CHROMIUM=/usr/bin/chromium`.
+No `/metrics` tiles, benchmark runner, hosted mode or admin API is added.

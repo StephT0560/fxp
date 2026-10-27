@@ -271,6 +271,8 @@ jobs:
           git diff --exit-code -- src/gen src/testdata
       - run: npm run typecheck
       - run: npm test
+      - name: Console benchmark projection matches checked-in R4 evidence
+        run: python3 ../scripts/export_console_bench.py --check
       - run: npm run build
       - run: npm run size
       - name: No secret material in the bundle

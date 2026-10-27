@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { AuctionBanner } from "./components/AuctionBanner";
 import { Blotter } from "./components/Blotter";
 import { Chart } from "./components/Chart";
@@ -12,7 +12,17 @@ import { SymbolList } from "./components/SymbolList";
 import { TapeView } from "./components/TapeView";
 import { activeClient, ConsoleClient } from "./lib/client";
 import { formatPrice, formatQty } from "./lib/format";
-import { useOrders, useSession, useSymbols, useTape, type SymbolInfo } from "./lib/stores";
+import {
+  useOrders,
+  useSession,
+  useSymbols,
+  useTape,
+  type SymbolInfo,
+} from "./lib/stores";
+
+const LatencyPanel = lazy(() => import("./components/LatencyPanel"));
+import { ProtocolInspector } from "./components/ProtocolInspector";
+import { useInspector } from "./lib/inspector";
 
 function Stats({ symbol, scale }: { symbol: string; scale: number }) {
   useTape((s) => s.version);
@@ -20,10 +30,18 @@ function Stats({ symbol, scale }: { symbol: string; scale: number }) {
   return (
     <div className="flex gap-6 text-sm">
       <span>
-        last <span className="num text-neutral-100" data-testid="last-price">{formatPrice(t?.lastPrice, scale)}</span>
+        last{" "}
+        <span className="num text-neutral-100" data-testid="last-price">
+          {formatPrice(t?.lastPrice, scale)}
+        </span>
       </span>
       <span>
-        <span title="Volume of prints observed since this console connected">observed vol</span> <span className="num text-neutral-100" data-testid="volume">{formatQty(t?.volume ?? 0n)}</span>
+        <span title="Volume of prints observed since this console connected">
+          observed vol
+        </span>{" "}
+        <span className="num text-neutral-100" data-testid="volume">
+          {formatQty(t?.volume ?? 0n)}
+        </span>
       </span>
     </div>
   );
@@ -34,11 +52,16 @@ export function App() {
   const setUser = useSession((s) => s.setUser);
   const { list, selected, setList } = useSymbols();
   const client = useRef<ConsoleClient>(undefined);
+  const [panel, setPanel] = useState("market");
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     fetch("/api/symbols")
-      .then((r) => (r.ok ? (r.json() as Promise<SymbolInfo[]>) : Promise.reject(new Error(`symbols: ${r.status}`))))
+      .then((r) =>
+        r.ok
+          ? (r.json() as Promise<SymbolInfo[]>)
+          : Promise.reject(new Error(`symbols: ${r.status}`)),
+      )
       .then(setList)
       .catch((e: Error) => setError(e.message));
   }, [setList]);
@@ -46,12 +69,17 @@ export function App() {
   useEffect(() => {
     if (!user) return;
     useOrders.getState().reset();
-    const c = new ConsoleClient({ user, symbols: () => useSymbols.getState().list.map((s) => s.symbol) });
+    useInspector.getState().clear();
+    const c = new ConsoleClient({
+      user,
+      symbols: () => useSymbols.getState().list.map((s) => s.symbol),
+    });
     client.current = c;
     activeClient.current = c;
     c.start();
     return () => {
       c.stop();
+      useInspector.getState().clear();
       if (activeClient.current === c) activeClient.current = undefined;
     };
   }, [user]);
@@ -62,30 +90,56 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <StatusBar symbol={selected} onLogout={() => setUser(undefined)} />
-      {selected && <AuctionBanner symbol={selected} scale={scale} />}
-      {error && <div className="px-4 py-1 text-sm text-red-400">{error}</div>}
-      <div className="flex min-h-0 flex-1">
-        <SymbolList />
-        {selected && (
-          <>
-            <Ladder symbol={selected} scale={scale} />
-            <main className="flex min-w-0 flex-1 flex-col gap-2 p-3">
-              <div className="flex items-center justify-between">
-                <Stats symbol={selected} scale={scale} />
-                <SimControls />
-              </div>
-              <Chart symbol={selected} scale={scale} />
-            </main>
-            <TapeView symbol={selected} scale={scale} />
-          </>
+      <nav
+        className="flex gap-4 border-b border-neutral-800 px-4 py-2"
+        aria-label="Console panels"
+      >
+        {["market", "latency", "protocol"].map((v) => (
+          <button
+            key={v}
+            aria-pressed={panel === v}
+            onClick={() => setPanel(v)}
+          >
+            {v === "market"
+              ? "Market"
+              : v === "latency"
+                ? "Latency"
+                : "Protocol inspector"}
+          </button>
+        ))}
+      </nav>
+      {panel === "latency" && (
+        <Suspense fallback={<p>Loading latency panel…</p>}>
+          <LatencyPanel />
+        </Suspense>
+      )}
+      {panel === "protocol" && <ProtocolInspector />}
+      <div className={panel === "market" ? "contents" : "hidden"}>
+        {selected && <AuctionBanner symbol={selected} scale={scale} />}
+        {error && <div className="px-4 py-1 text-sm text-red-400">{error}</div>}
+        <div className="flex min-h-0 flex-1">
+          <SymbolList />
+          {selected && (
+            <>
+              <Ladder symbol={selected} scale={scale} />
+              <main className="flex min-w-0 flex-1 flex-col gap-2 p-3">
+                <div className="flex items-center justify-between">
+                  <Stats symbol={selected} scale={scale} />
+                  <SimControls />
+                </div>
+                <Chart symbol={selected} scale={scale} />
+              </main>
+              <TapeView symbol={selected} scale={scale} />
+            </>
+          )}
+        </div>
+        {info && (
+          <div className="flex h-72 shrink-0 border-t border-neutral-800">
+            <OrderTicket key={selected} rules={info} />
+            <Blotter symbol={selected!} />
+          </div>
         )}
       </div>
-      {info && (
-        <div className="flex h-72 shrink-0 border-t border-neutral-800">
-          <OrderTicket key={selected} rules={info} />
-          <Blotter symbol={selected!} />
-        </div>
-      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { captureFrame } from "./inspector";
 import type { ExecutionReport, FXPMessage } from "../gen/fxp_pb";
 import { newOrderId, trackCancel, trackNew, trackReplace, type OrderRow } from "./orders";
 import {
@@ -137,9 +138,15 @@ export class ConsoleClient {
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     let loggedOn = false;
-    ws.onopen = () => ws.send(logonFrame(token, `console-${this.opts.user}`));
+    ws.onopen = () => {
+      const frame = logonFrame(token, `console-${this.opts.user}`);
+      ws.send(frame);
+      captureFrame(frame, "sent");
+      token = "";
+    };
     ws.onmessage = (ev: MessageEvent) => {
       if (!(ev.data instanceof ArrayBuffer)) return;
+      captureFrame(ev.data, "received");
       let msg: FXPMessage;
       try {
         msg = decodeFrame(ev.data);
@@ -185,6 +192,7 @@ export class ConsoleClient {
   private send(frame: Uint8Array): boolean {
     if (!this.ready) return false;
     this.ws!.send(frame);
+    captureFrame(frame, "sent");
     return true;
   }
 
@@ -242,7 +250,11 @@ export class ConsoleClient {
   }
 
   private subscribe(ws: WebSocket, symbols: string[]): void {
-    if (symbols.length > 0 && ws.readyState === ws.OPEN) ws.send(subscribeFrame(symbols));
+    if (symbols.length > 0 && ws.readyState === ws.OPEN) {
+      const frame = subscribeFrame(symbols);
+      ws.send(frame);
+      captureFrame(frame, "sent");
+    }
   }
 
   // The core ignores requests for books it has not created yet, so keep
