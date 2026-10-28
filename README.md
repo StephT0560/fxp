@@ -39,6 +39,8 @@ make demo
 make demo-down
 ```
 
+**Windows:** use Git Bash or WSL with Docker Desktop and Compose >=2.24.4.
+
 Requires Docker Compose >=2.24.4 and Python 3. The command builds the console UI
 and creates a private, gitignored `.env.demo` with random credentials. Only the
 UI/BFF port is published; gateway and core remain private. The BFF offers
