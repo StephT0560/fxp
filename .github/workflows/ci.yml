@@ -193,6 +193,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Check shell scripts use LF
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import subprocess
+
+          scripts = subprocess.check_output(["git", "ls-files", "-z", "--", "*.sh"]).split(b"\0")
+          bad = [path for path in scripts if path and b"\r" in pathlib.Path(path.decode()).read_bytes()]
+          for path in bad:
+              print(f"::error file={path.decode()}::Shell scripts must use LF; found a carriage return")
+          raise SystemExit(bool(bad))
+          PY
       - uses: bufbuild/buf-action@v1
         with:
           input: fxp_core/proto
