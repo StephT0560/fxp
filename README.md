@@ -40,6 +40,8 @@ make demo-down
 ```
 
 **Windows:** use Git Bash or WSL with Docker Desktop and Compose >=2.24.4.
+Prefer cloning inside the WSL filesystem (for example `~/fxp`) rather than
+`/mnt/c`, so `.env.demo` can be protected by POSIX file permissions.
 
 Requires Docker Compose >=2.24.4 and Python 3. The command builds the console UI
 and creates a private, gitignored `.env.demo` with random credentials. Only the
