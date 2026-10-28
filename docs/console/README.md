@@ -8,6 +8,11 @@ Python 3 installed. It creates a private, gitignored `.env.demo` with a random
 stack without deleting the private env file or volumes. Remove `.env.demo` while
 the stack is stopped to generate new credentials on the next start.
 
+On native Windows, or a WSL Windows mount where `chmod 600` cannot enforce
+private mode bits, the demo warns that POSIX file permissions do not protect the
+credentials. Regular-file and symlink checks still apply. Prefer a checkout in
+the WSL filesystem (such as `~/fxp`) for POSIX file protection.
+
 Only **127.0.0.1:3000** is published. Core, gateway TCP/WS and FIX ports are not
 published by this overlay; the FIX bridge is disabled unless the `fix` profile
 is explicitly added. BFF, simulator, core and gateway share the core container's
@@ -18,6 +23,7 @@ demo identity. Do not expose it as a hosted service.
 The equivalent Compose command (after `make demo` has created `.env.demo`) is:
 
 ```sh
+python3 scripts/demo_env.py
 docker compose --env-file .env.demo -p fxp-demo \
   -f docker-compose.dev.yml -f docker-compose.demo.yml \
   --profile dev --profile demo up --build --detach --wait

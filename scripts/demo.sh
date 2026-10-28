@@ -5,20 +5,9 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 case "${1:-}" in up|down) ;; *) printf 'usage: %s up|down\n' "$0" >&2; exit 1;; esac
 if [[ "$1" == up ]]; then
-    python3 - <<'PY'
-import os, secrets, stat
-path = '.env.demo'
-try:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-except FileExistsError:
-    if os.path.islink(path) or not stat.S_ISREG(os.stat(path).st_mode) or os.stat(path).st_mode & 0o077:
-        raise SystemExit('.env.demo must be a regular private file (mode 600)')
-else:
-    with os.fdopen(descriptor, 'w') as output:
-        output.write('FXP_JWT_SECRET=' + secrets.token_hex(32) + '\n')
-        # Required by the base file's interpolation even while FIX is disabled.
-        output.write('FXP_FIX_CREDENTIALS=DEMO:' + secrets.token_hex(24) + '\n')
-PY
+    python3 scripts/demo_env.py --create
+else
+    python3 scripts/demo_env.py
 fi
 # Pin a separate project and use its private env file rather than a developer's
 # shell credentials. No secret values are expanded into process arguments.
