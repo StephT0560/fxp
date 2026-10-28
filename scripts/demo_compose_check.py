@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import subprocess
 import urllib.request
+from demo_env import ensure_demo_env
+
+ensure_demo_env()
 
 compose = ['docker', 'compose', '--env-file', '.env.demo', '-p', 'fxp-demo',
            '-f', 'docker-compose.dev.yml', '-f', 'docker-compose.demo.yml',

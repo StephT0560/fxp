@@ -300,6 +300,7 @@ jobs:
       - name: Secret values absent from the served bundle
         working-directory: .
         run: |
+          python3 scripts/demo_env.py
           set -a; . ./.env.demo; set +a
           mkdir -p /tmp/served && curl -fsS http://127.0.0.1:3000/ -o /tmp/served/index.html
           for a in $(grep -oE '/assets/[^"]+' /tmp/served/index.html); do curl -fsS "http://127.0.0.1:3000$a" -o "/tmp/served/$(basename "$a")"; done
