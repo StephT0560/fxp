@@ -51,9 +51,12 @@ def ensure_demo_env(path='.env.demo', create=False):
     elif mode & 0o077:
         if not windows_mount(path):
             raise SystemExit(f'{path} must be a regular private file (mode 600)')
+        original_mode = stat.S_IMODE(mode)
         os.chmod(path, 0o600)
         mode = os.lstat(path).st_mode
         if not stat.S_ISREG(mode):
+            raise SystemExit(f'{path} must be a regular private file (mode 600)')
+        if mode & 0o077 and stat.S_IMODE(mode) != original_mode:
             raise SystemExit(f'{path} must be a regular private file (mode 600)')
         unprotected = bool(mode & 0o077)
     else:

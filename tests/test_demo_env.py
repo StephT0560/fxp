@@ -87,6 +87,13 @@ class DemoEnvTest(unittest.TestCase):
         chmod.assert_called_once_with(self.path, 0o600)
         self.assertIn('not protected by POSIX file permissions', warning.getvalue())
 
+    def test_wsl_partial_mode_change_still_refuses_public_file(self):
+        self.present(0o644)
+        chmod = os.chmod
+        with patch.object(demo, 'windows_mount', return_value=True), patch.object(demo.os, 'chmod', side_effect=lambda path, mode: chmod(path, 0o640)):
+            with self.assertRaisesRegex(SystemExit, 'mode 600'):
+                demo.ensure_demo_env(self.path)
+
     def test_up_and_down_validate_before_compose_reads_credentials(self):
         scripts = os.path.join(self.directory.name, 'scripts')
         tools = os.path.join(self.directory.name, 'tools')
