@@ -1,0 +1,14 @@
+# Normalize text in the repository; preserve LF for Unix build inputs on Windows.
+* text=auto
+*.sh text eol=lf
+Dockerfile* text eol=lf
+Makefile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Committed screenshots, wire fixtures and compressed/profiling evidence.
+*.png binary
+*.bin binary
+*.gz binary
+*.pprof binary
+*.svg text
