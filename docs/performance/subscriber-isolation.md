@@ -110,6 +110,10 @@ control/stalled pairs, each half delivering 2,000 real routed private reports
 while injecting the same update workload. A net.Pipe peer never reads: one
 writer is deterministically blocked regardless of socket-buffer sizes. Test
 with the race detector; serialize ratios only.
+`FXP_ISOLATION_OUTPUT` is an optional test-only JSON output path for
+`TestSubscriberIsolationRelative`; the collector sets it automatically. When
+unset, the test still checks the policy and prints relative ratios, without
+writing an artifact. It is not a server configuration setting.
 
 Observed stalled/control slowdown **1.094× [0.955, 1.135]**, below the 4× ceiling.
 All 20,000 measured healthy reports arrived. In each stalled half, depth stayed
