@@ -519,3 +519,5 @@ mod tests;
 #[cfg(test)]
 mod vectors;
 
+#[cfg(test)]
+mod cli_golden;

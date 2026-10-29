@@ -1,0 +1,5 @@
+explain source=recorded verified=true
+B: 0 fill reports, 0 units; 0 stop triggers; 0 iceberg refreshes.
+TEST B owner=alice: replaced: new order B2 (first seq 2, count 1).
+TEST B2 owner=alice: replace rejected: negative replace fields are invalid (first seq 3, count 1).
+TEST B2 owner=alice: canceled: user (first seq 4, count 1).

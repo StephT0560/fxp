@@ -1,0 +1,10 @@
+timeline source=recorded verified=true
+1:0 TEST B owner=alice client=c-B command_received {"account":"","client_order_id":"c-B","display_quantity":0,"expire_date":"","kind":"new","order_id":"B","order_type":2,"owner":"alice","price":100,"quantity":10,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+1:1 TEST B owner=alice client=c-B accepted quantity=10 leaves=10
+2:0 TEST B owner=alice client=replace-1 command_received {"client_order_id":"replace-1","kind":"replace","new_display_quantity":0,"new_order_id":"B2","new_price":101,"new_quantity":12,"new_stop_price":0,"new_time_in_force":0,"order_id":"B","owner":"alice"}
+2:1 TEST B owner=alice client=replace-1 replaced new_order_id=B2
+2:2 TEST B2 owner=alice client=replace-1 accepted quantity=12 leaves=12
+3:0 TEST B2 owner=alice client=replace-bad command_received {"client_order_id":"replace-bad","kind":"replace","new_display_quantity":null,"new_order_id":"BAD","new_price":0,"new_quantity":-1,"new_stop_price":0,"new_time_in_force":0,"order_id":"B2","owner":"alice"}
+3:1 TEST B2 owner=alice client=replace-bad rejected cause=negative replace fields are invalid
+4:0 TEST B2 owner=alice client=cancel-1 command_received {"client_order_id":"cancel-1","kind":"cancel","order_id":"B2","owner":"alice"}
+4:1 TEST B2 owner=alice client=cancel-1 canceled cause=user

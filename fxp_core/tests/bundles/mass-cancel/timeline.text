@@ -1,0 +1,8 @@
+timeline source=recorded verified=true
+1:0 TEST B1 owner=alice client=c-B1 command_received {"account":"","client_order_id":"c-B1","display_quantity":0,"expire_date":"","kind":"new","order_id":"B1","order_type":2,"owner":"alice","price":100,"quantity":10,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+1:1 TEST B1 owner=alice client=c-B1 accepted quantity=10 leaves=10
+2:0 TEST B2 owner=alice client=c-B2 command_received {"account":"","client_order_id":"c-B2","display_quantity":0,"expire_date":"","kind":"new","order_id":"B2","order_type":2,"owner":"alice","price":100,"quantity":10,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+2:1 TEST B2 owner=alice client=c-B2 accepted quantity=10 leaves=10
+3:0 TEST  owner=alice client=mass-1 command_received {"client_order_id":"mass-1","kind":"mass_cancel","owner":"alice","reason":1,"side":0}
+3:1 TEST B1 owner=alice client=c-B1 canceled cause=mass cancel
+3:2 TEST B2 owner=alice client=c-B2 canceled cause=mass cancel

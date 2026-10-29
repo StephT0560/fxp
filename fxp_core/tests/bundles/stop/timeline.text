@@ -1,0 +1,14 @@
+timeline source=recorded verified=true
+1:0 TEST S owner=bob client=c-S command_received {"account":"","client_order_id":"c-S","display_quantity":0,"expire_date":"","kind":"new","order_id":"S","order_type":2,"owner":"bob","price":100,"quantity":20,"side":2,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+1:1 TEST S owner=bob client=c-S accepted quantity=20 leaves=20
+2:0 TEST STOP owner=alice client=c-STOP command_received {"account":"","client_order_id":"c-STOP","display_quantity":0,"expire_date":"","kind":"new","order_id":"STOP","order_type":3,"owner":"alice","price":100,"quantity":5,"side":1,"stop_price":100,"stp_group":"","stp_mode":0,"time_in_force":2}
+2:1 TEST STOP owner=alice client=c-STOP accepted quantity=5 leaves=5
+3:0 TEST TAKE owner=carol client=c-TAKE command_received {"account":"","client_order_id":"c-TAKE","display_quantity":0,"expire_date":"","kind":"new","order_id":"TAKE","order_type":2,"owner":"carol","price":100,"quantity":1,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":3}
+3:1 TEST TAKE owner=carol client=c-TAKE accepted quantity=1 leaves=1
+3:2 TEST TAKE owner=carol client=c-TAKE fill price=100 quantity=1 leaves=0 role=aggressor counterparty=anon:8de0b3c47f11
+3:3 TEST S owner=bob client=c-S fill price=100 quantity=1 leaves=19 role=resting counterparty=anon:7e56db773495
+3:4 TEST  owner= client= trade {"auction":false,"business_time":{"nanos":0,"seconds":3},"price":100,"quantity":1,"trade_id":"TEST:1"}
+3:5 TEST STOP owner=alice client=c-STOP stop_trigger cause=trade price crossed stop
+3:6 TEST STOP owner=alice client=c-STOP fill price=100 quantity=5 leaves=0 role=aggressor counterparty=anon:8de0b3c47f11
+3:7 TEST S owner=bob client=c-S fill price=100 quantity=5 leaves=14 role=resting counterparty=anon:04dedf8afeb8
+3:8 TEST  owner= client= trade {"auction":false,"business_time":{"nanos":0,"seconds":3},"price":100,"quantity":5,"trade_id":"TEST:2"}

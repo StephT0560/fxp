@@ -1,0 +1,8 @@
+timeline source=recorded verified=true
+1:0 TEST B owner=alice client=c-B command_received {"account":"","client_order_id":"c-B","display_quantity":0,"expire_date":"","kind":"new","order_id":"B","order_type":2,"owner":"alice","price":100,"quantity":10,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+1:1 TEST B owner=alice client=c-B accepted quantity=10 leaves=10
+2:0 TEST S owner=bob client=c-S command_received {"account":"","client_order_id":"c-S","display_quantity":0,"expire_date":"","kind":"new","order_id":"S","order_type":2,"owner":"bob","price":100,"quantity":4,"side":2,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":3}
+2:1 TEST S owner=bob client=c-S accepted quantity=4 leaves=4
+2:2 TEST B owner=alice client=c-B fill price=100 quantity=4 leaves=6 role=resting counterparty=anon:8de0b3c47f11
+2:3 TEST S owner=bob client=c-S fill price=100 quantity=4 leaves=0 role=aggressor counterparty=anon:df7e70e50215
+2:4 TEST  owner= client= trade {"auction":false,"business_time":{"nanos":0,"seconds":2},"price":100,"quantity":4,"trade_id":"TEST:1"}

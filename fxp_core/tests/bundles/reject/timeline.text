@@ -1,0 +1,3 @@
+timeline source=recorded verified=true
+1:0 TEST BAD owner=alice client=c-BAD command_received {"account":"","client_order_id":"c-BAD","display_quantity":0,"expire_date":"","kind":"new","order_id":"BAD","order_type":2,"owner":"alice","price":100,"quantity":-1,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+1:1 TEST BAD owner=alice client=c-BAD rejected cause=quantity must be positive

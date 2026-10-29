@@ -1,0 +1,3 @@
+explain source=recorded verified=true
+B1: 0 fill reports, 0 units; 0 stop triggers; 0 iceberg refreshes.
+TEST B1 owner=alice: canceled: mass cancel (first seq 3, count 1).

@@ -1,0 +1,2 @@
+explain source=recorded verified=true
+STOP: 1 fill reports, 5 units; 1 stop triggers; 0 iceberg refreshes.

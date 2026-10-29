@@ -1,0 +1,3 @@
+explain source=recorded verified=true
+B: 1 fill reports, 3 units; 0 stop triggers; 0 iceberg refreshes.
+TEST B owner=alice: canceled: auction remainder (first seq 3, count 1).

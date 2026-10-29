@@ -1,0 +1,5 @@
+timeline source=recorded verified=true
+1:0 TEST DAY owner=alice client=c-DAY command_received {"account":"","client_order_id":"c-DAY","display_quantity":0,"expire_date":"","kind":"new","order_id":"DAY","order_type":2,"owner":"alice","price":100,"quantity":10,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":1}
+1:1 TEST DAY owner=alice client=c-DAY accepted quantity=10 leaves=10
+2:0 TEST  owner= client= command_received {"kind":"tick"}
+2:1 TEST DAY owner=alice client=c-DAY expired cause=expiry
