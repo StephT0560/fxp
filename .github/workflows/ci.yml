@@ -43,6 +43,14 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
           cargo bench --no-run --locked
           cargo audit
+      - name: Replay golden bundles and independent trace vectors
+        run: |
+          python3 scripts/check_replay_goldens.py
+          for bundle in fxp_core/tests/bundles/*; do
+            if [ -d "$bundle" ]; then
+              cargo run --locked --manifest-path fxp_core/Cargo.toml --bin fxp-replay -- verify "$bundle"
+            fi
+          done
 
   cargo-deny:
     name: cargo-deny
