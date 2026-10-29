@@ -1,0 +1,16 @@
+timeline source=recorded verified=true
+1:0 TEST ICE owner=bob client=c-ICE command_received {"account":"","client_order_id":"c-ICE","display_quantity":2,"expire_date":"","kind":"new","order_id":"ICE","order_type":2,"owner":"bob","price":100,"quantity":8,"side":2,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+1:1 TEST ICE owner=bob client=c-ICE accepted quantity=8 leaves=8
+2:0 TEST B owner=alice client=c-B command_received {"account":"","client_order_id":"c-B","display_quantity":0,"expire_date":"","kind":"new","order_id":"B","order_type":2,"owner":"alice","price":100,"quantity":5,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":3}
+2:1 TEST B owner=alice client=c-B accepted quantity=5 leaves=5
+2:2 TEST B owner=alice client=c-B fill price=100 quantity=2 leaves=3 role=aggressor counterparty=anon:da6ac2e6065c
+2:3 TEST ICE owner=bob client=c-ICE fill price=100 quantity=2 leaves=6 role=resting counterparty=anon:df7e70e50215
+2:4 TEST  owner= client= trade {"auction":false,"business_time":{"nanos":0,"seconds":2},"price":100,"quantity":2,"trade_id":"TEST:1"}
+2:5 TEST ICE owner=bob client=c-ICE iceberg_refresh quantity=2 cause=displayed slice exhausted; reserve replenished at back of queue
+2:6 TEST B owner=alice client=c-B fill price=100 quantity=2 leaves=1 role=aggressor counterparty=anon:da6ac2e6065c
+2:7 TEST ICE owner=bob client=c-ICE fill price=100 quantity=2 leaves=4 role=resting counterparty=anon:df7e70e50215
+2:8 TEST  owner= client= trade {"auction":false,"business_time":{"nanos":0,"seconds":2},"price":100,"quantity":2,"trade_id":"TEST:2"}
+2:9 TEST ICE owner=bob client=c-ICE iceberg_refresh quantity=2 cause=displayed slice exhausted; reserve replenished at back of queue
+2:10 TEST B owner=alice client=c-B fill price=100 quantity=1 leaves=0 role=aggressor counterparty=anon:da6ac2e6065c
+2:11 TEST ICE owner=bob client=c-ICE fill price=100 quantity=1 leaves=3 role=resting counterparty=anon:df7e70e50215
+2:12 TEST  owner= client= trade {"auction":false,"business_time":{"nanos":0,"seconds":2},"price":100,"quantity":1,"trade_id":"TEST:3"}

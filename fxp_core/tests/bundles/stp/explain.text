@@ -1,0 +1,3 @@
+explain source=recorded verified=true
+B: 0 fill reports, 0 units; 0 stop triggers; 0 iceberg refreshes.
+TEST B owner=alice: canceled: self-trade prevention (cancel-newest) (first seq 2, count 1).

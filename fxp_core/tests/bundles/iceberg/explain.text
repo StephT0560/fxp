@@ -1,0 +1,2 @@
+explain source=recorded verified=true
+ICE: 3 fill reports, 5 units; 0 stop triggers; 2 iceberg refreshes.

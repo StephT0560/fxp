@@ -199,6 +199,14 @@ impl OrderBook {
             }
             let bid_refresh = self.replenish(&bid);
             let ask_refresh = self.replenish(&ask);
+            for (o, md) in [(&bid, &bid_refresh), (&ask, &ask_refresh)] {
+                if md.is_some() {
+                    let visible = self.visible(o);
+                    if let Some(log) = &mut self.refresh_log {
+                        log.push((fills.len() - 1, o.order_id.clone(), visible));
+                    }
+                }
+            }
             let bid_back = bid_refresh.is_some();
             let ask_back = ask_refresh.is_some();
             updates.extend(bid_refresh);
@@ -485,6 +493,10 @@ impl OrderBook {
                 top.side,
             ));
             if let Some(md) = self.replenish(&top) {
+                let visible = self.visible(&top);
+                if let Some(log) = &mut self.refresh_log {
+                    log.push((sweep.fills.len() - 1, top.order_id.clone(), visible));
+                }
                 sweep.fill_updates.push(md);
                 level.push_back(top)
             } else if top.quantity > 0 {

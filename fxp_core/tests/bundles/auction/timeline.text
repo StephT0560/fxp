@@ -1,0 +1,13 @@
+timeline source=recorded verified=true
+1:0 TEST B owner=alice client=c-B command_received {"account":"","client_order_id":"c-B","display_quantity":0,"expire_date":"","kind":"new","order_id":"B","order_type":2,"owner":"alice","price":100,"quantity":10,"side":1,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":5}
+1:1 TEST B owner=alice client=c-B accepted quantity=10 leaves=10
+1:2 TEST  owner= client= auction {"business_time":{"nanos":0,"seconds":2},"price":0,"quantity":0}
+2:0 TEST S owner=bob client=c-S command_received {"account":"","client_order_id":"c-S","display_quantity":0,"expire_date":"","kind":"new","order_id":"S","order_type":2,"owner":"bob","price":100,"quantity":3,"side":2,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":5}
+2:1 TEST S owner=bob client=c-S accepted quantity=3 leaves=3
+2:2 TEST  owner= client= auction {"business_time":{"nanos":0,"seconds":2},"price":100,"quantity":3}
+3:0 TEST  owner= client= command_received {"kind":"tick"}
+3:1 TEST B owner=alice client=c-B fill price=100 quantity=3 leaves=7 role=auction counterparty=anon:8de0b3c47f11 auction
+3:2 TEST S owner=bob client=c-S fill price=100 quantity=3 leaves=0 role=auction counterparty=anon:df7e70e50215 auction
+3:3 TEST  owner= client= trade {"auction":true,"business_time":{"nanos":0,"seconds":5},"price":100,"quantity":3,"trade_id":"TEST:1"}
+3:4 TEST B owner=alice client=c-B canceled cause=auction remainder
+3:5 TEST  owner= client= phase {"business_time":{"nanos":0,"seconds":5},"phase":3}

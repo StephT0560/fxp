@@ -1,0 +1,2 @@
+explain source=recorded verified=true
+B: 1 fill reports, 4 units; 0 stop triggers; 0 iceberg refreshes.

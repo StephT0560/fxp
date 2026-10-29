@@ -140,6 +140,8 @@ pub struct Execution {
     pub cancels: Vec<String>,
     /// Stops triggered while processing, in firing order.
     pub triggered: Vec<String>,
+    pub trigger_points: Vec<(usize, String, &'static str)>,
+    pub refreshes: Vec<(usize, String, u32)>,
     /// Self-matches prevented instead of printed; `before_fill` indexes `fills`.
     pub stp: Vec<StpEvent>,
     /// Book incrementals for resting orders canceled or reduced by STP.
@@ -154,6 +156,13 @@ impl Execution {
             e
         }));
         self.stp_updates.extend(outcome.updates);
+        if let Some(log) = &mut book.refresh_log {
+            self.refreshes.extend(
+                std::mem::take(log)
+                    .into_iter()
+                    .map(|(i, id, q)| (base + i, id, q)),
+            );
+        }
     }
 }
 
@@ -225,6 +234,13 @@ pub fn run_stop_cascade(
         let Some(stop) = queue.pop_front() else {
             break;
         };
+        if book.refresh_log.is_some() {
+            out.trigger_points.push((
+                out.fills.len(),
+                stop.order_id.clone(),
+                "trade price crossed stop",
+            ));
+        }
         out.triggered.push(stop.order_id.clone());
         book.execute_into(stop, out);
     }

@@ -34,6 +34,7 @@ struct Record {
     payload: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub(crate) enum Input {
     New(fxp::NewOrderSingle),
     Cancel(fxp::OrderCancelRequest),
@@ -45,7 +46,7 @@ pub(crate) enum Input {
 }
 
 impl Input {
-    fn encode(&self) -> (u32, Vec<u8>) {
+    pub(crate) fn encode(&self) -> (u32, Vec<u8>) {
         match self {
             Self::New(m) => (1, m.encode_to_vec()),
             Self::Cancel(m) => (2, m.encode_to_vec()),
@@ -313,6 +314,7 @@ impl ExecIds for ReplayIds {
 pub(crate) struct Journal<R> {
     log: EventLog,
     digest: crate::reproducibility::BusinessDigest,
+    pub(crate) inspection: Option<crate::reproducibility::trace::Collector>,
     recording: Option<crate::reproducibility::Recording>,
     #[cfg(test)]
     pub(crate) trace: Vec<Vec<u8>>,
@@ -347,6 +349,7 @@ impl<R: Clone> Journal<R> {
         let mut journal = Self {
             log,
             digest: Default::default(),
+            inspection: None,
             recording: None,
             #[cfg(test)]
             trace: Vec::new(),
@@ -393,6 +396,7 @@ impl<R: Clone> Journal<R> {
             crate::reproducibility::Recording::create(dir, schedule, stp, &config, meta)?;
         let mut journal =
             Self::open_configured(&recording.log_path(), schedule, stp, detached, config)?;
+        journal.inspection = Some(Default::default());
         journal.recording = Some(recording);
         Ok(journal)
     }
@@ -424,13 +428,15 @@ impl<R: Clone> Journal<R> {
     }
 
     /// Offline verification never opens the log for writing and never repairs it.
-    pub(crate) fn replay_readonly(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn replay_inspected(
         path: &Path,
         schedule: Option<SessionSchedule>,
         stp_default: StpMode,
         detached: R,
         symbol_config: crate::symbol_config::SymbolConfig,
         complete: bool,
+        inspect: bool,
     ) -> io::Result<Self> {
         let mut file = File::open(path)?;
         let mut magic = [0; 8];
@@ -468,6 +474,7 @@ impl<R: Clone> Journal<R> {
                 failed: false,
             },
             digest: Default::default(),
+            inspection: None,
             recording: None,
             #[cfg(test)]
             trace: Vec::new(),
@@ -482,6 +489,9 @@ impl<R: Clone> Journal<R> {
             detached,
             symbol_config,
         };
+        if inspect {
+            journal.inspection = Some(Default::default());
+        }
         while file.stream_position()? < len {
             let Some(record) = read_frame(&mut file)? else {
                 if complete {
@@ -532,7 +542,12 @@ impl<R: Clone> Journal<R> {
             return Err(io::Error::other("recorded run is finalized"));
         }
         self.log.append(symbol, at, &input)?;
-        Ok(self.execute(symbol, at, input, owner))
+        let outputs = self.execute(symbol, at, input, owner);
+        if let (Some(recording), Some(inspection)) = (&mut self.recording, &mut self.inspection) {
+            recording.append_trace(&inspection.rows)?;
+            inspection.rows.clear();
+        }
+        Ok(outputs)
     }
 
     pub(crate) fn tick(&mut self, symbol: &str, at: Time) -> io::Result<Vec<Output<R>>> {
@@ -550,11 +565,18 @@ impl<R: Clone> Journal<R> {
     }
 
     fn execute(&mut self, symbol: &str, at: Time, input: Input, owner: R) -> Vec<Output<R>> {
+        let captured = self.inspection.as_ref().map(|_| input.clone());
         *self.clock.0.lock().expect("recorded clock lock") = at;
+        let inspect = self.inspection.is_some();
         let engine = self.engines.entry(symbol.to_string()).or_insert_with(|| {
-            Engine::new(symbol, self.clock.clone(), self.ids.clone(), self.schedule)
+            let engine = Engine::new(symbol, self.clock.clone(), self.ids.clone(), self.schedule)
                 .with_stp_default(self.stp_default)
-                .with_symbol_rules(self.symbol_config.get(symbol))
+                .with_symbol_rules(self.symbol_config.get(symbol));
+            if inspect {
+                engine.with_diagnostics()
+            } else {
+                engine
+            }
         });
         let outputs = match input {
             Input::New(order) => engine.new_order(order, owner),
@@ -586,6 +608,16 @@ impl<R: Clone> Journal<R> {
             }),
             Input::SessionControl(m) => engine.begin_opening_call(m.opening_call_seconds),
         };
+        let diagnostics = engine.take_diagnostics();
+        if let (Some(inspection), Some(input)) = (&mut self.inspection, captured) {
+            // Appends advance next_seq before execute; read-only replay advances afterward.
+            let seq = if self.recording.is_some() {
+                self.log.next_seq - 1
+            } else {
+                self.log.next_seq
+            };
+            inspection.capture(seq, symbol, at, &input, &outputs, diagnostics);
+        }
         self.digest.observe(symbol, &outputs);
         #[cfg(test)]
         for output in &outputs {

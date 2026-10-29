@@ -1,0 +1,3 @@
+explain source=recorded verified=true
+DAY: 0 fill reports, 0 units; 0 stop triggers; 0 iceberg refreshes.
+TEST DAY owner=alice: expired: expiry (first seq 2, count 1).

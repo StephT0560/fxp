@@ -1,0 +1,3 @@
+explain source=recorded verified=true
+BAD: 0 fill reports, 0 units; 0 stop triggers; 0 iceberg refreshes.
+TEST BAD owner=alice: new rejected: quantity must be positive (first seq 1, count 1).

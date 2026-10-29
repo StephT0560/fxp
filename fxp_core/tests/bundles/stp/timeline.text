@@ -1,0 +1,6 @@
+timeline source=recorded verified=true
+1:0 TEST S owner=alice client=c-S command_received {"account":"","client_order_id":"c-S","display_quantity":0,"expire_date":"","kind":"new","order_id":"S","order_type":2,"owner":"alice","price":100,"quantity":10,"side":2,"stop_price":0,"stp_group":"","stp_mode":0,"time_in_force":2}
+1:1 TEST S owner=alice client=c-S accepted quantity=10 leaves=10
+2:0 TEST B owner=alice client=c-B command_received {"account":"","client_order_id":"c-B","display_quantity":0,"expire_date":"","kind":"new","order_id":"B","order_type":2,"owner":"alice","price":100,"quantity":5,"side":1,"stop_price":0,"stp_group":"","stp_mode":2,"time_in_force":2}
+2:1 TEST B owner=alice client=c-B accepted quantity=5 leaves=5
+2:2 TEST B owner=alice client=c-B canceled cause=self-trade prevention (cancel-newest)

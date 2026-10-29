@@ -26,6 +26,7 @@ pub struct OrderBook {
     pub(crate) next_arrival: u64,
     pub(crate) displayed: HashMap<String, u32>,
     pub(crate) last_added: Option<String>,
+    pub(crate) refresh_log: Option<Vec<(usize, String, u32)>>,
     /// Self-trade prevention results of the last matching call.
     pub stp: StpOutcome,
 }
@@ -78,6 +79,7 @@ impl OrderBook {
             next_arrival: 0,
             displayed: HashMap::new(),
             last_added: None,
+            refresh_log: None,
             stp: StpOutcome::default(),
         }
     }

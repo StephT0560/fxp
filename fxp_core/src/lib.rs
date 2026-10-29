@@ -5,6 +5,7 @@ pub mod diagnostics;
 pub mod engine;
 mod event_log;
 pub mod order_book;
+pub mod replay_cli;
 pub mod reproducibility;
 pub mod server;
 pub mod symbol_config;
