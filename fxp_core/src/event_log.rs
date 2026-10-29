@@ -312,6 +312,8 @@ impl ExecIds for ReplayIds {
 
 pub(crate) struct Journal<R> {
     log: EventLog,
+    #[cfg(test)]
+    pub(crate) trace: Vec<Vec<u8>>,
     pub(crate) engines: HashMap<String, Engine<R, RecordedClock, ReplayIds>>,
     clock: RecordedClock,
     ids: ReplayIds,
@@ -342,6 +344,8 @@ impl<R: Clone> Journal<R> {
             EventLog::open_configured(path, schedule, stp_default, &symbol_config)?;
         let mut journal = Self {
             log,
+            #[cfg(test)]
+            trace: Vec::new(),
             engines: HashMap::new(),
             clock: RecordedClock(Arc::new(Mutex::new(Time {
                 seconds: 0,
@@ -415,7 +419,7 @@ impl<R: Clone> Journal<R> {
                 .with_stp_default(self.stp_default)
                 .with_symbol_rules(self.symbol_config.get(symbol))
         });
-        match input {
+        let outputs = match input {
             Input::New(order) => engine.new_order(order, owner),
             Input::Cancel(m) => engine.cancel(CancelMsg {
                 order_id: m.order_id,
@@ -444,7 +448,23 @@ impl<R: Clone> Journal<R> {
                 reason: m.reason,
             }),
             Input::SessionControl(m) => engine.begin_opening_call(m.opening_call_seconds),
+        };
+        #[cfg(test)]
+        for output in &outputs {
+            let (tag, bytes) = match output {
+                Output::ExecutionReport(_, m) => (1, m.encode_to_vec()),
+                Output::Trade(m) => (2, m.encode_to_vec()),
+                Output::TradingSessionStatus(m) => (3, m.encode_to_vec()),
+                Output::AuctionInfo(m) => (4, m.encode_to_vec()),
+                Output::MarketData(m) => (5, m.encode_to_vec()),
+                Output::Snapshot(_, m) => (6, m.encode_to_vec()),
+                Output::MassCancelCount(n) => (7, n.to_be_bytes().to_vec()),
+            };
+            let mut frame = vec![tag];
+            frame.extend(bytes);
+            self.trace.push(frame);
         }
+        outputs
     }
 }
 

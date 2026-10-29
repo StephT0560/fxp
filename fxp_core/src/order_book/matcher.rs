@@ -532,7 +532,9 @@ impl OrderBook {
         // Fire in the order the price path reached them: farthest from the
         // print first (buy stops ascending, sell stops descending), ties by
         // arrival (stable sort over arrival-ordered input).
-        triggered.sort_by_key(|o| std::cmp::Reverse((o.stop_price - last_trade_price).abs()));
+        triggered.sort_by_key(|o| {
+            std::cmp::Reverse((i128::from(o.stop_price) - i128::from(last_trade_price)).abs())
+        });
         triggered
     }
 }

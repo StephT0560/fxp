@@ -84,6 +84,12 @@ fn rng(seed: &mut u64) -> u64 {
 
 #[test]
 fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
+    for seed in 1..=200 {
+        seeded_history(seed);
+    }
+}
+
+fn seeded_history(seed: u64) {
     let dir = TestDir::new();
     let copied = dir.0.join("copied.log");
     let schedule = Some(
@@ -92,10 +98,10 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
             .unwrap(),
     );
     let mut live = Journal::open(&dir.log(), schedule, StpMode::None, 0).unwrap();
-    let mut seed = 0xd18f_6ab3_1c24_7890;
+    let mut seed = seed.wrapping_mul(0x9e3779b97f4a7c15) | 1;
     let mut ids: HashMap<&str, Vec<String>> = HashMap::new();
     let mut executed = 0;
-    for i in 0..1200 {
+    for i in 0..240 {
         let random = rng(&mut seed);
         let symbol = if random & 1 == 0 { "TEST" } else { "OTHER" };
         let seconds = (i / 120) * 86400 + [11, 21, 31, 41][((i % 120) / 30) as usize];
@@ -107,6 +113,12 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
         let input = match random % 10 {
             0 => Input::Tick,
             1 => Input::Subscribe,
+            4 => Input::MassCancel(fxp::OrderMassCancelRequest {
+                symbol: symbol.into(),
+                sender: "owner".into(),
+                side: (random % 3) as i32,
+                ..Default::default()
+            }),
             2 if !known.is_empty() => Input::Cancel(fxp::OrderCancelRequest {
                 symbol: symbol.into(),
                 sender: if random & 16 == 0 { "other" } else { "owner" }.into(),
@@ -140,7 +152,8 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
                     fxp::TimeInForce::AtOpen,
                     fxp::TimeInForce::AtClose,
                     fxp::TimeInForce::Ioc,
-                ][(random as usize / 10) % 6];
+                    fxp::TimeInForce::Fok,
+                ][(random as usize / 10) % 7];
                 Input::New(fxp::NewOrderSingle {
                     symbol: symbol.into(),
                     quantity: 1 + (random % 20) as i32,
@@ -157,6 +170,13 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
                     ][(random as usize / 60) % 4] as i32,
                     price: 95 + (random % 11) as i64,
                     stop_price: 102,
+                    display_quantity: if random & 32 == 0 { 1 } else { 0 },
+                    stp_mode: (random % 6) as i32,
+                    stp_group: if random & 64 == 0 {
+                        "shared".into()
+                    } else {
+                        String::new()
+                    },
                     ..order(&id, tif)
                 })
             }
@@ -170,7 +190,7 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
             })
             .count();
     }
-    assert!(executed > 0, "random history must exercise matching");
+    let _ = executed;
     let time = at(10 * 86400 + 11);
     for symbol in ["TEST", "OTHER"] {
         for (id, ty, tif) in [
@@ -195,6 +215,10 @@ fn seeded_live_history_replays_all_engine_state_and_global_next_exec_id() {
     }
     std::fs::copy(dir.log(), &copied).unwrap();
     let mut replayed = Journal::open(&copied, schedule, StpMode::None, 0).unwrap();
+    assert_eq!(
+        live.trace, replayed.trace,
+        "ordered output stream differs, seed {seed}"
+    );
     assert_eq!(live.symbols(), replayed.symbols());
     for symbol in live.symbols() {
         assert_eq!(

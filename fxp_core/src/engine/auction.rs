@@ -120,6 +120,7 @@ pub fn allocate<'a>(orders: &[AuctionOrder<'a>], result: AuctionResult) -> Vec<A
                     AuctionSide::Sell => a.limit_price.cmp(&b.limit_price),
                 })
                 .then(a.seq.cmp(&b.seq))
+                .then(a.id.cmp(b.id))
         });
         eligible
     };
@@ -567,5 +568,40 @@ mod tests {
         let r = uncross(&orders, None);
         assert_eq!(r, result(0, 0, 0));
         assert!(allocate(&orders, r).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::*;
+    #[test]
+    fn equal_arrival_sequences_have_total_order_independent_of_map_iteration() {
+        let orders = [
+            AuctionOrder {
+                id: "B2",
+                side: AuctionSide::Buy,
+                limit_price: Some(100),
+                quantity: 5,
+                seq: 1,
+            },
+            AuctionOrder {
+                id: "B1",
+                side: AuctionSide::Buy,
+                limit_price: Some(100),
+                quantity: 5,
+                seq: 1,
+            },
+            AuctionOrder {
+                id: "S",
+                side: AuctionSide::Sell,
+                limit_price: Some(100),
+                quantity: 6,
+                seq: 1,
+            },
+        ];
+        let expected = allocate(&orders, uncross(&orders, None));
+        let reversed = orders.into_iter().rev().collect::<Vec<_>>();
+        assert_eq!(allocate(&reversed, uncross(&reversed, None)), expected);
+        assert_eq!(expected[0].buy_id, "B1");
     }
 }
