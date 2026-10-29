@@ -26,6 +26,21 @@ def until(client, predicate, observer=lambda _: None):
     raise EOFError('gateway closed during scenario')
 
 
+def wait_for_quotes(client, bot):
+    # Separate gateway pool connections may acknowledge the ask before the bid.
+    pending = {bot.prefix + '-bid', bot.ask_id}
+    def observe(event):
+        if event.kind == 'execution_report':
+            report = event.message.execution_report
+            bot.observe(report)
+            if report.order_id in pending:
+                if report.execution_type == pb.EXEC_REJECTED:
+                    raise AssertionError(report.reject_reason)
+                if report.execution_type == pb.EXEC_NEW:
+                    pending.remove(report.order_id)
+    until(client, lambda _: not pending, observe)
+
+
 def run(seed, port, destination):
     quantity = 7 if random.Random(seed).randrange(2) else 0
     prefix = f'quote-{seed}'
@@ -37,7 +52,7 @@ def run(seed, port, destination):
             if event.kind == 'execution_report': bot.observe(event.message.execution_report)
         def report(order, kind):
             return lambda e: e.kind == 'execution_report' and e.message.execution_report.order_id == order and e.message.execution_report.execution_type == kind
-        until(maker, report(bot.ask_id, pb.EXEC_NEW), observe)
+        wait_for_quotes(maker, bot)
         maker.subscribe('BOTTEST')
         until(maker, lambda e: e.kind == 'market_data_snapshot', observe)
         if quantity:

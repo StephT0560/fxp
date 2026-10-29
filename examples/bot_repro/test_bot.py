@@ -24,3 +24,21 @@ class BotTests(unittest.TestCase):
         bot.observe(pb.ExecutionReport(order_id='quote-ask', execution_type=pb.EXEC_NEW, leaves_quantity=10))
         bot.reprice_ask()
         self.assertEqual(gateway.quantity, 10)
+
+
+class ScenarioTests(unittest.TestCase):
+    def test_quote_barrier_accepts_ask_before_bid(self):
+        from fxp_client import Event
+        from scenario import wait_for_quotes
+        class Feed:
+            received = 0
+            def events(self):
+                for order in ('quote-ask', 'quote-bid'):
+                    self.received += 1
+                    yield Event(pb.FXPMessage(execution_report=pb.ExecutionReport(
+                        order_id=order, execution_type=pb.EXEC_NEW, leaves_quantity=10)))
+        feed = Feed()
+        bot = MarketMaker(feed, 'TEST', 'quote')
+        wait_for_quotes(feed, bot)
+        self.assertEqual(feed.received, 2)
+        self.assertEqual(bot.cached_leaves, 10)
