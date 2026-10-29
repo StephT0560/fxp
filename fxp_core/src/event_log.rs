@@ -312,6 +312,7 @@ impl ExecIds for ReplayIds {
 
 pub(crate) struct Journal<R> {
     log: EventLog,
+    digest: crate::reproducibility::BusinessDigest,
     #[cfg(test)]
     pub(crate) trace: Vec<Vec<u8>>,
     pub(crate) engines: HashMap<String, Engine<R, RecordedClock, ReplayIds>>,
@@ -344,6 +345,7 @@ impl<R: Clone> Journal<R> {
             EventLog::open_configured(path, schedule, stp_default, &symbol_config)?;
         let mut journal = Self {
             log,
+            digest: Default::default(),
             #[cfg(test)]
             trace: Vec::new(),
             engines: HashMap::new(),
@@ -375,6 +377,22 @@ impl<R: Clone> Journal<R> {
             "replayed core event log"
         );
         Ok(journal)
+    }
+
+    pub(crate) fn canonical_state(&self) -> Vec<u8> {
+        let mut w = crate::reproducibility::StateWriter::default();
+        w.text(crate::reproducibility::STATE_VERSION);
+        w.u64(self.ids.0.load(Ordering::Relaxed));
+        w.u64(self.engines.len() as u64);
+        for symbol in self.symbols() {
+            w.text(&symbol);
+            w.bytes(&self.engines[&symbol].canonical_state());
+        }
+        w.0
+    }
+
+    pub(crate) fn summary(&self) -> crate::reproducibility::RunSummary {
+        self.digest.summary(&self.canonical_state())
     }
 
     pub(crate) fn symbols(&self) -> Vec<String> {
@@ -449,6 +467,7 @@ impl<R: Clone> Journal<R> {
             }),
             Input::SessionControl(m) => engine.begin_opening_call(m.opening_call_seconds),
         };
+        self.digest.observe(symbol, &outputs);
         #[cfg(test)]
         for output in &outputs {
             let (tag, bytes) = match output {

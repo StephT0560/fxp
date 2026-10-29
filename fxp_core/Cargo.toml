@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+sha2 = "0.10"
 constant_time_eq = "0.4.2"
 dhat = { version = "0.3.3", optional = true }
 prost = "0.14"

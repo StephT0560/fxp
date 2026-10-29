@@ -58,6 +58,10 @@ impl StopBook {
         self.parked.is_empty()
     }
 
+    pub(crate) fn orders(&self) -> &[Order] {
+        &self.parked
+    }
+
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.parked.iter().map(|o| o.order_id.as_str())
     }

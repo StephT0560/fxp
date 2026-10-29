@@ -166,3 +166,29 @@ pub(crate) fn expiry_instant(date: &str) -> Result<i64, String> {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     Ok((era * 146_097 + doe - 719_468 + 1) * 86_400)
 }
+
+impl std::fmt::Display for UtcTimeOfDay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:02}:{:02}:{:02}",
+            self.seconds / 3600,
+            (self.seconds / 60) % 60,
+            self.seconds % 60
+        )
+    }
+}
+impl std::fmt::Display for SessionSchedule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (key, value) in [
+            ("open_call", self.open_call),
+            ("open", self.open),
+            ("close_call", self.close_call),
+        ] {
+            if let Some(value) = value {
+                write!(f, "{key}={value},")?;
+            }
+        }
+        write!(f, "close={}", self.close)
+    }
+}

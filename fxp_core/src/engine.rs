@@ -12,6 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 pub mod auction;
+mod canonical;
 #[cfg(test)]
 mod iceberg_tests;
 #[cfg(test)]

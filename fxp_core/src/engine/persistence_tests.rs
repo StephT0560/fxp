@@ -219,6 +219,8 @@ fn seeded_history(seed: u64) {
         live.trace, replayed.trace,
         "ordered output stream differs, seed {seed}"
     );
+    assert_eq!(live.summary(), replayed.summary());
+    assert_eq!(live.canonical_state(), replayed.canonical_state());
     assert_eq!(live.symbols(), replayed.symbols());
     for symbol in live.symbols() {
         assert_eq!(
