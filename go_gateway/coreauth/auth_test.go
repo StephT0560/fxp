@@ -13,6 +13,7 @@ func TestTokenHandshakeAndRedactedFailure(t *testing.T) {
 	for _, token := range []string{"correct-secret-at-least-24-bytes", "wrong-secret-at-least-24-bytes"} {
 		client, server := net.Pipe()
 		done := make(chan struct{})
+		authenticated := make(chan struct{})
 		go func() {
 			defer close(done)
 			defer func() { _ = server.Close() }()
@@ -29,9 +30,13 @@ func TestTokenHandshakeAndRedactedFailure(t *testing.T) {
 			}
 			if string(data) == "correct-secret-at-least-24-bytes" {
 				_, _ = server.Write([]byte{1})
+				// A successful pool handshake keeps the peer alive. Do not race
+				// its Close against the client clearing its read deadline.
+				<-authenticated
 			}
 		}()
 		err := Authenticate(client, token)
+		close(authenticated)
 		_ = client.Close()
 		<-done
 		if (err == nil) != (token == "correct-secret-at-least-24-bytes") {
