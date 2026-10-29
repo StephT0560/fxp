@@ -87,3 +87,31 @@ sequence. Trades go to every streaming request for the symbol, whether or not
 its `267` group lists `269=2`; the requested entry types are not used to filter
 (as for bids/offers today). Snapshot-only requests (`263=0`) do not receive
 trades.
+
+## Subscriber backpressure and remaining limits
+
+At both core and gateway, a full market-data queue **drops the new message**;
+it does not evict an old message, conflate levels, block the order task/router,
+or close the connection solely for market-data overflow. Snapshots, level
+changes and public prints are all best effort. Surviving frames retain queue
+order for that connection; there is no ordering guarantee across symbols.
+The gateway marshals an incoming update once, then each connection's single
+writer owns its bounded queues and socket. See [operations](operations.md) for
+capacities, counters, and critical-output overflow.
+
+Only public trade `seq` detects missed **prints**, after a later print arrives.
+It does not detect a missing level-only update, an initial missing print before
+the first observed sequence, or a missing tail when no later print arrives.
+`header.sequence_number` is not a book-update recovery sequence. A fresh
+snapshot refreshes book state; it cannot recover historical missed prints and
+is itself best effort under continued overload. Clients needing a consistent
+book should stop trading on suspected loss and re-establish a healthy feed
+before trusting a replacement snapshot. There is no resumable book-delta
+journal or universal loss-detection promise in the current wire format.
+
+Private execution reports use the critical queue. Overflow closes the session
+rather than silently continuing after lost reports; this is **not** a promise
+that every report reaches a peer that stops reading. Native TCP/WS has no
+execution-report resend facility. Reconnect and reconcile order state with
+status requests. Cancel-on-disconnect, when requested at gateway Logon, also
+runs for a slow-consumer disconnect. These guarantees do not change FIX.

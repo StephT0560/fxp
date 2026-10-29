@@ -1,0 +1,110 @@
+{
+  "label": "relative, shared hardware",
+  "before": "663cb26196eb528223d03ebb828fab427fa91f50",
+  "after": "b67ba992e51f08295d64988aee3e863fbcb18b4b",
+  "same_harness": "b67ba992e51f08295d64988aee3e863fbcb18b4b",
+  "layout": {
+    "core": 0,
+    "gateway": 1,
+    "generator": 2,
+    "subscriber": 0
+  },
+  "order": "before,after repeated five times for each N; fresh stack each half",
+  "pairs": [
+    {
+      "subscribers": 0,
+      "pair": 1,
+      "after_over_before": 1.050758556029565
+    },
+    {
+      "subscribers": 0,
+      "pair": 2,
+      "after_over_before": 0.9264456811880272
+    },
+    {
+      "subscribers": 0,
+      "pair": 3,
+      "after_over_before": 0.9923804061432446
+    },
+    {
+      "subscribers": 0,
+      "pair": 4,
+      "after_over_before": 1.0772770865342056
+    },
+    {
+      "subscribers": 0,
+      "pair": 5,
+      "after_over_before": 0.9888809256249799
+    },
+    {
+      "subscribers": 10,
+      "pair": 1,
+      "after_over_before": 0.9184742452363834
+    },
+    {
+      "subscribers": 10,
+      "pair": 2,
+      "after_over_before": 1.0367259034182355
+    },
+    {
+      "subscribers": 10,
+      "pair": 3,
+      "after_over_before": 0.9430323395020573
+    },
+    {
+      "subscribers": 10,
+      "pair": 4,
+      "after_over_before": 1.141975253495103
+    },
+    {
+      "subscribers": 10,
+      "pair": 5,
+      "after_over_before": 0.9751158763330986
+    },
+    {
+      "subscribers": 100,
+      "pair": 1,
+      "after_over_before": 0.9811622217092111
+    },
+    {
+      "subscribers": 100,
+      "pair": 2,
+      "after_over_before": 1.0020212476171217
+    },
+    {
+      "subscribers": 100,
+      "pair": 3,
+      "after_over_before": 0.9771755588669692
+    },
+    {
+      "subscribers": 100,
+      "pair": 4,
+      "after_over_before": 1.0674303739589357
+    },
+    {
+      "subscribers": 100,
+      "pair": 5,
+      "after_over_before": 1.0239937165104334
+    }
+  ],
+  "summary": [
+    {
+      "subscribers": 0,
+      "median": 0.9923804061432446,
+      "min": 0.9264456811880272,
+      "max": 1.0772770865342056
+    },
+    {
+      "subscribers": 10,
+      "median": 0.9751158763330986,
+      "min": 0.9184742452363834,
+      "max": 1.141975253495103
+    },
+    {
+      "subscribers": 100,
+      "median": 1.0020212476171217,
+      "min": 0.9771755588669692,
+      "max": 1.0674303739589357
+    }
+  ]
+}

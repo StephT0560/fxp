@@ -1,0 +1,722 @@
+[
+  {
+    "subscribers": 0,
+    "repetition": 1,
+    "revision": "before",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 1,
+    "revision": "after",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 2,
+    "revision": "before",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 2,
+    "revision": "after",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 3,
+    "revision": "before",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 3,
+    "revision": "after",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 4,
+    "revision": "before",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 4,
+    "revision": "after",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 5,
+    "revision": "before",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 0,
+    "repetition": 5,
+    "revision": "after",
+    "core": {
+      "subscribers": 0,
+      "updates": 2000,
+      "delivered": 0,
+      "encodes": 2000,
+      "allocations": 10000,
+      "allocated_bytes": 164000,
+      "delivered_bytes": 0
+    },
+    "gateway": {
+      "allocated_bytes": 256000,
+      "allocations": 10000,
+      "delivered": 0,
+      "encodes": 2000,
+      "enqueue_locks": 0,
+      "subscribers": 0,
+      "updates": 2000,
+      "write_calls": 0
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 1,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216048,
+      "allocations": 50001,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 1,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216096,
+      "allocations": 50002,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 2,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216048,
+      "allocations": 50001,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 2,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216000,
+      "allocations": 50000,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 3,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216064,
+      "allocations": 50001,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 3,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216160,
+      "allocations": 50003,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 4,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216048,
+      "allocations": 50001,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 4,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216000,
+      "allocations": 50000,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 5,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216000,
+      "allocations": 50000,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 10,
+    "repetition": 5,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 1216064,
+      "allocations": 50001,
+      "delivered": 20000,
+      "encodes": 2000,
+      "enqueue_locks": 20000,
+      "subscribers": 10,
+      "updates": 2000,
+      "write_calls": 20000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 1,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 1,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 2,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 2,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 3,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 3,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 4,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 4,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 5,
+    "revision": "before",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  },
+  {
+    "subscribers": 100,
+    "repetition": 5,
+    "revision": "after",
+    "core": {
+      "subscribers": 1,
+      "updates": 2000,
+      "delivered": 2000,
+      "encodes": 2000,
+      "allocations": 12000,
+      "allocated_bytes": 208000,
+      "delivered_bytes": 44000
+    },
+    "gateway": {
+      "allocated_bytes": 9856000,
+      "allocations": 410000,
+      "delivered": 200000,
+      "encodes": 2000,
+      "enqueue_locks": 200000,
+      "subscribers": 100,
+      "updates": 2000,
+      "write_calls": 200000
+    }
+  }
+]

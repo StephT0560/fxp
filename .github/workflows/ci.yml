@@ -55,6 +55,7 @@ jobs:
       - name: Phase1 test-only core counters and slow consumer
         run: |
           python3 -m unittest discover -s tests -p test_phase1_lite.py
+          python3 -m unittest discover -s tests -p test_subscriber_isolation.py
           FXP_PHASE1_SUBSCRIBERS=1 FXP_PHASE1_OUTPUT="$RUNNER_TEMP/phase1-core.json" cargo test --release --locked --manifest-path fxp_core/Cargo.toml --features phase1 --lib -- --ignored --exact server::phase1::core_attribution
           FXP_PHASE1_OUTPUT="$RUNNER_TEMP/phase1-core-slow.json" cargo test --release --locked --manifest-path fxp_core/Cargo.toml --features phase1 --lib -- --ignored --exact server::phase1::core_slow_consumer
 
@@ -101,6 +102,7 @@ jobs:
         run: |
           FXP_PHASE1_SUBSCRIBERS=1 FXP_PHASE1_OUTPUT="$RUNNER_TEMP/phase1-gateway.json" go test -tags phase1 ./transport -run '^TestPhase1Attribution$'
           FXP_PHASE1_OUTPUT="$RUNNER_TEMP/phase1-gateway-slow.json" go test -tags phase1 ./transport -run '^TestPhase1SlowConsumer$'
+          go test -race -tags phase1 ./transport -run '^TestSubscriberIsolationRelative$' -count=1
 
   e2e:
     name: e2e
