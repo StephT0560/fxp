@@ -1892,6 +1892,29 @@ mod report_tests {
     }
 
     #[tokio::test]
+    async fn subscriber_queue_policy_is_bounded_and_signals_critical_overflow() {
+        let (tx, mut critical, mut md) = ClientTx::channel(1, 1);
+        assert!(tx.try_send_md(vec![1]));
+        for _ in 0..10_000 {
+            assert!(tx.try_send_md(vec![2]));
+        }
+        assert_eq!(md.len(), 1);
+        assert_eq!(tx.md_dropped.load(AtomicOrdering::Relaxed), 10_000);
+        assert_eq!(md.recv().await.unwrap(), [1]);
+        assert!(tx.try_send_md(vec![3]));
+        assert_eq!(md.recv().await.unwrap(), [3]);
+        tx.try_send_frame(vec![4]);
+        tx.try_send_frame(vec![5]);
+        tokio::time::timeout(Duration::from_secs(1), tx.slow.notified())
+            .await
+            .expect("critical overflow must signal disconnect");
+        assert_eq!(critical.len(), 1);
+        assert_eq!(critical.recv().await.unwrap(), [4]);
+        drop(md);
+        assert!(!tx.try_send_md(vec![6]));
+    }
+
+    #[tokio::test]
     async fn slow_market_data_subscriber_does_not_block_other_orders() {
         let book = spawn_book();
         let (md_tx, _frame_rx, _md_rx) = conn_with_channels(64, 1);

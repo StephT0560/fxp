@@ -101,6 +101,7 @@ jobs:
         run: |
           FXP_PHASE1_SUBSCRIBERS=1 FXP_PHASE1_OUTPUT="$RUNNER_TEMP/phase1-gateway.json" go test -tags phase1 ./transport -run '^TestPhase1Attribution$'
           FXP_PHASE1_OUTPUT="$RUNNER_TEMP/phase1-gateway-slow.json" go test -tags phase1 ./transport -run '^TestPhase1SlowConsumer$'
+          go test -race -tags phase1 ./transport -run '^TestSubscriberIsolationRelative$' -count=1
 
   e2e:
     name: e2e
