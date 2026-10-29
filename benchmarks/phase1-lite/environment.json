@@ -1,0 +1,11 @@
+{
+  "source_commit": "7fdb2a09572b27ebcf30b1690dd4fd03445f5699",
+  "working_tree_dirty": false,
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "go": "go version go1.26.10 linux/amd64",
+  "build": "release; isolated Rust test fixture uses phase1/dhat; Go fixtures use phase1 tag; paired live processes have neither",
+  "durability": "event log and recording disabled",
+  "absolute_timing": "smoke only; retained under ignored work/, not results",
+  "cpu_max": "200000 100000",
+  "cpu": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+}

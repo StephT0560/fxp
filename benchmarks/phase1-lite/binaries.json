@@ -1,0 +1,22 @@
+{
+  "core": {
+    "path": "fxp_core/target/release/fxp_core",
+    "sha256": "9285b1e99db39eb7f91fa7e48f2646e086fcb90b73a7b3377613e6cdf8fcebcb"
+  },
+  "gateway": {
+    "path": "work/phase1-lite/gateway",
+    "sha256": "b7561754f595a95bac494a852626c3472e93cf31f96d90aa3bb249896c5dd4a8"
+  },
+  "generator_and_subscriber_worker": {
+    "path": "work/phase1-lite/bench",
+    "sha256": "619af9e5970eb9c152a5d71ade00448b05aae1a5a7d61e61ce06e0cb17a4d35f"
+  },
+  "gateway_fixture": {
+    "path": "work/phase1-lite/gateway.test",
+    "sha256": "20bd4bb3b9d2408780fa5b0726b3e9cb3c480179327042e86ea07d0b8c3e241e"
+  },
+  "core_fixture": {
+    "path": "/workspace/fxp/fxp_core/target/release/deps/fxp_core-e6b02c0240bfce55",
+    "sha256": "5f8950a039d287933c3d8f19722055413a1273103fc62cb193b398d1cf68ad21"
+  }
+}

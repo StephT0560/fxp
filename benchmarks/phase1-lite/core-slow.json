@@ -1,0 +1,1 @@
+{"queue_depth":16,"capacity":16,"drops_after_orders":12986,"drops_before_orders":10984,"retained_payload_bytes":2048,"heap_growth_after_saturation":0,"order_acks":2000}

@@ -1,0 +1,225 @@
+{
+  "source": "dhat, allocation counts only; raw time/lifetime metadata stays in work/",
+  "frames": [
+    "[root]",
+    "0x55805a5397cc: <dhat::Alloc as core::alloc::global::GlobalAlloc>::alloc (???:0:0)",
+    "0x55805a4bbec2: tokio::sync::mpsc::chan::channel::<alloc::vec::Vec<u8>, tokio::sync::mpsc::bounded::Semaphore> (???:0:0)",
+    "0x55805a52470b: <fxp_core::server::ClientTx>::channel (???:0:0)",
+    "0x55805a45f654: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a45f765: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a4bbfa5: tokio::sync::mpsc::chan::channel::<alloc::vec::Vec<u8>, tokio::sync::mpsc::bounded::Semaphore> (???:0:0)",
+    "0x55805a525b50: fxp_core::server::frame_message (???:0:0)",
+    "0x55805a45f940: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a5247fd: <fxp_core::server::ClientTx>::channel (???:0:0)",
+    "0x55805a524743: <fxp_core::server::ClientTx>::channel (???:0:0)",
+    "0x55805a2f46c9: <tokio::sync::mpsc::list::Tx<alloc::vec::Vec<u8>>>::push (???:0:0)",
+    "0x55805a52579e: fxp_core::server::broadcast_md (???:0:0)",
+    "0x55805a45f879: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a45f7a4: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a524775: <fxp_core::server::ClientTx>::channel (???:0:0)",
+    "0x55805a52573a: fxp_core::server::broadcast_md (???:0:0)",
+    "0x55805a45f94d: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a45f86c: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a41798b: <alloc::raw_vec::RawVecInner>::finish_grow (???:0:0)",
+    "0x55805a413974: <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> (???:0:0)",
+    "0x55805a327c29: prost::encoding::varint::encode_varint::<alloc::vec::Vec<u8>> (???:0:0)",
+    "0x55805a32ac0a: prost::encoding::message::encode::<fxp_core::fxp::MarketDataIncrementalUpdate, alloc::vec::Vec<u8>> (???:0:0)",
+    "0x55805a44e3dc: <fxp_core::fxp::FxpMessage as prost::message::Message>::encode::<alloc::vec::Vec<u8>> (???:0:0)",
+    "0x55805a525b1e: fxp_core::server::frame_message (???:0:0)",
+    "0x55805a64224b: alloc::fmt::format::format_inner (???:0:0)",
+    "0x55805a45facb: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a4175ba: <alloc::raw_vec::RawVec<(usize, alloc::string::String, u32)>>::grow_one (???:0:0)",
+    "0x55805a45f6e6: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55805a5247bc: <fxp_core::server::ClientTx>::channel (???:0:0)",
+    "0x55805a41731a: <alloc::raw_vec::RawVec<tokio::runtime::task::join::JoinHandle<()>>>::grow_one (???:0:0)",
+    "0x55805a45f743: fxp_core::server::phase1::core_attribution (???:0:0)"
+  ],
+  "points": [
+    {
+      "bytes": 800,
+      "allocations": 1,
+      "frames": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "bytes": 6,
+      "allocations": 1,
+      "frames": [
+        1,
+        5
+      ]
+    },
+    {
+      "bytes": 512,
+      "allocations": 1,
+      "frames": [
+        1,
+        6,
+        3,
+        4
+      ]
+    },
+    {
+      "bytes": 52000,
+      "allocations": 4000,
+      "frames": [
+        1,
+        7,
+        8
+      ]
+    },
+    {
+      "bytes": 24,
+      "allocations": 1,
+      "frames": [
+        1,
+        9,
+        4
+      ]
+    },
+    {
+      "bytes": 512,
+      "allocations": 1,
+      "frames": [
+        1,
+        6,
+        10,
+        4
+      ]
+    },
+    {
+      "bytes": 800,
+      "allocations": 1,
+      "frames": [
+        1,
+        11,
+        12,
+        13
+      ]
+    },
+    {
+      "bytes": 24,
+      "allocations": 1,
+      "frames": [
+        1,
+        14
+      ]
+    },
+    {
+      "bytes": 48,
+      "allocations": 1,
+      "frames": [
+        1,
+        15,
+        4
+      ]
+    },
+    {
+      "bytes": 44000,
+      "allocations": 2000,
+      "frames": [
+        1,
+        16,
+        17
+      ]
+    },
+    {
+      "bytes": 3328,
+      "allocations": 256,
+      "frames": [
+        1,
+        7,
+        18
+      ]
+    },
+    {
+      "bytes": 7168,
+      "allocations": 384,
+      "frames": [
+        1,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        18
+      ]
+    },
+    {
+      "bytes": 2816,
+      "allocations": 128,
+      "frames": [
+        1,
+        16,
+        13
+      ]
+    },
+    {
+      "bytes": 226,
+      "allocations": 1,
+      "frames": [
+        1,
+        25,
+        26
+      ]
+    },
+    {
+      "bytes": 160,
+      "allocations": 1,
+      "frames": [
+        1,
+        19,
+        27,
+        28
+      ]
+    },
+    {
+      "bytes": 24,
+      "allocations": 1,
+      "frames": [
+        1,
+        29,
+        4
+      ]
+    },
+    {
+      "bytes": 32,
+      "allocations": 1,
+      "frames": [
+        1,
+        19,
+        30,
+        31
+      ]
+    },
+    {
+      "bytes": 112000,
+      "allocations": 6000,
+      "frames": [
+        1,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        8
+      ]
+    },
+    {
+      "bytes": 800,
+      "allocations": 1,
+      "frames": [
+        1,
+        2,
+        10,
+        4
+      ]
+    }
+  ]
+}
