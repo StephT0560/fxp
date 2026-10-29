@@ -1,0 +1,3 @@
+symbol,price_scale,tick_size,lot_size,min_quantity,max_quantity
+BOTTEST,2,1,1,1,100000
+SDKTEST,2,1,1,1,100000

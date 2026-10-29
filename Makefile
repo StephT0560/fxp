@@ -63,3 +63,7 @@ demo-down:
 .PHONY: record
 record:
 	cd web && npm run record
+
+.PHONY: repro-demo
+repro-demo:
+	bash scripts/repro_demo.sh
