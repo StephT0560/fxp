@@ -1,0 +1,12 @@
+Audit (before bundle implementation)
+- Engine: no direct clocks/randomness; Clock.now supplies command timestamps, expiry and auction boundaries.
+- Engine states/call_markets/held_close/status_history HashMaps: mass cancel and expiry sort (arrival,id); held close sorts unique engine arrival; status query sorts order id. No unordered emission in those paths.
+- Book: BTreeMap price levels + VecDeque priority. Lookup, cum fills, arrival, displayed HashMaps only keyed access; auction reads lookup but sorts allocation. Found possible equal seq across independent book and engine arrival counters: add order-id total-order tie-breaker.
+- Auction uncross uses integer sums and BTreeMap candidate prices; allocation must sort market/price/arrival/id.
+- Stops: Vec arrival order, stable trigger-distance sort; replace re-parks at tail. Widen subtraction to i128 to avoid extreme-price overflow.
+- Journal symbols sorted; global mutex appends/syncs/executes commands in one order; one shared ReplayIds counter per journal initialized to X1. Engine construction uses recorded command time.
+- Non-recorded server: symbol tasks and process-global ExecID counter interleave nondeterministically. Recording must always enable journal mode, never combine per-symbol live engines with the journal.
+- WallClock is the only engine-facing SystemTime adapter. Other server SystemTime sites stamp admission rejects and aggregate mass-cancel transport responses; these are not Engine business outputs. Diagnostics uses monotonic time only for metrics.
+- No generated order IDs in core: IDs are supplied by commands; generated ExecIDs and per-symbol trade IDs derive from counters. Gateway/bot generated IDs are captured in recorded commands.
+- Broadcaster subscriber HashMaps/HashSets affect delivery only, not engine events. TCP connections, scheduling before journal admission, subscription delivery/backpressure and wall-clock transport fields are outside business-event replay.
+- No peg order type/state exists in this engine revision. Iceberg reserve = total leaves minus displayed slice; displayed slice and replenishment arrival are state.

@@ -32,6 +32,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
+      - name: Build provenance in normal and linked Git worktrees
+        run: python3 scripts/test_build_provenance.py
       - name: fmt, test, clippy, bench build, audit
         working-directory: fxp_core
         run: |
@@ -106,6 +108,8 @@ jobs:
           E2E_LOG_DIR: ${{ runner.temp }}/e2e
       - name: Simulator with random JWT secret and custom claims
         run: bash scripts/simday_smoke.sh
+      - name: Recorded simulator bundle and twenty offline replays
+        run: bash scripts/repro_bundle_smoke.sh
       - name: TLS/mTLS listeners and authenticated core e2e
         run: bash scripts/e2e_tls.sh
         env:

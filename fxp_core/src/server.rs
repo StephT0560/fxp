@@ -1334,22 +1334,43 @@ pub async fn start_server(shutdown: impl Future<Output = ()> + Send) -> Result<(
     router.symbol_config = crate::symbol_config::SymbolConfig::load_env()?;
     router.allowed_symbols = allowed_symbols.map(Arc::new);
     router.max_symbols = max_symbols;
-    if let Some(path) = std::env::var_os("FXP_EVENT_LOG") {
+    let recording = std::env::var_os("FXP_RUN_RECORD");
+    let event_log = std::env::var_os("FXP_EVENT_LOG");
+    if recording.is_some() && event_log.is_some() {
+        return Err("FXP_RUN_RECORD and FXP_EVENT_LOG are mutually exclusive".into());
+    }
+    if let Some(path) = recording.as_ref().or(event_log.as_ref()) {
         use crate::engine::Clock;
         if path.is_empty() {
-            persistence_failure("FXP_EVENT_LOG must be a nonempty path");
+            return Err("FXP_RUN_RECORD/FXP_EVENT_LOG must be a nonempty path".into());
         }
         let (detached, frame_rx, md_rx) = ClientTx::channel(1, 1);
         drop(frame_rx);
         drop(md_rx);
-        let mut journal = Journal::open_configured(
-            std::path::Path::new(&path),
-            schedule,
-            stp_default,
-            detached,
-            router.symbol_config.clone(),
-        )
-        .unwrap_or_else(|error| persistence_failure(error));
+        let mut journal = if recording.is_some() {
+            let meta = match std::env::var("FXP_RUN_META_JSON") {
+                Ok(value) => value,
+                Err(std::env::VarError::NotPresent) => "{}".into(),
+                Err(error) => return Err(format!("invalid FXP_RUN_META_JSON: {error}")),
+            };
+            Journal::record(
+                std::path::Path::new(path),
+                schedule,
+                stp_default,
+                detached,
+                router.symbol_config.clone(),
+                &meta,
+            )
+        } else {
+            Journal::open_configured(
+                std::path::Path::new(path),
+                schedule,
+                stp_default,
+                detached,
+                router.symbol_config.clone(),
+            )
+        }
+        .map_err(|e| e.to_string())?;
         let symbols = journal.symbols();
         let at = WallClock.now();
         for symbol in &symbols {
@@ -1481,14 +1502,17 @@ where
     let _ = shutdown_tx.send(true);
     drop(writer_tx);
     let drain = async {
+        let mut task_failed = false;
         while let Some(result) = handlers.join_next().await {
             if let Err(error) = result {
                 tracing::error!("client task failed during shutdown: {error}");
+                task_failed = true;
             }
         }
         for task in router.stop_symbols().await {
             if let Err(error) = task.await {
                 tracing::error!("symbol task failed during shutdown: {error}");
+                task_failed = true;
             }
         }
         let _ = writer_drain_tx.send(true);
@@ -1499,21 +1523,27 @@ where
         for writer in writers {
             if let Err(error) = writer.await {
                 tracing::error!("client writer failed during shutdown: {error}");
+                task_failed = true;
             }
+        }
+        if task_failed {
+            return Err("core shutdown task failed; recording remains incomplete".to_string());
         }
         if let Some(persistence) = &router.persistence {
             persistence
                 .lock()
                 .unwrap_or_else(|error| persistence_failure(error))
-                .sync()
-                .unwrap_or_else(|error| persistence_failure(error));
+                .finish()
+                .map_err(|error| error.to_string())?;
         }
+        Ok(())
     };
     match tokio::time::timeout(timeout, drain).await {
-        Ok(()) => {
+        Ok(Ok(())) => {
             tracing::info!("core shutdown completed");
             Ok(())
         }
+        Ok(Err(error)) => Err(error),
         Err(_) => {
             tracing::error!("core shutdown timed out; abandoning unfinished work");
             Err("core shutdown timed out".into())

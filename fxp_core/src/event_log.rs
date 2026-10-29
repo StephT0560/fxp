@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 const MAGIC: &[u8; 8] = b"FXPEVL01";
 const MAX_RECORD: usize = 4 * 1024 * 1024;
-const REPLAY_VERSION: &str = "engine-input-v1";
+pub(crate) const REPLAY_VERSION: &str = "engine-input-v1";
 
 #[derive(Clone, PartialEq, Message)]
 struct Record {
@@ -312,6 +312,10 @@ impl ExecIds for ReplayIds {
 
 pub(crate) struct Journal<R> {
     log: EventLog,
+    digest: crate::reproducibility::BusinessDigest,
+    recording: Option<crate::reproducibility::Recording>,
+    #[cfg(test)]
+    pub(crate) trace: Vec<Vec<u8>>,
     pub(crate) engines: HashMap<String, Engine<R, RecordedClock, ReplayIds>>,
     clock: RecordedClock,
     ids: ReplayIds,
@@ -342,6 +346,10 @@ impl<R: Clone> Journal<R> {
             EventLog::open_configured(path, schedule, stp_default, &symbol_config)?;
         let mut journal = Self {
             log,
+            digest: Default::default(),
+            recording: None,
+            #[cfg(test)]
+            trace: Vec::new(),
             engines: HashMap::new(),
             clock: RecordedClock(Arc::new(Mutex::new(Time {
                 seconds: 0,
@@ -373,6 +381,136 @@ impl<R: Clone> Journal<R> {
         Ok(journal)
     }
 
+    pub(crate) fn record(
+        dir: &Path,
+        schedule: Option<SessionSchedule>,
+        stp: StpMode,
+        detached: R,
+        config: crate::symbol_config::SymbolConfig,
+        meta: &str,
+    ) -> io::Result<Self> {
+        let recording =
+            crate::reproducibility::Recording::create(dir, schedule, stp, &config, meta)?;
+        let mut journal =
+            Self::open_configured(&recording.log_path(), schedule, stp, detached, config)?;
+        journal.recording = Some(recording);
+        Ok(journal)
+    }
+
+    pub(crate) fn canonical_state(&self) -> Vec<u8> {
+        let mut w = crate::reproducibility::StateWriter::default();
+        w.text(crate::reproducibility::STATE_VERSION);
+        w.u64(self.ids.0.load(Ordering::Relaxed));
+        w.u64(self.engines.len() as u64);
+        for symbol in self.symbols() {
+            w.text(&symbol);
+            w.bytes(&self.engines[&symbol].canonical_state());
+        }
+        w.0
+    }
+
+    pub(crate) fn summary(&self) -> crate::reproducibility::RunSummary {
+        self.digest.summary(&self.canonical_state())
+    }
+
+    /// Called only after all symbol tasks drained successfully.
+    pub(crate) fn finish(&mut self) -> io::Result<()> {
+        self.sync()?;
+        let summary = self.summary();
+        if let Some(recording) = &mut self.recording {
+            recording.finish(&summary)?;
+        }
+        Ok(())
+    }
+
+    /// Offline verification never opens the log for writing and never repairs it.
+    pub(crate) fn replay_readonly(
+        path: &Path,
+        schedule: Option<SessionSchedule>,
+        stp_default: StpMode,
+        detached: R,
+        symbol_config: crate::symbol_config::SymbolConfig,
+        complete: bool,
+    ) -> io::Result<Self> {
+        let mut file = File::open(path)?;
+        let mut magic = [0; 8];
+        file.read_exact(&mut magic)?;
+        if &magic != MAGIC {
+            return Err(invalid("invalid event log magic/version"));
+        }
+        let header = read_frame(&mut file)?.ok_or_else(|| invalid("missing event-log header"))?;
+        let stp = if stp_default == StpMode::None {
+            String::new()
+        } else {
+            format!(";stp_default={}", stp_default.as_str())
+        };
+        let text = symbol_config.canonical();
+        let symbols = if text.is_empty() {
+            String::new()
+        } else {
+            format!(";symbols={text}")
+        };
+        let config = format!("{REPLAY_VERSION};schedule={schedule:?}{stp}{symbols}");
+        if header.seq != 0
+            || header.kind != 0
+            || !header.symbol.is_empty()
+            || header.seconds != 0
+            || header.nanos != 0
+            || header.payload != config.as_bytes()
+        {
+            return Err(invalid("event log configuration/replay version mismatch"));
+        }
+        let len = file.metadata()?.len();
+        let mut journal = Self {
+            log: EventLog {
+                file: file.try_clone()?,
+                next_seq: 1,
+                failed: false,
+            },
+            digest: Default::default(),
+            recording: None,
+            #[cfg(test)]
+            trace: Vec::new(),
+            engines: HashMap::new(),
+            clock: RecordedClock(Arc::new(Mutex::new(Time {
+                seconds: 0,
+                nanos: 0,
+            }))),
+            ids: ReplayIds(Arc::new(AtomicU64::new(1))),
+            schedule,
+            stp_default,
+            detached,
+            symbol_config,
+        };
+        while file.stream_position()? < len {
+            let Some(record) = read_frame(&mut file)? else {
+                if complete {
+                    return Err(invalid("corrupt completed event log"));
+                }
+                break;
+            };
+            if record.seq != journal.log.next_seq {
+                return Err(invalid("event log sequence gap"));
+            }
+            let input = Input::decode(&record)?;
+            journal.execute(
+                &record.symbol,
+                Time {
+                    seconds: record.seconds,
+                    nanos: record.nanos,
+                },
+                input,
+                journal.detached.clone(),
+            );
+            journal.log.next_seq = journal
+                .log
+                .next_seq
+                .checked_add(1)
+                .ok_or_else(|| invalid("event sequence exhausted"))?;
+        }
+        Ok(journal)
+    }
+
     pub(crate) fn symbols(&self) -> Vec<String> {
         let mut symbols: Vec<_> = self.engines.keys().cloned().collect();
         symbols.sort();
@@ -390,6 +528,9 @@ impl<R: Clone> Journal<R> {
         input: Input,
         owner: R,
     ) -> io::Result<Vec<Output<R>>> {
+        if self.recording.as_ref().is_some_and(|r| r.is_finished()) {
+            return Err(io::Error::other("recorded run is finalized"));
+        }
         self.log.append(symbol, at, &input)?;
         Ok(self.execute(symbol, at, input, owner))
     }
@@ -415,7 +556,7 @@ impl<R: Clone> Journal<R> {
                 .with_stp_default(self.stp_default)
                 .with_symbol_rules(self.symbol_config.get(symbol))
         });
-        match input {
+        let outputs = match input {
             Input::New(order) => engine.new_order(order, owner),
             Input::Cancel(m) => engine.cancel(CancelMsg {
                 order_id: m.order_id,
@@ -444,7 +585,24 @@ impl<R: Clone> Journal<R> {
                 reason: m.reason,
             }),
             Input::SessionControl(m) => engine.begin_opening_call(m.opening_call_seconds),
+        };
+        self.digest.observe(symbol, &outputs);
+        #[cfg(test)]
+        for output in &outputs {
+            let (tag, bytes) = match output {
+                Output::ExecutionReport(_, m) => (1, m.encode_to_vec()),
+                Output::Trade(m) => (2, m.encode_to_vec()),
+                Output::TradingSessionStatus(m) => (3, m.encode_to_vec()),
+                Output::AuctionInfo(m) => (4, m.encode_to_vec()),
+                Output::MarketData(m) => (5, m.encode_to_vec()),
+                Output::Snapshot(_, m) => (6, m.encode_to_vec()),
+                Output::MassCancelCount(n) => (7, n.to_be_bytes().to_vec()),
+            };
+            let mut frame = vec![tag];
+            frame.extend(bytes);
+            self.trace.push(frame);
         }
+        outputs
     }
 }
 
