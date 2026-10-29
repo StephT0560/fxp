@@ -6,4 +6,10 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "$(protoc --version)" != 'libprotoc 25.3' ]]; then
     echo 'error: protoc 25.3 required (see docs/bot-workflow.md)' >&2; exit 1
 fi
-protoc -I "$repo_root/fxp_core/proto" --python_out="$repo_root/sdk/python/fxp_client" "$repo_root/fxp_core/proto/fxp.proto"
+temporary="$(mktemp -d)"
+trap 'rm -rf "$temporary"' EXIT
+protoc -I "$repo_root/fxp_core/proto" --python_out="$temporary" "$repo_root/fxp_core/proto/fxp.proto"
+{
+    printf '# SPDX-License-Identifier: MIT\n'
+    cat "$temporary/fxp_pb2.py"
+} > "$repo_root/sdk/python/fxp_client/fxp_pb2.py"
