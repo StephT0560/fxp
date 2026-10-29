@@ -306,3 +306,28 @@ func TestSubscriberWorkerControlProtocol(t *testing.T) {
 		}
 	}
 }
+
+func TestSubscriberReadinessWaitsForDistinctSymbolSnapshots(t *testing.T) {
+	client, server := net.Pipe()
+	defer func() { _ = client.Close(); _ = server.Close() }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, message := range []*protobuf.FXPMessage{
+			{Payload: &protobuf.FXPMessage_TradingSessionStatus{TradingSessionStatus: &protobuf.TradingSessionStatus{Symbol: "A"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: &protobuf.MarketDataSnapshot{Symbol: "A"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: &protobuf.MarketDataSnapshot{Symbol: "A"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataIncremental{MarketDataIncremental: &protobuf.MarketDataIncrementalUpdate{Symbol: "B"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: &protobuf.MarketDataSnapshot{Symbol: "B"}}},
+		} {
+			if sendFramed(server, message) != nil {
+				return
+			}
+		}
+	}()
+	_ = client.SetDeadline(time.Now().Add(time.Second))
+	if err := waitSubscriberSnapshots(client, []string{"A", "B"}); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+}

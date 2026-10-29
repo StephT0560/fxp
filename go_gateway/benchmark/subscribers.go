@@ -87,15 +87,10 @@ func startSubscribers(c config, nonce string) (*subscribers, error) {
 		if err != nil {
 			return fail(err)
 		}
-		for range symbols {
-			snapshot, err := readFramed(conn)
-			if err != nil {
-				return fail(err)
-			}
-			if snapshot.GetMarketDataSnapshot() == nil {
-				return fail(errors.New("expected subscription snapshot"))
-			}
+		if err := waitSubscriberSnapshots(conn, symbols); err != nil {
+			return fail(err)
 		}
+
 		_ = conn.SetDeadline(time.Time{})
 		s.readers.Add(1)
 		go func() {
@@ -119,6 +114,28 @@ func startSubscribers(c config, nonce string) (*subscribers, error) {
 		}()
 	}
 	return s, nil
+}
+
+// Phase/session messages and other subscribers' snapshot broadcasts may precede
+// this reader's own readiness. Duplicate A snapshots cannot stand in for B.
+func waitSubscriberSnapshots(conn net.Conn, symbols []string) error {
+	pending := make(map[string]bool, len(symbols))
+	for _, symbol := range symbols {
+		pending[symbol] = true
+	}
+	for len(pending) > 0 {
+		message, err := readFramed(conn)
+		if err != nil {
+			return err
+		}
+		if failure := message.GetErrorMessage(); failure != nil {
+			return errors.New(failure.ErrorMessage)
+		}
+		if snapshot := message.GetMarketDataSnapshot(); snapshot != nil {
+			delete(pending, snapshot.Symbol)
+		}
+	}
+	return nil
 }
 
 // Pipe protocol: parent sends configuration, waits for READY, then sends STOP.
