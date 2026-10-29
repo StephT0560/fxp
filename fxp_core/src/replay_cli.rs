@@ -355,7 +355,7 @@ fn explanation(rows: &[Json], order: &str) -> String {
             }
             "iceberg_refresh" => refreshes += 1,
             "stop_trigger" => triggers += 1,
-            "rejected" | "canceled" | "expired" | "replaced" => {
+            "rejected" | "canceled" | "expired" | "replaced" | "restated" => {
                 let cause = if text(row, "kind") == "replaced" {
                     format!("new order {}", text(data, "new_order_id"))
                 } else {
@@ -402,7 +402,7 @@ fn explanation(rows: &[Json], order: &str) -> String {
         && !rows.iter().any(|r| {
             matches!(
                 text(r, "kind"),
-                "rejected" | "canceled" | "expired" | "replaced"
+                "rejected" | "canceled" | "expired" | "replaced" | "restated"
             )
         })
     {
@@ -635,6 +635,69 @@ mod tests {
             ("client_order_id", Json::string(client)),
             ("data", Json::object([] as [(&str, Json); 0])),
         ])
+    }
+    #[test]
+    fn explanation_includes_recorded_stp_restatement() {
+        use crate::engine::{Clock, Engine, ExecIds, Time};
+        use crate::{event_log::Input, fxp, reproducibility::trace::Collector};
+        struct Fixed;
+        impl Clock for Fixed {
+            fn now(&self) -> Time {
+                Time {
+                    seconds: 1,
+                    nanos: 0,
+                }
+            }
+        }
+        struct Ids(u64);
+        impl ExecIds for Ids {
+            fn next_id(&mut self) -> String {
+                self.0 += 1;
+                self.0.to_string()
+            }
+        }
+        let mut engine = Engine::new("T", Fixed, Ids(0), None).with_diagnostics();
+        let mut trace = Collector::default();
+        for (i, (id, side, quantity)) in [("SELL", 2, 10), ("BUY", 1, 3)].into_iter().enumerate() {
+            let order = fxp::NewOrderSingle {
+                symbol: "T".into(),
+                sender: "alice".into(),
+                order_id: id.into(),
+                client_order_id: id.into(),
+                price: 100,
+                quantity,
+                side,
+                order_type: fxp::OrderType::Limit as i32,
+                time_in_force: fxp::TimeInForce::Gtc as i32,
+                stp_mode: fxp::SelfTradePrevention::DecrementAndCancel as i32,
+                ..Default::default()
+            };
+            let outputs = engine.new_order(order.clone(), ());
+            trace.capture(
+                i as u64 + 1,
+                "T",
+                Fixed.now(),
+                &Input::New(order),
+                &outputs,
+                engine.take_diagnostics(),
+            );
+        }
+        let rows = trace
+            .rows
+            .into_iter()
+            .filter(|r| text(r, "order_id") == "SELL")
+            .collect::<Vec<_>>();
+        let restated = rows
+            .iter()
+            .find(|r| text(r, "kind") == "restated")
+            .expect("surviving STP reduction");
+        assert_eq!(number(restated.get("data").unwrap(), "leaves_quantity"), 7);
+        let summary = explanation(&rows, "SELL");
+        assert!(
+            summary.contains("restated: self-trade prevention (decrement-and-cancel)"),
+            "{summary}"
+        );
+        assert!(!summary.contains("No terminal cause"));
     }
     #[test]
     fn client_filter_does_not_cross_owners_reusing_an_order_id() {
