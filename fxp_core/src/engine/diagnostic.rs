@@ -95,6 +95,50 @@ mod tests {
         assert!(detailed.take_diagnostics().is_empty());
     }
     #[test]
+    fn immediate_new_and_replaced_stops_use_existing_price_cause() {
+        let mut e = Engine::new("T", Fixed, Ids(0), None).with_diagnostics();
+        e.new_order(order("SELL", 2, 20), ());
+        e.new_order(order("TAKE", 1, 1), ());
+        e.take_diagnostics();
+        let mut stop = order("IMMEDIATE", 1, 1);
+        stop.order_type = fxp::OrderType::Stop as i32;
+        stop.stop_price = 90;
+        e.new_order(stop, ());
+        assert_eq!(
+            e.take_diagnostics()
+                .iter()
+                .find(|d| d.kind == "stop_trigger")
+                .unwrap()
+                .cause,
+            "existing last trade price satisfies stop"
+        );
+        let mut stop = order("PARKED", 1, 1);
+        stop.order_type = fxp::OrderType::Stop as i32;
+        stop.stop_price = 110;
+        e.new_order(stop, ());
+        e.take_diagnostics();
+        e.cancel_replace(crate::engine::CancelReplaceMsg {
+            sender: "PARKED".into(),
+            order_id: "PARKED".into(),
+            new_order_id: "REPLACED".into(),
+            new_quantity: 1,
+            new_stop_price: 90,
+            new_price: 0,
+            new_time_in_force: 0,
+            new_display_quantity: None,
+            client_replace_id: "r".into(),
+            output_tx: (),
+        });
+        assert_eq!(
+            e.take_diagnostics()
+                .iter()
+                .find(|d| d.kind == "stop_trigger")
+                .unwrap()
+                .cause,
+            "existing last trade price satisfies stop"
+        );
+    }
+    #[test]
     fn stop_trigger_precedes_its_fill_report() {
         let mut e = Engine::new("T", Fixed, Ids(0), None).with_diagnostics();
         e.new_order(order("S", 2, 20), ());

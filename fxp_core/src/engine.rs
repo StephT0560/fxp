@@ -634,8 +634,11 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                         .expect("replacement was just parked");
                                     let mut exec = Execution::default();
                                     if diagnostics.is_some() {
-                                        exec.trigger_points
-                                            .push((exec.fills.len(), order.order_id.clone()));
+                                        exec.trigger_points.push((
+                                            exec.fills.len(),
+                                            order.order_id.clone(),
+                                            "existing last trade price satisfies stop",
+                                        ));
                                     }
                                     exec.triggered.push(order.order_id.clone());
                                     book.execute_into(order, &mut exec);
@@ -992,8 +995,14 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         ..Default::default()
                     });
                     let mut exec = Execution::default();
-                    if matches!(order_obj.order_type, OrderType::Stop | OrderType::StopLimit) {
-                        exec.trigger_points.push((0, order_obj.order_id.clone()));
+                    if matches!(order_obj.order_type, OrderType::Stop | OrderType::StopLimit)
+                        && diagnostics.is_some()
+                    {
+                        exec.trigger_points.push((
+                            0,
+                            order_obj.order_id.clone(),
+                            "existing last trade price satisfies stop",
+                        ));
                     }
                     if book.execute_into(order_obj.clone(), &mut exec)
                         && let Some(st) = states.get(&order_obj.order_id)
@@ -1329,12 +1338,12 @@ fn report_execution<R: Clone>(
     let mut refreshes = exec.refreshes.iter().peekable();
     let mut stp = exec.stp.iter().peekable();
     for (i, f) in exec.fills.iter().enumerate() {
-        while let Some((_, id)) = triggers.next_if(|(at, _)| *at <= i) {
+        while let Some((_, id, cause)) = triggers.next_if(|(at, _, _)| *at <= i) {
             emit(diagnostics, || Diagnostic {
                 output_index: outputs.len(),
                 kind: "stop_trigger",
                 order_id: id.clone(),
-                cause: "trade price crossed stop".into(),
+                cause: (*cause).into(),
                 ..Default::default()
             });
         }
@@ -1385,12 +1394,12 @@ fn report_execution<R: Clone>(
             });
         }
     }
-    for (_, id) in triggers {
+    for (_, id, cause) in triggers {
         emit(diagnostics, || Diagnostic {
             output_index: outputs.len(),
             kind: "stop_trigger",
             order_id: id.clone(),
-            cause: "trade price crossed stop".into(),
+            cause: (*cause).into(),
             ..Default::default()
         });
     }

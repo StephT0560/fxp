@@ -122,8 +122,11 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                     let mut exec = Execution::default();
                     for stop in self.stop_book.drain_triggered(price) {
                         if self.diagnostics.is_some() {
-                            exec.trigger_points
-                                .push((exec.fills.len(), stop.order_id.clone()));
+                            exec.trigger_points.push((
+                                exec.fills.len(),
+                                stop.order_id.clone(),
+                                "auction trade price satisfies stop",
+                            ));
                         }
                         exec.triggered.push(stop.order_id.clone());
                         self.book.execute_into(stop, &mut exec);
