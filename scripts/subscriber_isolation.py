@@ -37,6 +37,7 @@ def main():
             raise RuntimeError('before-source exists; reuse --no-build or remove the worktree explicitly')
         run(['git', 'worktree', 'add', '--detach', base, before])
         run(['bash', 'scripts/gen_proto.sh'], cwd=base, env=env, log=scratch/'before-proto.log')
+        run(['bash', 'scripts/gen_proto.sh'], cwd=ROOT, env=env, log=scratch/'after-proto.log')
         # One build cache, copied executable artifacts per revision. The benchmark
         # is built ONCE from the after revision and used for both sides.
         run(['go', 'build', '-o', scratch/'bench', './benchmark'], cwd=ROOT/'go_gateway', env=env)

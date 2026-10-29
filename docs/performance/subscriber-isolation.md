@@ -21,7 +21,8 @@ separate-process harness remains available through `--subscriber-process` and
 
 Before: main `663cb26196eb528223d03ebb828fab427fa91f50`.
 After: `b67ba992e51f08295d64988aee3e863fbcb18b4b`.
-Later report/collector commits are not relabeled as measured revisions. Build
+Later report/collector commits, including fresh-checkout binding generation,
+are not relabeled as measured revisions. Build
 both revisions independently, copy executables into separate directories, and
 use **one benchmark executable built from the after revision for both sides**.
 Tracked sources were committed before building. The environment JSON's dirty
@@ -196,3 +197,10 @@ passed 241 tests; all three Go modules passed `go vet ./... && go test -race
 syscall-parser/port-guard tests passed. Proto generation and the local e2e
 suite passed before opening the PR; the PR records CI.
 No lint baseline was silently changed or unrelated production fix included.
+
+A review regression checks that both source directories generate their own
+ignored Go bindings before the first benchmark build. The test fails against
+the previous collector and passes after the startup fix. A fresh detached
+checkout independently failed to build without bindings, then successfully
+generated them and built the benchmark. This startup-only fix does not change
+the already measured update loop or source attribution.
