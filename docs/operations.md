@@ -105,3 +105,41 @@ application-level shutdown after Docker sends SIGTERM.
 
 See the [README configuration tables](../README.md#gateway-authentication) and
 Compose file for the full list of service settings.
+
+## Subscriber isolation audit
+
+The [baseline](performance/phase1-baseline.md) recommends the corrected
+separate-process harness and no production optimization. Core output queues
+are fixed at **8192 critical / 4096 market-data messages per connection**;
+gateway defaults match and can be configured independently via the existing
+`FXP_GW_CLIENT_QUEUE` / `FXP_GW_MD_QUEUE` settings. Enqueue is nonblocking at
+both fan-out layers. Each connection has one socket writer; a blocked write
+retains at most one additional in-flight frame, not another unbounded queue.
+Critical work gets selection priority, but cannot interrupt a market-data
+write already blocked on that same socket. Isolation applies to other
+connections, not to ACKs on the stalled connection itself.
+
+Overflow policy is drop-newest for market data. The core increments global
+`MD_DROPPED` and per-connection `md_dropped`; the gateway increments
+`MarketDataDropped()` and per-writer `mdDropped`. The core counters are internal; per-connection depths/drop
+counts are currently inspected by tests, not exposed as a new metrics endpoint.
+Neither counter is a durable per-symbol loss ledger. Capacity bounds queued
+**message count**, not total process RSS: retained bytes depend on frame sizes,
+and books, symbol/connection counts, kernel socket buffers, TLS/WS buffers and
+allocator overhead are separate. The functional fixed-payload check measures
+retained heap after GC in addition to asserting exact queue depths.
+
+Critical overflow is a visible connection failure. Go closes the socket and
+returns `errClientQueueFull`; Rust signals its handler, which aborts the writer
+and closes the connection. Already queued reports may be lost on disconnect;
+there is no successful-session silent-drop contract. Gateway handler cleanup
+sends owner-scoped `MASS_CANCEL_REASON_DISCONNECT` when the authenticated
+Logon's `cancel_on_disconnect` is enabled; the default is disabled. This is
+best effort if the core connection is unavailable, not a durable cancellation
+acknowledgement. Direct native core clients do not receive gateway Logon/COD
+semantics. Reconcile orders after reconnecting, including when COD was enabled.
+
+Trade-sequence gaps detect dropped prints only. Level-only loss is not
+sequence-detectable today; see [market-data delivery limits](market-data.md#subscriber-backpressure-and-remaining-limits).
+No queue, wire format, FIX behavior, timer or production fan-out policy was
+changed by this audit.
