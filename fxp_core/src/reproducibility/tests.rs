@@ -287,3 +287,110 @@ fn metadata_budget_does_not_limit_generated_bundle_documents() {
     assert!(err.to_string().contains("FXP_RUN_META_JSON"));
     assert!(!tmp.0.join("oversize").exists());
 }
+
+#[test]
+fn trace_keeps_previous_owner_when_id_is_reused_after_expiry_in_same_command() {
+    let tmp = TestDir::new();
+    let dir = tmp.0.join("reuse");
+    let mut journal = Journal::record(
+        &dir,
+        Some("close=00:00:05".parse().unwrap()),
+        StpMode::None,
+        (),
+        SymbolConfig::default(),
+        "{}",
+    )
+    .unwrap();
+    let mut old = order("R", "A", 1);
+    old.sender = "alice".into();
+    old.time_in_force = fxp::TimeInForce::Day as i32;
+    journal
+        .apply(
+            "A",
+            Time {
+                seconds: 1,
+                nanos: 0,
+            },
+            Input::New(old),
+            (),
+        )
+        .unwrap();
+    let mut new = order("R", "A", 1);
+    new.sender = "bob".into();
+    journal
+        .apply(
+            "A",
+            Time {
+                seconds: 6,
+                nanos: 0,
+            },
+            Input::New(new),
+            (),
+        )
+        .unwrap();
+    journal.finish().unwrap();
+    let run = inspect_bundle(&dir).unwrap();
+    assert!(!run.diverged);
+    let expired = run
+        .rows
+        .iter()
+        .find(|r| trace::text(r, "kind") == "expired")
+        .unwrap();
+    assert_eq!(trace::text(expired, "owner"), "alice");
+    let accepted = run
+        .rows
+        .iter()
+        .rev()
+        .find(|r| trace::text(r, "kind") == "accepted")
+        .unwrap();
+    assert_eq!(trace::text(accepted, "owner"), "bob");
+}
+
+#[test]
+fn live_recording_identity_cache_releases_terminal_orders() {
+    let tmp = TestDir::new();
+    let mut journal = Journal::record(
+        &tmp.0.join("bounded"),
+        None,
+        StpMode::None,
+        (),
+        SymbolConfig::default(),
+        "{}",
+    )
+    .unwrap();
+    for n in 0..32 {
+        let id = format!("order-{n}");
+        journal
+            .apply(
+                "A",
+                Time {
+                    seconds: 1,
+                    nanos: 0,
+                },
+                Input::New(order(&id, "A", 1)),
+                (),
+            )
+            .unwrap();
+        journal
+            .apply(
+                "A",
+                Time {
+                    seconds: 2,
+                    nanos: 0,
+                },
+                Input::Cancel(fxp::OrderCancelRequest {
+                    symbol: "A".into(),
+                    sender: "owner-1".into(),
+                    order_id: id,
+                    ..Default::default()
+                }),
+                (),
+            )
+            .unwrap();
+        assert_eq!(
+            journal.inspection.as_ref().unwrap().identity_count(),
+            0,
+            "terminal identities must not accumulate during recording"
+        );
+    }
+}

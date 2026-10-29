@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::io;
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Json {
+pub(crate) enum Json {
     Null,
     Bool(bool),
     Number(String),
@@ -12,16 +12,16 @@ pub(super) enum Json {
     Object(BTreeMap<String, Json>),
 }
 impl Json {
-    pub(super) fn string(s: impl Into<String>) -> Self {
+    pub(crate) fn string(s: impl Into<String>) -> Self {
         Self::String(s.into())
     }
-    pub(super) fn number(n: u64) -> Self {
+    pub(crate) fn number(n: u64) -> Self {
         Self::Number(n.to_string())
     }
-    pub(super) fn object(fields: impl IntoIterator<Item = (impl Into<String>, Json)>) -> Self {
+    pub(crate) fn object(fields: impl IntoIterator<Item = (impl Into<String>, Json)>) -> Self {
         Self::Object(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
-    pub(super) fn get(&self, key: &str) -> io::Result<&Json> {
+    pub(crate) fn get(&self, key: &str) -> io::Result<&Json> {
         match self {
             Self::Object(m) => m
                 .get(key)
@@ -29,13 +29,13 @@ impl Json {
             _ => Err(super::invalid("expected JSON object")),
         }
     }
-    pub(super) fn text(&self) -> io::Result<&str> {
+    pub(crate) fn text(&self) -> io::Result<&str> {
         match self {
             Self::String(s) => Ok(s),
             _ => Err(super::invalid("expected JSON string")),
         }
     }
-    pub(super) fn encode(&self) -> String {
+    pub(crate) fn encode(&self) -> String {
         match self {
             Self::Null => "null".into(),
             Self::Bool(b) => b.to_string(),
@@ -66,7 +66,7 @@ impl Json {
             ),
         }
     }
-    pub(super) fn parse(s: &str) -> io::Result<Self> {
+    pub(crate) fn parse(s: &str) -> io::Result<Self> {
         let mut p = Parser {
             s: s.as_bytes(),
             i: 0,

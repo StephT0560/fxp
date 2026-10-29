@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! Canonical engine business events and recorded run bundles (no CLI).
+//! Canonical engine business events, recorded run bundles and offline inspection.
 //! See `docs/reproducibility.md` for the byte format and guarantee.
-mod json;
+pub(crate) mod json;
+pub(crate) mod trace;
 use crate::engine::{Output, SessionSchedule};
 use crate::order_book::order::StpMode;
 use crate::symbol_config::SymbolConfig;
@@ -99,7 +100,7 @@ pub struct RunSummary {
     pub final_state_sha256: String,
 }
 impl RunSummary {
-    fn json(&self) -> Json {
+    pub(crate) fn json(&self) -> Json {
         fn digest(d: &EventDigest) -> Json {
             Json::object([
                 ("count", Json::number(d.count)),
@@ -177,7 +178,70 @@ pub struct ReplayResult {
 }
 /// Replays read-only; does not truncate a torn tail or append catch-up ticks.
 pub fn replay_bundle(dir: impl AsRef<Path>) -> io::Result<ReplayResult> {
-    let dir = dir.as_ref();
+    let run = inspect_bundle(dir.as_ref())?;
+    if run.diverged {
+        return Err(invalid(
+            "bundle verification failed: business events or final state differ",
+        ));
+    }
+    Ok(ReplayResult {
+        verified: run.complete,
+        summary: run.summary,
+        final_state: run.final_state,
+    })
+}
+
+pub(crate) struct Inspection {
+    pub complete: bool,
+    pub diverged: bool,
+    pub summary: RunSummary,
+    pub expected: Option<Json>,
+    pub final_state: Vec<u8>,
+    pub rows: Vec<Json>,
+    pub expected_rows: Option<Vec<Json>>,
+}
+impl Inspection {
+    pub fn source_rows(&self) -> &[Json] {
+        self.expected_rows.as_deref().unwrap_or(&self.rows)
+    }
+    pub fn source(&self) -> &str {
+        if self.expected_rows.is_some() {
+            "recorded"
+        } else {
+            "replayed"
+        }
+    }
+}
+fn validate_expected(j: &Json) -> io::Result<()> {
+    require(j, "canonical_version", CANONICAL_VERSION)?;
+    require(j, "state_version", STATE_VERSION)?;
+    fn digest(j: &Json) -> io::Result<()> {
+        match j.get("count")? {
+            Json::Number(n) if n.parse::<u64>().is_ok() => (),
+            _ => return Err(invalid("invalid event count")),
+        }
+        hash(j.get("sha256")?.text()?)
+    }
+    fn hash(s: &str) -> io::Result<()> {
+        if s.len() == 64
+            && s.bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            Ok(())
+        } else {
+            Err(invalid("invalid SHA-256 value"))
+        }
+    }
+    digest(j.get("global")?)?;
+    let Json::Object(symbols) = j.get("symbols")? else {
+        return Err(invalid("invalid expected symbols"));
+    };
+    for d in symbols.values() {
+        digest(d)?;
+    }
+    hash(j.get("final_state_sha256")?.text()?)
+}
+pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
     let manifest = Json::parse(&fs::read_to_string(dir.join("manifest.json"))?)?;
     require(&manifest, "bundle_format", BUNDLE_VERSION)?;
     require(
@@ -208,24 +272,74 @@ pub fn replay_bundle(dir: impl AsRef<Path>) -> io::Result<ReplayResult> {
     if complete {
         require(&manifest, "commands_sha256", &hash_file(&log)?)?;
     }
-    let journal =
-        crate::event_log::Journal::replay_readonly(&log, schedule, stp, (), config, complete)?;
+    let expected = if complete {
+        let j = Json::parse(&fs::read_to_string(dir.join("expected.json"))?)?;
+        validate_expected(&j)?;
+        Some(j)
+    } else {
+        None
+    };
+    if manifest.get("trace_version").is_ok() != manifest.get("trace_sha256").is_ok() {
+        return Err(invalid(
+            "incomplete trace metadata: version and hash must be declared together",
+        ));
+    }
+    let expected_rows = if let Ok(version) = manifest.get("trace_version") {
+        if version.text()? != trace::VERSION {
+            return Err(invalid("unknown trace version"));
+        }
+        if complete {
+            let path = dir.join("events.jsonl");
+            require(&manifest, "trace_sha256", &hash_file(&path)?)?;
+            let rows = fs::read_to_string(path)?
+                .lines()
+                .map(Json::parse)
+                .collect::<io::Result<Vec<_>>>()?;
+            for row in &rows {
+                for key in ["symbol", "kind", "order_id", "owner", "client_order_id"] {
+                    row.get(key)?.text()?;
+                }
+                for key in ["global_seq", "event_index"] {
+                    match row.get(key)? {
+                        Json::Number(n) if n.parse::<u64>().is_ok() => (),
+                        _ => return Err(invalid("invalid trace position")),
+                    }
+                }
+                row.get("data")?;
+                row.get("canonical_hex")?;
+            }
+            Some(rows)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let mut journal = crate::event_log::Journal::replay_inspected(
+        &log,
+        schedule,
+        stp,
+        (),
+        config,
+        complete,
+        true,
+    )?;
     let final_state = journal.canonical_state();
     let summary = journal.summary();
-    if complete {
-        let expected = Json::parse(&fs::read_to_string(dir.join("expected.json"))?)?;
-        if expected != summary.json() {
-            return Err(invalid(
-                "bundle verification failed: business events or final state differ",
-            ));
-        }
-    }
-    Ok(ReplayResult {
-        verified: complete,
+    let rows = journal.inspection.take().expect("inspection enabled").rows;
+    let diverged = expected.as_ref().is_some_and(|j| j != &summary.json())
+        || expected_rows.as_ref().is_some_and(|r| r != &rows);
+    Ok(Inspection {
+        complete,
+        diverged,
         summary,
+        expected,
         final_state,
+        rows,
+        expected_rows,
     })
 }
+
 fn require(j: &Json, key: &str, expected: &str) -> io::Result<()> {
     if j.get(key)?.text()? != expected {
         return Err(invalid(format!(
@@ -240,6 +354,8 @@ pub(crate) struct Recording {
     manifest: Json,
     _lock: File,
     finished: bool,
+    trace: File,
+    trace_failed: bool,
 }
 impl Recording {
     pub(crate) fn create(
@@ -269,6 +385,14 @@ impl Recording {
             .create_new(true)
             .open(dir.join(".recording.lock"))?;
         lock.try_lock().map_err(io::Error::other)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let trace = options.open(dir.join("events.jsonl"))?;
         let symbols = config.canonical();
         let manifest = Json::object([
             ("bundle_format", Json::string(BUNDLE_VERSION)),
@@ -296,6 +420,8 @@ impl Recording {
             ("end_time", Json::Null),
             ("complete", Json::Bool(false)),
             ("commands_sha256", Json::Null),
+            ("trace_version", Json::string(trace::VERSION)),
+            ("trace_sha256", Json::Null),
         ]);
         Json::parse(&manifest.encode())?;
         atomic_write(dir, "symbols.csv", symbols.as_bytes())?;
@@ -305,7 +431,25 @@ impl Recording {
             manifest,
             _lock: lock,
             finished: false,
+            trace,
+            trace_failed: false,
         })
+    }
+    pub(crate) fn append_trace(&mut self, rows: &[Json]) -> io::Result<()> {
+        if self.trace_failed {
+            return Err(io::Error::other("recorded trace failed"));
+        }
+        let result = (|| {
+            for row in rows {
+                self.trace.write_all(row.encode().as_bytes())?;
+                self.trace.write_all(b"\n")?;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            self.trace_failed = true;
+        }
+        result
     }
     pub(crate) fn is_finished(&self) -> bool {
         self.finished
@@ -317,6 +461,13 @@ impl Recording {
         if self.finished {
             return Ok(());
         }
+        if self.trace_failed {
+            return Err(io::Error::other(
+                "recorded trace failed; bundle remains incomplete",
+            ));
+        }
+        self.trace.sync_all()?;
+        let trace_hash = hash_file(&self.dir.join("events.jsonl"))?;
         let hash = hash_file(&self.log_path())?;
         atomic_write(
             &self.dir,
@@ -327,6 +478,7 @@ impl Recording {
             unreachable!()
         };
         fields.insert("commands_sha256".into(), Json::string(hash));
+        fields.insert("trace_sha256".into(), Json::string(trace_hash));
         fields.insert("end_time".into(), Json::string(wall_time()));
         fields.insert("complete".into(), Json::Bool(true));
         // Publish completion last. A crash before this rename is unverified.
@@ -366,3 +518,4 @@ mod tests;
 
 #[cfg(test)]
 mod vectors;
+
