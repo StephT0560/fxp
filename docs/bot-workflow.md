@@ -202,6 +202,7 @@ production bot configuration. No SDK code needs a bundle path or direct core acc
 | `FXP_REPRO_SEED` | `7` | Seeded stimulus (`1` is the no-fill control) |
 | `FXP_REPRO_DIR` | New `target/bot-repro.XXXXXX` directory | Explicit **new** output directory; parent must exist |
 | `FXP_REPRO_TEST_CLIENT` | `0` | `1` also runs the SDK local-stack integration assertions before the bot |
+| `FXP_REPRO_TCP_PORT` | `8082` | Endpoint for directly invoked scenario/integration scripts only; the launcher clears this override and owns ports 8080–8082 |
 
 The SDK's local signer reads `FXP_JWT_SECRET`, `FXP_JWT_ISSUER` (default
 `fxp-dev`), `FXP_JWT_AUDIENCE` (`fxp-gateway`) and optional `FXP_JWT_KID`.
