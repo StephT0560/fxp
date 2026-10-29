@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	hdr "github.com/HdrHistogram/hdrhistogram-go"
@@ -37,22 +36,25 @@ const maxFrame = 4 * 1024 * 1024
 const histogramMax = int64(24 * time.Hour)
 
 type config struct {
-	TLS         tlsconfig.ClientOptions `json:"tls"`
-	Subscribers int                     `json:"market_data_subscribers"`
-	Pacer       string                  `json:"pacer"`
-	Mode        string                  `json:"mode"`
-	Address     string                  `json:"gateway"`
-	Concurrency int                     `json:"connections"`
-	Orders      int                     `json:"measured_orders_per_connection"`
-	Warmup      int                     `json:"warmup_orders_per_connection"`
-	Repetitions int                     `json:"repetitions"`
-	Rate        int                     `json:"open_loop_orders_per_second_per_connection"`
-	Timeout     time.Duration           `json:"response_timeout_ns"`
-	Symbol      string                  `json:"symbol"`
-	Symbols     string                  `json:"symbol_mode"`
-	Quantity    int32                   `json:"quantity"`
-	Price       int64                   `json:"default_price_minor_units"`
-	Pinning     string                  `json:"pinning_notes"`
+	TLS                    tlsconfig.ClientOptions `json:"tls"`
+	Subscribers            int                     `json:"market_data_subscribers"`
+	SubscriberProcess      bool                    `json:"subscriber_process"`
+	SubscriberCPU          string                  `json:"subscriber_cpu,omitempty"`
+	SubscriberDrainUpdates int64                   `json:"subscriber_drain_updates_per_reader"`
+	Pacer                  string                  `json:"pacer"`
+	Mode                   string                  `json:"mode"`
+	Address                string                  `json:"gateway"`
+	Concurrency            int                     `json:"connections"`
+	Orders                 int                     `json:"measured_orders_per_connection"`
+	Warmup                 int                     `json:"warmup_orders_per_connection"`
+	Repetitions            int                     `json:"repetitions"`
+	Rate                   int                     `json:"open_loop_orders_per_second_per_connection"`
+	Timeout                time.Duration           `json:"response_timeout_ns"`
+	Symbol                 string                  `json:"symbol"`
+	Symbols                string                  `json:"symbol_mode"`
+	Quantity               int32                   `json:"quantity"`
+	Price                  int64                   `json:"default_price_minor_units"`
+	Pinning                string                  `json:"pinning_notes"`
 }
 
 func benchmarkSecret() string {
@@ -73,6 +75,12 @@ func validate(c config) error {
 	}
 	if c.Mode != "open" && c.Mode != "closed" {
 		return errors.New("mode must be open or closed")
+	}
+	if c.SubscriberDrainUpdates < 0 {
+		return errors.New("subscriber-drain-updates must be nonnegative")
+	}
+	if c.SubscriberCPU != "" && !c.SubscriberProcess {
+		return errors.New("subscriber-cpu requires subscriber-process")
 	}
 	if c.Subscribers < 0 || c.Subscribers > 1024 {
 		return errors.New("subscribers must be 0..1024")
@@ -384,18 +392,6 @@ type repetition struct {
 
 func runRepetition(c config, index int) (repetition, error) {
 	nonce := fmt.Sprintf("%d-%d", time.Now().UnixNano(), index)
-	var mdUpdates atomic.Int64
-	var subscribers []net.Conn
-	var mdReaders sync.WaitGroup
-	mdErrors := make(chan error, c.Subscribers)
-	var closing atomic.Bool
-	defer func() {
-		closing.Store(true)
-		for _, conn := range subscribers {
-			_ = conn.Close()
-		}
-		mdReaders.Wait()
-	}()
 
 	conns := make([]net.Conn, 0, c.Concurrency)
 	defer func() {
@@ -449,58 +445,17 @@ func runRepetition(c config, index int) (repetition, error) {
 	if _, _, err := run("warmup", c.Warmup); err != nil {
 		return repetition{}, fmt.Errorf("warmup: %w", err)
 	}
-	for i := 0; i < c.Subscribers; i++ {
-		conn, err := connect(c, 10000+i, nonce)
-		if err != nil {
-			return repetition{}, err
-		}
-		subscribers = append(subscribers, conn)
-		symbols := []string{}
-		seen := map[string]bool{}
-		for id := 0; id < c.Concurrency; id++ {
-			symbol := symbolFor(c, id)
-			if !seen[symbol] {
-				seen[symbol] = true
-				symbols = append(symbols, symbol)
-			}
-		}
-		if err = sendFramed(conn, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: &protobuf.MarketDataRequest{Symbols: symbols}}}); err != nil {
-			return repetition{}, err
-		}
-		// The completed warmup creates every symbol. Wait for each subscription
-		// snapshot before measuring, otherwise the first repetition can have no
-		// subscribers while subsequent repetitions fan out.
-		for range symbols {
-			snapshot, err := readFramed(conn)
-			if err != nil {
-				return repetition{}, err
-			}
-			if snapshot.GetMarketDataSnapshot() == nil {
-				return repetition{}, errors.New("expected subscription snapshot")
-			}
-		}
-		_ = conn.SetDeadline(time.Time{})
-		mdReaders.Add(1)
-		go func() {
-			defer mdReaders.Done()
-			for {
-				m, err := readFramed(conn)
-				if err != nil {
-					if !closing.Load() {
-						mdErrors <- err
-					}
-					return
-				}
-				if m.GetMarketDataIncremental() != nil {
-					mdUpdates.Add(1)
-				}
-				if m.GetErrorMessage() != nil {
-					mdErrors <- errors.New(m.GetErrorMessage().ErrorMessage)
-					return
-				}
-			}
-		}()
+	var subs subscriberHandle
+	var err error
+	if c.SubscriberProcess && c.Subscribers > 0 {
+		subs, err = startSubscriberProcess(c, nonce)
+	} else {
+		subs, err = startSubscribers(c, nonce)
 	}
+	if err != nil {
+		return repetition{}, err
+	}
+	defer func() { _ = subs.Close() }()
 
 	r, elapsed, err := run("measured", c.Orders)
 	if err != nil {
@@ -510,12 +465,11 @@ func runRepetition(c config, index int) (repetition, error) {
 	if r.Ack.TotalCount() != orders || r.Fill.TotalCount() != orders {
 		return repetition{}, errors.New("incomplete histogram counts")
 	}
-	select {
-	case err := <-mdErrors:
+	if err := subs.Finish(); err != nil {
 		return repetition{}, fmt.Errorf("market-data reader: %w", err)
-	default:
 	}
-	return repetition{mdUpdates.Load(), index, orders, elapsed.Nanoseconds(), float64(orders) / elapsed.Seconds(), r.MaxSendLag, summarize(r.Ack), summarize(r.SendLag), summarize(r.AckAfterSend), summarize(r.Fill)}, nil
+
+	return repetition{subs.Updates(), index, orders, elapsed.Nanoseconds(), float64(orders) / elapsed.Seconds(), r.MaxSendLag, summarize(r.Ack), summarize(r.SendLag), summarize(r.AckAfterSend), summarize(r.Fill)}, nil
 }
 
 type statistic struct {
@@ -640,6 +594,11 @@ func run() error {
 	options.Flags(flag.CommandLine)
 	c := config{}
 	var jsonPath, markdownPath string
+	var subscriberWorker bool
+	flag.BoolVar(&subscriberWorker, "subscriber-worker", false, "internal subscriber subprocess protocol")
+	flag.BoolVar(&c.SubscriberProcess, "subscriber-process", false, "run all market-data readers in a separate process")
+	flag.Int64Var(&c.SubscriberDrainUpdates, "subscriber-drain-updates", 0, "optional expected measured incremental updates per reader; drain after order timing ends")
+	flag.StringVar(&c.SubscriberCPU, "subscriber-cpu", "", "optional taskset CPU list for the separate subscriber process")
 	var qty int
 	flag.IntVar(&c.Subscribers, "subscribers", 0, "additional authenticated market-data readers; zero disables fan-out fixture")
 	flag.StringVar(&c.Pacer, "pacer", "sleep", "open-loop pacing: sleep, busy-spin or hybrid (100us spin window)")
@@ -658,6 +617,9 @@ func run() error {
 	flag.StringVar(&jsonPath, "json", "benchmark-results.json", "JSON output including per-run HDR snapshots")
 	flag.StringVar(&markdownPath, "markdown", "benchmark-results.md", "Markdown output")
 	flag.Parse()
+	if subscriberWorker {
+		return runSubscriberWorker(os.Stdin, os.Stdout)
+	}
 	c.TLS = options
 	if _, err := options.Config(); err != nil {
 		return err

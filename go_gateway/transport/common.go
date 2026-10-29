@@ -305,6 +305,12 @@ func ForwardMarketData(update proto.Message) {
 		return
 	}
 
+	if phase1Enabled {
+		if _, ok := update.(*protobuf.MarketDataIncrementalUpdate); ok {
+			phase1Count("encodes")
+		}
+	}
+
 	data, err := EncodeFXPMessage(update)
 	if err != nil {
 		log.Printf("❌ Failed to encode market data for symbol %s: %v", symbol, err)

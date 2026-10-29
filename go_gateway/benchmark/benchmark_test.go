@@ -256,3 +256,78 @@ func TestBenchmarkArtifactsOmitTLSMaterialPaths(t *testing.T) {
 		t.Fatal("transport metadata missing", string(raw))
 	}
 }
+
+func TestSeparateSubscriberConfiguration(t *testing.T) {
+	c := config{Mode: "closed", Symbols: "single", Symbol: "TEST", Concurrency: 1, Orders: 2000, Warmup: 100, Repetitions: 5, Timeout: time.Second, Quantity: 1, SubscriberCPU: "0"}
+	if validate(c) == nil {
+		t.Fatal("CPU placement without a separate process must fail")
+	}
+	c.SubscriberProcess = true
+	if err := validate(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSubscriberDrainRequiresEveryExpectedUpdate(t *testing.T) {
+	s := &subscribers{expected: 2, timeout: time.Second, errors: make(chan error, 1)}
+	s.updates.Store(1)
+	done := make(chan error, 1)
+	go func() { done <- s.Finish() }()
+	select {
+	case err := <-done:
+		t.Fatalf("drain completed early: %v", err)
+	case <-time.After(5 * time.Millisecond):
+	}
+	s.updates.Store(2)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !s.closing.Load() {
+		t.Fatal("reader cleanup skipped")
+	}
+	incomplete := &subscribers{expected: 1, timeout: time.Millisecond, errors: make(chan error, 1)}
+	if incomplete.Finish() == nil {
+		t.Fatal("missing updates accepted")
+	}
+}
+
+func TestSubscriberWorkerControlProtocol(t *testing.T) {
+	for _, control := range []string{"STOP", "FINISH", "INVALID"} {
+		request, _ := json.Marshal(subscriberRequest{Config: config{Timeout: time.Second}})
+		input := strings.NewReader(string(request) + "\n\"" + control + "\"\n")
+		var output strings.Builder
+		err := runSubscriberWorker(input, &output)
+		if (err != nil) != (control == "INVALID") {
+			t.Fatalf("control %s: %v", control, err)
+		}
+		var ready subscriberReply
+		if err := json.NewDecoder(strings.NewReader(output.String())).Decode(&ready); err != nil || !ready.Ready {
+			t.Fatalf("missing readiness: %s", output.String())
+		}
+	}
+}
+
+func TestSubscriberReadinessWaitsForDistinctSymbolSnapshots(t *testing.T) {
+	client, server := net.Pipe()
+	defer func() { _ = client.Close(); _ = server.Close() }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, message := range []*protobuf.FXPMessage{
+			{Payload: &protobuf.FXPMessage_TradingSessionStatus{TradingSessionStatus: &protobuf.TradingSessionStatus{Symbol: "A"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: &protobuf.MarketDataSnapshot{Symbol: "A"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: &protobuf.MarketDataSnapshot{Symbol: "A"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataIncremental{MarketDataIncremental: &protobuf.MarketDataIncrementalUpdate{Symbol: "B"}}},
+			{Payload: &protobuf.FXPMessage_MarketDataSnapshot{MarketDataSnapshot: &protobuf.MarketDataSnapshot{Symbol: "B"}}},
+		} {
+			if sendFramed(server, message) != nil {
+				return
+			}
+		}
+	}()
+	_ = client.SetDeadline(time.Now().Add(time.Second))
+	if err := waitSubscriberSnapshots(client, []string{"A", "B"}); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+}

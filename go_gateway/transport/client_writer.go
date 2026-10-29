@@ -136,6 +136,10 @@ func (w *clientWriter) fail(err error) {
 func (w *clientWriter) enqueue(raw []byte, marketData bool) error {
 	w.enqueueMu.RLock()
 	defer w.enqueueMu.RUnlock()
+	if phase1Enabled && marketData && phase1Incremental(raw) {
+		phase1Count("locks")
+	}
+
 	data := append([]byte(nil), raw...)
 	select {
 	case <-w.stopped:
@@ -232,6 +236,10 @@ func (w *clientWriter) write(raw []byte) error {
 		binary.BigEndian.PutUint32(frame[:4], uint32(len(raw)))
 		copy(frame[4:], raw)
 		for len(frame) > 0 {
+			if phase1Enabled && phase1Incremental(raw) {
+				phase1Count("writes")
+			}
+
 			n, err := conn.Write(frame)
 			if err != nil {
 				return err

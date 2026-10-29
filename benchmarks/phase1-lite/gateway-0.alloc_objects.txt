@@ -1,0 +1,244 @@
+File: gateway.test
+Build ID: 1a7a37c40f05cc2f45c33f253d42ddc3f4f122fa
+Type: alloc_objects
+Showing nodes accounting for 11810, 100% of 11810 total
+      flat  flat%   sum%        cum   cum%
+      4256 36.04% 36.04%       7310 61.90%  go_gateway/transport.EncodeFXPMessage
+      4256 36.04% 72.07%      11567 97.94%  go_gateway/transport.ForwardMarketData
+      2128 18.02% 90.09%       3054 25.86%  google.golang.org/protobuf/proto.MarshalOptions.marshal
+       161  1.36% 91.46%        184  1.56%  google.golang.org/protobuf/internal/impl.fieldInfoForOneof
+       134  1.13% 92.59%        134  1.13%  strings.genSplit
+       133  1.13% 93.72%        220  1.86%  google.golang.org/protobuf/internal/filedesc.(*Message).unmarshalFull
+        85  0.72% 94.44%         87  0.74%  google.golang.org/protobuf/internal/filedesc.(*Field).unmarshalFull
+        65  0.55% 94.99%         65  0.55%  internal/sync.newEntryNode[go.shape.interface {},go.shape.interface {}] (inline)
+        57  0.48% 95.47%        129  1.09%  google.golang.org/protobuf/internal/impl.(*MessageInfo).initOneofFieldCoders
+        56  0.47% 95.94%        560  4.74%  google.golang.org/protobuf/internal/impl.(*MessageInfo).makeKnownFieldsFunc
+        54  0.46% 96.40%        124  1.05%  google.golang.org/protobuf/internal/impl.(*MessageInfo).makeStructInfo
+        48  0.41% 96.81%        225  1.91%  google.golang.org/protobuf/internal/impl.(*MessageInfo).makeCoderMethods
+        30  0.25% 97.06%         30  0.25%  google.golang.org/protobuf/internal/filedesc.(*Enum).unmarshalFull
+        26  0.22% 97.28%         26  0.22%  google.golang.org/protobuf/internal/impl.(*atomicNilMessage).Init
+        26  0.22% 97.50%         26  0.22%  google.golang.org/protobuf/internal/impl.newMessageConverter (inline)
+        22  0.19% 97.69%         22  0.19%  regexp.makeOnePass.func1
+        20  0.17% 97.86%         30  0.25%  google.golang.org/protobuf/internal/impl.fieldInfoForScalar
+        16  0.14% 97.99%         16  0.14%  google.golang.org/protobuf/internal/filedesc.(*Fields).lazyInit.func1
+        16  0.14% 98.13%         16  0.14%  internal/sync.newIndirectNode[go.shape.interface {},go.shape.interface {}]
+        14  0.12% 98.25%         16  0.14%  google.golang.org/protobuf/internal/impl.fieldInfoForMessage
+        12   0.1% 98.35%         12   0.1%  reflect.unsafe_New
+        11 0.093% 98.44%      11632 98.49%  go_gateway/transport.TestPhase1Attribution
+        11 0.093% 98.54%         11 0.093%  google.golang.org/protobuf/internal/impl.(*MessageInfo).makeFieldTypes
+         8 0.068% 98.60%          8 0.068%  sync.(*Pool).pinSlow
+         7 0.059% 98.66%         81  0.69%  testing.(*T).Run
+         7 0.059% 98.72%          7 0.059%  testing.rewrite
+         6 0.051% 98.77%          6 0.051%  google.golang.org/protobuf/internal/filedesc.(*Builder).optionsUnmarshaler
+         6 0.051% 98.82%          6 0.051%  google.golang.org/protobuf/internal/impl.(*MessageInfo).makeUnknownFieldsFunc
+         6 0.051% 98.87%         18  0.15%  google.golang.org/protobuf/internal/impl.fieldInfoForList
+         6 0.051% 98.92%          6 0.051%  regexp/syntax.(*compiler).inst
+         6 0.051% 98.98%         74  0.63%  testing.newMatcher
+         5 0.042% 99.02%          5 0.042%  google.golang.org/protobuf/internal/impl.getterForDirectScalar
+         4 0.034% 99.05%         19  0.16%  encoding/json.typeEncoder
+         4 0.034% 99.09%         31  0.26%  google.golang.org/protobuf/internal/impl.newSingularConverter
+         4 0.034% 99.12%          4 0.034%  internal/reflectlite.Swapper
+         4 0.034% 99.15%          4 0.034%  os.newFile
+         4 0.034% 99.19%          4 0.034%  reflect.addReflectOff
+         4 0.034% 99.22%          4 0.034%  reflect.typelinks
+         4 0.034% 99.25%          4 0.034%  regexp.newQueue
+         4 0.034% 99.29%          4 0.034%  regexp/syntax.(*parser).maybeConcat
+         4 0.034% 99.32%          4 0.034%  regexp/syntax.(*parser).newRegexp
+         4 0.034% 99.36%          4 0.034%  runtime.mallocgc
+         4 0.034% 99.39%          4 0.034%  sync.OnceValue[go.shape.func]
+         4 0.034% 99.42%          4 0.034%  testing.splitRegexp
+         3 0.025% 99.45%          3 0.025%  encoding/json.appendString[go.shape.string]
+         3 0.025% 99.48%        261  2.21%  google.golang.org/protobuf/internal/filedesc.(*File).unmarshalFull
+         3 0.025% 99.50%          7 0.059%  regexp/syntax.(*parser).push
+         3 0.025% 99.53%        169  1.43%  testing.(*M).Run
+         3 0.025% 99.55%        155  1.31%  testing.runTests
+         3 0.025% 99.58%          3 0.025%  unicode/utf8.AppendRune
+         2 0.017% 99.59%          2 0.017%  bytes.growSlice
+         2 0.017% 99.61%          4 0.034%  context.WithCancel
+         2 0.017% 99.63%          2 0.017%  context.withCancel
+         2 0.017% 99.64%          4 0.034%  encoding/json.newEncodeState
+         2 0.017% 99.66%          2 0.017%  google.golang.org/protobuf/internal/filedesc.appendOptions
+         2 0.017% 99.68%          2 0.017%  google.golang.org/protobuf/internal/impl.makeOneofInfo
+         2 0.017% 99.70%          2 0.017%  google.golang.org/protobuf/internal/strs.(*Builder).grow
+         2 0.017% 99.71%          2 0.017%  internal/abi.NewName
+         2 0.017% 99.73%          3 0.025%  internal/godebug.lookup
+         2 0.017% 99.75%         15  0.13%  reflect.(*rtype).ptrTo
+         2 0.017% 99.76%         57  0.48%  regexp.compile
+         2 0.017% 99.78%         28  0.24%  regexp.makeOnePass
+         2 0.017% 99.80%          2 0.017%  regexp.onePassCopy
+         2 0.017% 99.81%          2 0.017%  regexp/syntax.(*parser).collapse
+         2 0.017% 99.83%          2 0.017%  syscall.ByteSliceFromString
+         2 0.017% 99.85%          3 0.025%  testing.callerName
+         2 0.017% 99.86%          2 0.017%  testing.newTestState
+         2 0.017% 99.88%          6 0.051%  time.NewTimer
+         1 0.0085% 99.89%          3 0.025%  bytes.(*Buffer).grow
+         1 0.0085% 99.90%         43  0.36%  encoding/json.Marshal
+         1 0.0085% 99.91%         19  0.16%  encoding/json.mapEncoder.encode
+         1 0.0085% 99.92%          7 0.059%  encoding/json.newMapEncoder
+         1 0.0085% 99.92%          3 0.025%  fmt.Sprintf
+         1 0.0085% 99.93%          1 0.0085%  google.golang.org/protobuf/internal/impl.newEnumConverter
+         1 0.0085% 99.94%          2 0.017%  google.golang.org/protobuf/internal/impl.newListConverter
+         1 0.0085% 99.95%          5 0.042%  regexp.newOnePassMachine
+         1 0.0085%   100%          1 0.0085%  regexp/syntax.(*Regexp).CapNames
+         1 0.0085%   100%          2 0.017%  regexp/syntax.(*compiler).init
+         1 0.0085%   100%         14  0.12%  regexp/syntax.parse
+         1 0.0085%   100%          1 0.0085%  testing.(*common).setOutputWriter
+         1 0.0085%   100%          1 0.0085%  testing.pcToName
+         1 0.0085%   100%          1 0.0085%  time.newTimer
+         0     0%   100%          2 0.017%  bytes.(*Buffer).Write
+         0     0%   100%          1 0.0085%  bytes.(*Buffer).WriteByte
+         0     0%   100%         38  0.32%  encoding/json.(*encodeState).marshal
+         0     0%   100%         38  0.32%  encoding/json.(*encodeState).reflectValue
+         0     0%   100%         12   0.1%  encoding/json.newTypeEncoder
+         0     0%   100%         12   0.1%  encoding/json.typeEncoder.OnceValue[go.shape.func].func3 (inline)
+         0     0%   100%         12   0.1%  encoding/json.typeEncoder.func1
+         0     0%   100%         12   0.1%  encoding/json.typeEncoder.typeEncoder.OnceValue[go.shape.func].func3.func4
+         0     0%   100%         19  0.16%  encoding/json.valueEncoder
+         0     0%   100%          2 0.017%  fmt.newPrinter
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*AuctionInfo).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*ErrorMessage).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*ExecutionReport).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*FXPHeader).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*GapFillRequest).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*Heartbeat).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*Logon).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*LogonAck).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*Logout).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*MarketDataIncrementalUpdate).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*MarketDataRequest).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*MarketDataSnapshot).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*MarketOrderUpdate).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*NewOrderSingle).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*OrderAcknowledgment).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*OrderCancelReplaceRequest).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*OrderCancelRequest).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*OrderMassCancelReport).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*OrderMassCancelRequest).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*OrderStatusRequest).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*OrderStatusResponse).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*SessionControl).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*SessionControlReport).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*TradeCaptureReport).ProtoReflect
+         0     0%   100%          1 0.0085%  go_gateway/protobuf.(*TradingSessionStatus).ProtoReflect
+         0     0%   100%      11567 97.94%  go_gateway/transport.TestPhase1Attribution.func3 (inline)
+         0     0%   100%         16  0.14%  google.golang.org/protobuf/internal/filedesc.(*Fields).ByNumber
+         0     0%   100%         16  0.14%  google.golang.org/protobuf/internal/filedesc.(*Fields).lazyInit
+         0     0%   100%        262  2.22%  google.golang.org/protobuf/internal/filedesc.(*File).lazyInit (inline)
+         0     0%   100%        262  2.22%  google.golang.org/protobuf/internal/filedesc.(*File).lazyInitOnce
+         0     0%   100%        262  2.22%  google.golang.org/protobuf/internal/filedesc.(*File).lazyRawInit
+         0     0%   100%          1 0.0085%  google.golang.org/protobuf/internal/filedesc.(*File).resolveMessageDependency
+         0     0%   100%          1 0.0085%  google.golang.org/protobuf/internal/filedesc.(*File).resolveMessages
+         0     0%   100%        254  2.15%  google.golang.org/protobuf/internal/filedesc.(*Message).Fields
+         0     0%   100%          8 0.068%  google.golang.org/protobuf/internal/filedesc.(*Message).RequiredNumbers
+         0     0%   100%        262  2.22%  google.golang.org/protobuf/internal/filedesc.(*Message).lazyInit (inline)
+         0     0%   100%          2 0.017%  google.golang.org/protobuf/internal/filedesc.appendFullName
+         0     0%   100%          1 0.0085%  google.golang.org/protobuf/internal/filetype.(*resolverByIndex).FindMessageByIndex
+         0     0%   100%         26  0.22%  google.golang.org/protobuf/internal/impl.(*MessageInfo).MessageOf
+         0     0%   100%        926  7.84%  google.golang.org/protobuf/internal/impl.(*MessageInfo).init (inline)
+         0     0%   100%        926  7.84%  google.golang.org/protobuf/internal/impl.(*MessageInfo).initOnce
+         0     0%   100%        164  1.39%  google.golang.org/protobuf/internal/impl.(*MessageInfo).initOneofFieldCoders.func3
+         0     0%   100%         16  0.14%  google.golang.org/protobuf/internal/impl.(*MessageInfo).makeCoderMethods.func7
+         0     0%   100%        577  4.89%  google.golang.org/protobuf/internal/impl.(*MessageInfo).makeReflectFuncs
+         0     0%   100%        164  1.39%  google.golang.org/protobuf/internal/impl.(*MessageInfo).size
+         0     0%   100%        164  1.39%  google.golang.org/protobuf/internal/impl.(*MessageInfo).sizePointer
+         0     0%   100%        164  1.39%  google.golang.org/protobuf/internal/impl.(*MessageInfo).sizePointerSlow
+         0     0%   100%        762  6.45%  google.golang.org/protobuf/internal/impl.(*messageState).ProtoMethods
+         0     0%   100%          1 0.0085%  google.golang.org/protobuf/internal/impl.Export.MessageDescriptorOf
+         0     0%   100%         32  0.27%  google.golang.org/protobuf/internal/impl.NewConverter
+         0     0%   100%         74  0.63%  google.golang.org/protobuf/internal/impl.fieldCoder
+         0     0%   100%         25  0.21%  google.golang.org/protobuf/internal/impl.getMessageInfo
+         0     0%   100%         72  0.61%  google.golang.org/protobuf/internal/impl.makeMessageFieldCoder
+         0     0%   100%         75  0.64%  google.golang.org/protobuf/internal/impl.needsInitCheck
+         0     0%   100%         74  0.63%  google.golang.org/protobuf/internal/impl.needsInitCheckLocked
+         0     0%   100%         28  0.24%  google.golang.org/protobuf/internal/impl.needsInitCheckLocked.func1
+         0     0%   100%         23  0.19%  google.golang.org/protobuf/internal/impl.newFieldValidationInfo
+         0     0%   100%         62  0.52%  google.golang.org/protobuf/internal/impl.opaqueInitHook
+         0     0%   100%        164  1.39%  google.golang.org/protobuf/internal/impl.sizeMessageInfo
+         0     0%   100%         73  0.62%  google.golang.org/protobuf/internal/impl.sizeMessageSliceInfo
+         0     0%   100%          2 0.017%  google.golang.org/protobuf/internal/strs.(*Builder).AppendFullName
+         0     0%   100%       3054 25.86%  google.golang.org/protobuf/proto.Marshal
+         0     0%   100%        762  6.45%  google.golang.org/protobuf/proto.protoMethods (inline)
+         0     0%   100%          1 0.0085%  google.golang.org/protobuf/types/known/timestamppb.(*Timestamp).ProtoReflect
+         0     0%   100%          3 0.025%  internal/godebug.(*Setting).Value
+         0     0%   100%          3 0.025%  internal/godebug.(*Setting).Value.func1
+         0     0%   100%          3 0.025%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Load
+         0     0%   100%          5 0.042%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).LoadOrStore
+         0     0%   100%          1 0.0085%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Range
+         0     0%   100%         72  0.61%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Store (inline)
+         0     0%   100%         72  0.61%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Swap
+         0     0%   100%         10 0.085%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).expand
+         0     0%   100%          6 0.051%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).init
+         0     0%   100%          6 0.051%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).initSlow
+         0     0%   100%         30  0.25%  internal/sync.(*entry[go.shape.interface {},go.shape.interface {}]).swap
+         0     0%   100%        169  1.43%  main.main
+         0     0%   100%          3 0.025%  os.Create
+         0     0%   100%          6 0.051%  os.OpenFile
+         0     0%   100%          3 0.025%  os.WriteFile
+         0     0%   100%          2 0.017%  os.ignoringEINTR
+         0     0%   100%          2 0.017%  os.open
+         0     0%   100%          6 0.051%  os.openFileNolog
+         0     0%   100%          2 0.017%  os.openFileNolog.func1
+         0     0%   100%          8 0.068%  reflect.(*MapIter).Key
+         0     0%   100%          4 0.034%  reflect.(*MapIter).Value
+         0     0%   100%         15  0.13%  reflect.PointerTo
+         0     0%   100%         10 0.085%  reflect.PtrTo
+         0     0%   100%         12   0.1%  reflect.copyVal
+         0     0%   100%          2 0.017%  reflect.newName
+         0     0%   100%          4 0.034%  reflect.resolveReflectName
+         0     0%   100%          4 0.034%  reflect.typesByString
+         0     0%   100%          5 0.042%  regexp.(*Regexp).MatchString
+         0     0%   100%          5 0.042%  regexp.(*Regexp).doExecute
+         0     0%   100%          5 0.042%  regexp.(*Regexp).doMatch
+         0     0%   100%          5 0.042%  regexp.(*Regexp).doOnePass
+         0     0%   100%         57  0.48%  regexp.Compile (inline)
+         0     0%   100%         30  0.25%  regexp.compileOnePass
+         0     0%   100%          3 0.025%  regexp.onePassPrefix
+         0     0%   100%          5 0.042%  regexp/syntax.(*compiler).compile
+         0     0%   100%          1 0.0085%  regexp/syntax.(*compiler).empty
+         0     0%   100%          4 0.034%  regexp/syntax.(*compiler).rune
+         0     0%   100%          2 0.017%  regexp/syntax.(*parser).concat
+         0     0%   100%          9 0.076%  regexp/syntax.(*parser).literal
+         0     0%   100%          2 0.017%  regexp/syntax.(*parser).op
+         0     0%   100%          7 0.059%  regexp/syntax.Compile
+         0     0%   100%         14  0.12%  regexp/syntax.Parse (inline)
+         0     0%   100%          1 0.0085%  runtime.allgadd
+         0     0%   100%          1 0.0085%  runtime.gcBgMarkWorker
+         0     0%   100%          1 0.0085%  runtime.growslice
+         0     0%   100%        169  1.43%  runtime.main
+         0     0%   100%          2 0.017%  runtime.malg
+         0     0%   100%          3 0.025%  runtime.newobject
+         0     0%   100%          3 0.025%  runtime.newproc.func1
+         0     0%   100%          3 0.025%  runtime.newproc1
+         0     0%   100%          3 0.025%  runtime.systemstack
+         0     0%   100%         20  0.17%  sort.Slice
+         0     0%   100%         16  0.14%  sort.choosePivot_func
+         0     0%   100%         16  0.14%  sort.median_func
+         0     0%   100%         16  0.14%  sort.order2_func (inline)
+         0     0%   100%         16  0.14%  sort.pdqsort_func
+         0     0%   100%          3 0.025%  strings.(*Builder).WriteRune
+         0     0%   100%        134  1.13%  strings.Split (inline)
+         0     0%   100%          3 0.025%  sync.(*Map).Load
+         0     0%   100%          5 0.042%  sync.(*Map).LoadOrStore
+         0     0%   100%          1 0.0085%  sync.(*Map).Range
+         0     0%   100%         72  0.61%  sync.(*Map).Store (inline)
+         0     0%   100%         34  0.29%  sync.(*Once).Do (inline)
+         0     0%   100%         34  0.29%  sync.(*Once).doSlow
+         0     0%   100%          8 0.068%  sync.(*Pool).Get
+         0     0%   100%          8 0.068%  sync.(*Pool).pin
+         0     0%   100%          2 0.017%  syscall.BytePtrFromString
+         0     0%   100%          2 0.017%  syscall.Open
+         0     0%   100%          2 0.017%  syscall.openat
+         0     0%   100%          3 0.025%  testing.(*M).after
+         0     0%   100%          3 0.025%  testing.(*M).after.func1
+         0     0%   100%          3 0.025%  testing.(*M).writeProfiles
+         0     0%   100%          3 0.025%  testing.(*T).report
+         0     0%   100%         69  0.58%  testing.(*matcher).fullName
+         0     0%   100%          3 0.025%  testing.fmtDuration
+         0     0%   100%          8 0.068%  testing.runExamples
+         0     0%   100%         81  0.69%  testing.runTests.func1
+         0     0%   100%          5 0.042%  testing.simpleMatch.matches
+         0     0%   100%         64  0.54%  testing.simpleMatch.verify
+         0     0%   100%      11719 99.23%  testing.tRunner
+         0     0%   100%          3 0.025%  testing.tRunner.func1
+         0     0%   100%         62  0.52%  testing/internal/testdeps.TestDeps.MatchString
+         0     0%   100%          3 0.025%  time.syncTimer

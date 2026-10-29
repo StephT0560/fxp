@@ -1,0 +1,93 @@
+{
+  "source": "dhat, allocation counts only; raw time/lifetime metadata stays in work/",
+  "frames": [
+    "[root]",
+    "0x55bdd5a247cc: <dhat::Alloc as core::alloc::global::GlobalAlloc>::alloc (???:0:0)",
+    "0x55bdd5a10b50: fxp_core::server::frame_message (???:0:0)",
+    "0x55bdd594a86c: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55bdd590298b: <alloc::raw_vec::RawVecInner>::finish_grow (???:0:0)",
+    "0x55bdd58fe974: <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> (???:0:0)",
+    "0x55bdd5812c29: prost::encoding::varint::encode_varint::<alloc::vec::Vec<u8>> (???:0:0)",
+    "0x55bdd5815c0a: prost::encoding::message::encode::<fxp_core::fxp::MarketDataIncrementalUpdate, alloc::vec::Vec<u8>> (???:0:0)",
+    "0x55bdd59393dc: <fxp_core::fxp::FxpMessage as prost::message::Message>::encode::<alloc::vec::Vec<u8>> (???:0:0)",
+    "0x55bdd5a10b1e: fxp_core::server::frame_message (???:0:0)",
+    "0x55bdd594a940: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55bdd594a7a4: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55bdd5b2d24b: alloc::fmt::format::format_inner (???:0:0)",
+    "0x55bdd594aacb: fxp_core::server::phase1::core_attribution (???:0:0)",
+    "0x55bdd594a765: fxp_core::server::phase1::core_attribution (???:0:0)"
+  ],
+  "points": [
+    {
+      "bytes": 3328,
+      "allocations": 256,
+      "frames": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "bytes": 112000,
+      "allocations": 6000,
+      "frames": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "bytes": 24,
+      "allocations": 1,
+      "frames": [
+        1,
+        11
+      ]
+    },
+    {
+      "bytes": 226,
+      "allocations": 1,
+      "frames": [
+        1,
+        12,
+        13
+      ]
+    },
+    {
+      "bytes": 52000,
+      "allocations": 4000,
+      "frames": [
+        1,
+        2,
+        10
+      ]
+    },
+    {
+      "bytes": 7168,
+      "allocations": 384,
+      "frames": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        3
+      ]
+    },
+    {
+      "bytes": 6,
+      "allocations": 1,
+      "frames": [
+        1,
+        14
+      ]
+    }
+  ]
+}

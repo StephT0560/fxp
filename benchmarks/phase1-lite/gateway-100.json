@@ -1,0 +1,20 @@
+{
+  "allocated_bytes": 9856000,
+  "allocations": 410000,
+  "delivered": 200000,
+  "encodes": 2000,
+  "enqueue_locks": 200000,
+  "subscribers": 100,
+  "updates": 2000,
+  "write_calls": 200000,
+  "kernel": {
+    "incremental_write_syscall_attempts": 212800,
+    "errors": 0,
+    "short_writes": 0,
+    "complete_writes": 212800,
+    "unresolved_entries": 0,
+    "scope": "incremental framed TCP writes; syscall entries counted including resumed errors",
+    "updates_including_warmup": 2128,
+    "delivered_including_warmup": 212800
+  }
+}

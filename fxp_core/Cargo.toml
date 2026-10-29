@@ -35,6 +35,8 @@ name = "router_benchmark"
 harness = false
 
 [features]
+# Test-only attribution fixture; no counters in normal library/server builds.
+phase1 = ["dhat"]
 dhat = ["dep:dhat"]
 
 [[bench]]

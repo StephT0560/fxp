@@ -1,0 +1,32 @@
+{
+  "label": "relative, shared hardware",
+  "layout": "core=0, gateway=1, generator=2, separate subscriber=0; only 3 visible CPUs; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1",
+  "order": "A,B repeated five times, fresh stack per run",
+  "subscribers": 100,
+  "orders": 2000,
+  "pairs": [
+    {
+      "pair": 1,
+      "B_over_A": 1.2679570532405364
+    },
+    {
+      "pair": 2,
+      "B_over_A": 1.298090721575679
+    },
+    {
+      "pair": 3,
+      "B_over_A": 1.3715532062681386
+    },
+    {
+      "pair": 4,
+      "B_over_A": 1.3789446401845753
+    },
+    {
+      "pair": 5,
+      "B_over_A": 1.3680413607126602
+    }
+  ],
+  "median": 1.3680413607126602,
+  "min": 1.2679570532405364,
+  "max": 1.3789446401845753
+}

@@ -672,6 +672,8 @@ async fn read_framed_message(read_half: &mut OwnedReadHalf) -> Result<Vec<u8>, s
 }
 
 fn frame_message(msg: &fxp::FxpMessage) -> Vec<u8> {
+    #[cfg(all(test, feature = "phase1"))]
+    phase1::ENCODES.fetch_add(1, AtomicOrdering::Relaxed);
     let mut encoded = Vec::new();
     msg.encode(&mut encoded).unwrap();
     let mut framed = (encoded.len() as u32).to_be_bytes().to_vec();
@@ -3833,3 +3835,6 @@ mod trade_feed_tests {
         assert!(subscriber.md_dropped.load(AtomicOrdering::Relaxed) > 0);
     }
 }
+
+#[cfg(all(test, feature = "phase1"))]
+mod phase1;

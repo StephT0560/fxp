@@ -30,6 +30,8 @@ p.add_argument("--core-binary", default=str(ROOT / "fxp_core/target/release/fxp_
 p.add_argument("--perf-binary")
 p.add_argument("--dhat", action="store_true")
 p.add_argument("--label", default="baseline")
+p.add_argument("--subscriber-process", action="store_true", help="separate subscriber runtime")
+p.add_argument("--subscriber-cpu", default="0", help="CPU for separate subscribers; shares core on three-CPU machines")
 p.add_argument("--offered-rate", type=int, default=2000)
 a = p.parse_args()
 out = ROOT / a.output
@@ -54,6 +56,8 @@ for key in [
 ]:
     base.pop(key, None)
 layout = "core=0 gateway=1 generator=2; GOMAXPROCS=1 TOKIO_WORKER_THREADS=1; shared cgroup quota 2 CPUs"
+if a.subscriber_process:
+    layout += f"; separate subscribers={a.subscriber_cpu} (core shares CPU if 0)"
 
 
 def cpu(pid):
@@ -211,6 +215,8 @@ def scenario(
             ]
         else:
             cmd += ["--subscribers", str(subscribers)]
+            if a.subscriber_process:
+                cmd += ["--subscriber-process", "--subscriber-cpu", a.subscriber_cpu]
         usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
         result = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
         usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
