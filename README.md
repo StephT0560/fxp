@@ -4,6 +4,10 @@ A high-performance binary trading protocol and matching engine built as an open-
 
 ## Demo
 
+Run a Python bot into a reproducible failure with [`make repro-demo`](docs/bot-workflow.md):
+record a seeded partial fill, verify the bundle offline, then inspect the failing
+replace with `fxp-replay timeline` and `explain`. No Docker or UI required.
+
 The local [FXP Console](docs/console/README.md) shows a real Rust matching engine
 through the Go gateway: a live ten-level ladder, public tape with sequence-gap
 counter, price chart, session phase/auction banner, simulator controls and an

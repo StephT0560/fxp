@@ -334,10 +334,55 @@ jobs:
         working-directory: .
         run: make demo-down
 
+  repro-smoke:
+    name: repro-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fxp_core
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go_gateway/go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Install local SDK and verify generated bindings and independent vectors
+        run: |
+          python -m pip install -e sdk/python
+          bash scripts/gen_proto.sh
+          bash scripts/gen_python_proto.sh
+          (cd go_gateway && go run ./cmd/python_golden ../sdk/python/tests/golden)
+          git diff --exit-code -- sdk/python/fxp_client/fxp_pb2.py sdk/python/tests/golden
+          python -m unittest discover -s sdk/python/tests -v
+          python -m unittest discover -s examples/bot_repro -v
+      - name: Local client integration and seeded bot recording, replay and diagnosis
+        env:
+          FXP_REPRO_TEST_CLIENT: "1"
+        run: make repro-demo
+      - name: Unfilled control scenario
+        env:
+          FXP_REPRO_SEED: "1"
+        run: make repro-demo
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bot-repro-bundles
+          path: target/bot-repro.*
+          retention-days: 7
+
   # Keep this name stable: the main ruleset requires only ci-success.
   ci-success:
     name: ci-success
-    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto, demo-api, console-e2e]
+    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto, demo-api, console-e2e, repro-smoke]
     if: always()
     runs-on: ubuntu-latest
     steps:
