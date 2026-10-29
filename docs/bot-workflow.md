@@ -232,3 +232,101 @@ public trade prints, partial fills, replace, cancel and mass cancel. CI's requir
 integration plus the seed-7 rejection and seed-1 control, and uploads the bundles.
 `ci-success` requires this job. The bot unit tests explicitly preserve its single
 deliberate mistake so the demonstration cannot silently stop reproducing it.
+
+## Seeded gallery: observe first
+
+Choose an entry with `make repro-demo BUG=<name>`. All four run the real native
+stack, record commands, stop cleanly, verify the bundle offline, and assert that
+`timeline` and `explain` contain the required recorded evidence. A successful
+run means the deliberate defect was reproduced and diagnosed. The default
+remains `BUG=stale-replace`; `FXP_REPRO_SEED=1` keeps its existing unfilled control.
+
+This table lists developer-visible symptoms only. The entry manifests under
+`examples/bot_repro/gallery/<name>/entry.json` and the bot source contain answers;
+avoid reading those when practicing.
+
+| BUG | Symptom in the bot log |
+| --- | --- |
+| `stale-replace` | A quote reprice fails after a partial fill; the old quote stays live. |
+| `stp-surprise` | Inventory moves without a logged sale, and a strategy quote disappears. |
+| `fill-cancel-race` | Two hedges are sent for one sale; inventory overshoots. |
+| `auction-phase` | An order rests first, then fills at a price different from the bot's expectation. |
+
+```sh
+make repro-demo BUG=stp-surprise
+make repro-demo BUG=fill-cancel-race
+make repro-demo BUG=auction-phase
+```
+
+Each gallery entry uses seed 7 by default. The new scenarios derive quantity
+from a private `random.Random(seed)` instance, and order commands with received
+ACK/fill barriers. The auction example uses the existing operator opening-call
+control and waits for its actual phase event and auction fill; it does not
+modify engine clocks or add auction behavior. The late-report example waits
+for the aggressor's fill before issuing a cancel while the maker's report is
+still unread. The gallery asserts the fill's **global journal sequence** is
+strictly before the cancel's, not just the order of bot log lines.
+
+The text timeline stays scoped to the failing order. `timeline.json` includes
+the owner's symbol-wide events so assertions can also verify the two hedge
+fills. `explain.json` is the verified order-scoped explanation. `bot.log` has
+only the developer-visible symptom; `diagnosis.txt` combines verified exchange
+facts with the deliberate bot transition identified in source. Exchange events
+cannot prove when a bot read its socket or what its private inventory believed.
+Those decisions are exercised by the scenario and bot variants, not inferred
+by replay.
+
+## Blind practice or tool trial
+
+After the clean-checkout setup above:
+
+```sh
+FXP_REPRO_SEED=7 make repro-blind
+# Bundle: /.../target/trial-XXXXXX/bundle
+# Symptom: ...
+```
+
+A successful blind invocation prints **only those two lines**, including no
+Make recipe echo, selected BUG, answer, timeline or explanation. The selection
+seed deterministically picks a gallery entry; the chosen entry itself runs its
+known failing seed **7**, so selecting the existing seed-1 control cannot hide
+the bug. Bundle paths, order IDs and run metadata use neutral labels rather
+than the selected BUG. The visible exercise directory contains only the verified
+bundle. Use its real recorded evidence to investigate:
+
+```sh
+fxp_core/target/release/fxp-replay verify /path/to/bundle
+fxp_core/target/release/fxp-replay timeline /path/to/bundle --owner demo-maker
+# Find an order ID from that timeline, then:
+fxp_core/target/release/fxp-replay explain /path/to/bundle --order '<core order ID>' --owner demo-maker
+make repro-reveal
+```
+
+Reveal prints the selected entry, expected diagnosis, and elapsed wall time
+since blind start, **including build/scenario time**. This is an exercise timer,
+not a benchmark. The answer, selection/scenario seeds and start time are stored
+in `target/.repro-sealed.json`, gitignored and mode 0600. It is a local spoiler
+barrier, not encryption or an anti-cheating boundary: the bundle necessarily
+contains diagnostic evidence, and the gallery source is public. Do not open
+the seal or answer manifests until ready to reveal.
+
+An unrevealed exercise cannot be overwritten, including concurrent invocations.
+Reveal removes the seal and retains the bundle. After an interrupted process,
+check that its child stack exited and ports are free before deliberately
+removing an incomplete seal. Failures exit nonzero without printing a selected
+BUG or child command. `FXP_REPRO_PYTHON` still selects the installed SDK's Python;
+`FXP_REPRO_SEED` selects the blind entry. No additional service, UI, SDK dependency
+or hosted storage is involved.
+
+### Additive inspection context
+
+New recordings can attach `opposing_order` to STP reports and `session_phase`
+to accepted orders when the phase has actually been observed in that symbol's
+recorded events. STP mode remains the engine's recorded report reason. Opposing
+IDs are anonymized without matching owner scope, like fill counterparties.
+`explain` cites recorded phase and auction-fill sequence/price rather than
+inventing a reason. Older traces without these optional fields remain verifiable:
+only these two explicitly additive missing keys are tolerated during comparison;
+recorded values, all existing fields, event positions, canonical business bytes,
+digests and final state remain checked exactly. Missing legacy context remains
+missing in recorded-source explanations.
