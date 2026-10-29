@@ -47,3 +47,7 @@ work/
 # Local demo credentials and BFF build output
 .env.demo
 /demo_api/demo_api
+
+# Local Python SDK installations
+.venv/
+*.egg-info/

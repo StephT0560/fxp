@@ -1,0 +1,87 @@
+{
+  "ack": {
+    "kind": "logon_ack",
+    "fields": {
+      "accepted": true
+    }
+  },
+  "cancel": {
+    "kind": "order_cancel",
+    "fields": {
+      "client_cancel_id": "cancel-N",
+      "order_id": "N"
+    }
+  },
+  "fill": {
+    "kind": "execution_report",
+    "fields": {
+      "cum_quantity": 7,
+      "executed_quantity": 7,
+      "leaves_quantity": 3,
+      "order_quantity": 10
+    }
+  },
+  "logon": {
+    "kind": "logon",
+    "fields": {
+      "cancel_on_disconnect": true,
+      "token": "fixture-not-a-credential"
+    }
+  },
+  "mass-cancel": {
+    "kind": "order_mass_cancel",
+    "fields": {
+      "client_request_id": "mass-N",
+      "reason": 1
+    }
+  },
+  "new": {
+    "kind": "new_order",
+    "fields": {
+      "client_order_id": "client-N",
+      "order_id": "N",
+      "price": 12345,
+      "quantity": 10,
+      "side": 1
+    }
+  },
+  "reject": {
+    "kind": "execution_report",
+    "fields": {
+      "reject_reason": "quantity must be positive"
+    }
+  },
+  "replace-absent": {
+    "kind": "order_cancel_replace",
+    "fields": {
+      "new_order_id": "R",
+      "new_quantity": 7
+    }
+  },
+  "replace-zero": {
+    "kind": "order_cancel_replace",
+    "fields": {
+      "new_display_quantity": 0,
+      "new_order_id": "R",
+      "new_quantity": 7
+    }
+  },
+  "signed": {
+    "kind": "new_order",
+    "fields": {
+      "price": -1,
+      "quantity": -1
+    }
+  },
+  "subscribe": {
+    "kind": "market_data_request",
+    "fields": {}
+  },
+  "trade": {
+    "kind": "trade_capture_report",
+    "fields": {
+      "seq": 18446744073709551615,
+      "trade_price": 9007199254740993
+    }
+  }
+}
