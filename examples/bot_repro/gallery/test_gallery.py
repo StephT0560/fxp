@@ -12,6 +12,17 @@ from gallery.bots import SharedOwnerBot, LateReaderBot
 
 
 class VariantTests(unittest.TestCase):
+    def test_operator_jwt_matches_independent_go_vector(self):
+        from gallery.scenarios import operator_token
+        import os
+        with patch.dict(os.environ, {'FXP_JWT_SECRET': 'a' * 32, 'FXP_JWT_ISSUER': 'test',
+                                     'FXP_JWT_AUDIENCE': 'gateway', 'FXP_JWT_KID': 'key'}), \
+             patch('fxp_client.client.time.time', return_value=1700000000), \
+             patch('fxp_client.client.secrets.token_hex', return_value='test-jti'):
+            actual = operator_token()
+        vector = Path(__file__).resolve().parents[3]/'sdk/python/tests/golden/operator-token.txt'
+        self.assertEqual(actual, vector.read_text().strip())
+
     def test_all_four_seeded_entries_and_blind_selections_are_registered(self):
         from gallery.blind import BUGS, pick
         root = Path(__file__).parent
