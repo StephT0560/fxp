@@ -106,6 +106,8 @@ jobs:
           E2E_LOG_DIR: ${{ runner.temp }}/e2e
       - name: Simulator with random JWT secret and custom claims
         run: bash scripts/simday_smoke.sh
+      - name: Recorded simulator bundle and twenty offline replays
+        run: bash scripts/repro_bundle_smoke.sh
       - name: TLS/mTLS listeners and authenticated core e2e
         run: bash scripts/e2e_tls.sh
         env:
