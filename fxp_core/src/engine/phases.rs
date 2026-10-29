@@ -121,6 +121,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                 if let Some(price) = price {
                     let mut exec = Execution::default();
                     for stop in self.stop_book.drain_triggered(price) {
+                        if self.diagnostics.is_some() {
+                            exec.trigger_points
+                                .push((exec.fills.len(), stop.order_id.clone()));
+                        }
                         exec.triggered.push(stop.order_id.clone());
                         self.book.execute_into(stop, &mut exec);
                     }
@@ -138,6 +142,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         &self.symbol,
                         &timestamp(at),
                         &mut self.trade_seq,
+                        &mut self.diagnostics,
                     );
                 }
             }
@@ -246,6 +251,18 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                     &timestamp(at),
                 ) {
                     report.auction = true;
+                    emit(&mut self.diagnostics, || Diagnostic {
+                        output_index: out.len(),
+                        kind: "fill_context",
+                        order_id: id.clone(),
+                        role: "auction",
+                        counterparty: if id == &buy {
+                            sell.clone()
+                        } else {
+                            buy.clone()
+                        },
+                        ..Default::default()
+                    });
                     out.push(Output::ExecutionReport(owner, report));
                 }
             }
@@ -285,6 +302,15 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
     fn finish_order(&mut self, id: &str, expired: bool, at: Time, out: &mut Vec<Output<R>>) {
         let md = self.remove_live(id);
         let state = self.states.remove(id).expect("live terminal state");
+        if !expired {
+            emit(&mut self.diagnostics, || Diagnostic {
+                output_index: out.len(),
+                kind: "cancel_context",
+                order_id: id.into(),
+                cause: "auction remainder".into(),
+                ..Default::default()
+            });
+        }
         let (et, os) = if expired {
             (
                 fxp::ExecutionType::ExecExpired,

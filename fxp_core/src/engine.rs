@@ -13,6 +13,9 @@ use std::sync::Arc;
 
 pub mod auction;
 mod canonical;
+mod diagnostic;
+pub(crate) use diagnostic::Diagnostic;
+use diagnostic::emit;
 #[cfg(test)]
 mod iceberg_tests;
 #[cfg(test)]
@@ -169,6 +172,7 @@ pub enum Output<R> {
 
 pub struct Engine<R, C, I> {
     symbol: String,
+    diagnostics: Option<Vec<Diagnostic>>,
     book: OrderBook,
     stop_book: StopBook,
     last_trade_price: Option<i64>,
@@ -192,6 +196,17 @@ pub struct Engine<R, C, I> {
 }
 
 impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
+    pub(crate) fn with_diagnostics(mut self) -> Self {
+        self.diagnostics = Some(Vec::new());
+        self.book.refresh_log = Some(Vec::new());
+        self
+    }
+    pub(crate) fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+        self.diagnostics
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
     pub fn phase(&self) -> fxp::TradingPhase {
         self.phase
     }
@@ -202,6 +217,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         });
         Self {
             symbol: symbol.into(),
+            diagnostics: None,
             book: OrderBook::new(symbol, Arc::new(MarketDataBroadcaster::new())),
             stop_book: StopBook::default(),
             last_trade_price: None,
@@ -443,6 +459,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
         let states = &mut self.states;
         let ids = &mut self.ids;
         let trade_seq = &mut self.trade_seq;
+        let diagnostics = &mut self.diagnostics;
         'request: {
             match msg {
                 SymbolMsg::Cancel(cancel_msg) => {
@@ -616,6 +633,10 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                         .cancel_for(&replacement.order_id, &replacement.trader_id)
                                         .expect("replacement was just parked");
                                     let mut exec = Execution::default();
+                                    if diagnostics.is_some() {
+                                        exec.trigger_points
+                                            .push((exec.fills.len(), order.order_id.clone()));
+                                    }
                                     exec.triggered.push(order.order_id.clone());
                                     book.execute_into(order, &mut exec);
                                     run_stop_cascade(book, stop_book, last_trade_price, &mut exec);
@@ -627,6 +648,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                         symbol,
                                         &ts,
                                         trade_seq,
+                                        diagnostics,
                                     );
                                 }
                             }
@@ -724,6 +746,7 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 symbol,
                                 &ts,
                                 trade_seq,
+                                diagnostics,
                             );
                         }
                     }
@@ -908,6 +931,13 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 ev,
                                 &ts,
                             );
+                            emit(diagnostics, || Diagnostic {
+                                output_index: outputs.len(),
+                                kind: "order_accepted",
+                                order_id: order_obj.order_id.clone(),
+                                quantity: order_obj.quantity,
+                                ..Default::default()
+                            });
                             outputs.push(Output::ExecutionReport(output_tx.clone(), ack));
 
                             states.insert(order_obj.order_id.clone(), state);
@@ -926,6 +956,13 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                                 fxp::OrderStatus::OrderNew,
                             )
                         };
+                        emit(diagnostics, || Diagnostic {
+                            output_index: outputs.len(),
+                            kind: "order_accepted",
+                            order_id: order_obj.order_id.clone(),
+                            quantity: order_obj.quantity,
+                            ..Default::default()
+                        });
                         outputs.push(Output::ExecutionReport(
                             output_tx,
                             build_report(ids, &order_obj.order_id, symbol, Some(&state), ev, &ts),
@@ -946,7 +983,18 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
 
                     // Process the order (non-stop, or stop that triggered immediately)
                     states.insert(order_obj.order_id.clone(), state);
+                    emit(diagnostics, || Diagnostic {
+                        output_index: outputs.len(),
+                        kind: "order_accepted",
+                        order_id: order_obj.order_id.clone(),
+                        quantity: order_obj.quantity,
+                        cause: "validated for matching".into(),
+                        ..Default::default()
+                    });
                     let mut exec = Execution::default();
+                    if matches!(order_obj.order_type, OrderType::Stop | OrderType::StopLimit) {
+                        exec.trigger_points.push((0, order_obj.order_id.clone()));
+                    }
                     if book.execute_into(order_obj.clone(), &mut exec)
                         && let Some(st) = states.get(&order_obj.order_id)
                     {
@@ -963,7 +1011,16 @@ impl<R: Clone, C: Clock, I: ExecIds> Engine<R, C, I> {
                         ));
                     }
                     run_stop_cascade(book, stop_book, last_trade_price, &mut exec);
-                    report_execution(ids, &mut outputs, exec, states, symbol, &ts, trade_seq);
+                    report_execution(
+                        ids,
+                        &mut outputs,
+                        exec,
+                        states,
+                        symbol,
+                        &ts,
+                        trade_seq,
+                        diagnostics,
+                    );
                 }
             }
         }
@@ -1257,6 +1314,7 @@ fn build_trade(
 
 /// Fill reports to each order's own connection, then remainder cancels (after
 /// the fills they complete), then market data for rested orders and fills.
+#[allow(clippy::too_many_arguments)]
 fn report_execution<R: Clone>(
     ids: &mut impl ExecIds,
     outputs: &mut Vec<Output<R>>,
@@ -1265,9 +1323,21 @@ fn report_execution<R: Clone>(
     symbol: &str,
     ts: &Option<Timestamp>,
     trade_seq: &mut u64,
+    diagnostics: &mut Option<Vec<Diagnostic>>,
 ) {
+    let mut triggers = exec.trigger_points.iter().peekable();
+    let mut refreshes = exec.refreshes.iter().peekable();
     let mut stp = exec.stp.iter().peekable();
     for (i, f) in exec.fills.iter().enumerate() {
+        while let Some((_, id)) = triggers.next_if(|(at, _)| *at <= i) {
+            emit(diagnostics, || Diagnostic {
+                output_index: outputs.len(),
+                kind: "stop_trigger",
+                order_id: id.clone(),
+                cause: "trade price crossed stop".into(),
+                ..Default::default()
+            });
+        }
         while let Some(e) = stp.next_if(|e| e.before_fill <= i) {
             report_stp(ids, outputs, states, symbol, e, ts);
         }
@@ -1275,6 +1345,22 @@ fn report_execution<R: Clone>(
             if let Some((frame, tx)) =
                 apply_fill(ids, states, id, symbol, f.trade_price, f.trade_quantity, ts)
             {
+                emit(diagnostics, || Diagnostic {
+                    output_index: outputs.len(),
+                    kind: "fill_context",
+                    order_id: id.clone(),
+                    role: if (id == &f.buy_order_id) == (f.aggressor_side == OrderSide::Buy) {
+                        "aggressor"
+                    } else {
+                        "resting"
+                    },
+                    counterparty: if id == &f.buy_order_id {
+                        f.sell_order_id.clone()
+                    } else {
+                        f.buy_order_id.clone()
+                    },
+                    ..Default::default()
+                });
                 outputs.push(Output::ExecutionReport(tx.clone(), frame));
             }
         }
@@ -1288,12 +1374,38 @@ fn report_execution<R: Clone>(
             false,
             ts,
         )));
+        while let Some((_, id, quantity)) = refreshes.next_if(|(at, _, _)| *at == i) {
+            emit(diagnostics, || Diagnostic {
+                output_index: outputs.len(),
+                kind: "iceberg_refresh",
+                order_id: id.clone(),
+                quantity: *quantity,
+                cause: "displayed slice exhausted; reserve replenished at back of queue".into(),
+                ..Default::default()
+            });
+        }
+    }
+    for (_, id) in triggers {
+        emit(diagnostics, || Diagnostic {
+            output_index: outputs.len(),
+            kind: "stop_trigger",
+            order_id: id.clone(),
+            cause: "trade price crossed stop".into(),
+            ..Default::default()
+        });
     }
     for e in stp {
         report_stp(ids, outputs, states, symbol, e, ts);
     }
     for id in &exec.cancels {
         if let Some(st) = states.remove(id) {
+            emit(diagnostics, || Diagnostic {
+                output_index: outputs.len(),
+                kind: "cancel_context",
+                order_id: id.clone(),
+                cause: format!("unfilled remainder ({:?})", st.time_in_force),
+                ..Default::default()
+            });
             let ev = ReportEvent::new(
                 fxp::ExecutionType::ExecCanceled,
                 fxp::OrderStatus::OrderCanceled,
