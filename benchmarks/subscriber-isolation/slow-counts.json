@@ -1,0 +1,222 @@
+[
+  {
+    "revision": "before",
+    "repetition": 1,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 567400,
+      "heap_after_saturation": 569360,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "after",
+    "repetition": 1,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 567512,
+      "heap_after_saturation": 569472,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "before",
+    "repetition": 2,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 573776,
+      "heap_after_saturation": 575736,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "after",
+    "repetition": 2,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 572880,
+      "heap_after_saturation": 574824,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "before",
+    "repetition": 3,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 573088,
+      "heap_after_saturation": 574936,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "after",
+    "repetition": 3,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 567560,
+      "heap_after_saturation": 569520,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "before",
+    "repetition": 4,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 567944,
+      "heap_after_saturation": 569792,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "after",
+    "repetition": 4,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 567832,
+      "heap_after_saturation": 569792,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "before",
+    "repetition": 5,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 567624,
+      "heap_after_saturation": 569472,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  },
+  {
+    "revision": "after",
+    "repetition": 5,
+    "core": {
+      "queue_depth": 16,
+      "capacity": 16,
+      "drops_after_orders": 12986,
+      "drops_before_orders": 10984,
+      "retained_payload_bytes": 2048,
+      "heap_growth_after_saturation": 0,
+      "order_acks": 2000
+    },
+    "gateway": {
+      "capacity": 16,
+      "drops": 10984,
+      "heap_after_10000_drops_and_gc": 567448,
+      "heap_after_saturation": 569408,
+      "order_reports": 2000,
+      "queue_depth": 16,
+      "retained_payload_bytes": 128
+    }
+  }
+]

@@ -1,0 +1,35 @@
+{
+  "drops_before_extra_10000": [
+    2983,
+    2983,
+    2983,
+    2983,
+    2983
+  ],
+  "goroutines_after": 3,
+  "goroutines_before": 2,
+  "heap_allowance_bytes": 2097152,
+  "heap_growth_bytes": 1312,
+  "label": "relative, shared hardware; functional same-session check",
+  "max": 1.134587211927498,
+  "median": 1.0937873445270119,
+  "median_ceiling": 4,
+  "min": 0.9546455099117972,
+  "pairs": 5,
+  "queue_depths": [
+    16,
+    16,
+    16,
+    16,
+    16
+  ],
+  "queued_payload_bound": "16 frames plus one in-flight frame",
+  "reports_per_half": 2000,
+  "stalled_over_control_elapsed_ratios": [
+    1.0937873445270119,
+    0.9546455099117972,
+    0.974150495228969,
+    1.0983853012533082,
+    1.134587211927498
+  ]
+}
