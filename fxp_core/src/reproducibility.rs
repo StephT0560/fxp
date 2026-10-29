@@ -328,7 +328,9 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
     let summary = journal.summary();
     let rows = journal.inspection.take().expect("inspection enabled").rows;
     let diverged = expected.as_ref().is_some_and(|j| j != &summary.json())
-        || expected_rows.as_ref().is_some_and(|r| r != &rows);
+        || expected_rows
+            .as_ref()
+            .is_some_and(|r| !compatible_trace(r, &rows));
     Ok(Inspection {
         complete,
         diverged,
@@ -338,6 +340,25 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
         rows,
         expected_rows,
     })
+}
+
+// Only explicitly additive diagnostic keys may be absent in older recordings.
+// All positions, business bytes, existing fields and recorded new fields stay exact.
+fn compatible_trace(expected: &[Json], actual: &[Json]) -> bool {
+    expected.len() == actual.len()
+        && expected.iter().zip(actual).all(|(e, a)| {
+            let mut a = a.clone();
+            if let (Ok(Json::Object(ed)), Json::Object(am)) = (e.get("data"), &mut a)
+                && let Some(Json::Object(ad)) = am.get_mut("data")
+            {
+                for key in ["opposing_order", "session_phase"] {
+                    if !ed.contains_key(key) {
+                        ad.remove(key);
+                    }
+                }
+            }
+            e == &a
+        })
 }
 
 fn require(j: &Json, key: &str, expected: &str) -> io::Result<()> {
@@ -521,3 +542,31 @@ mod vectors;
 
 #[cfg(test)]
 mod cli_golden;
+
+#[cfg(test)]
+mod additive_gallery_tests {
+    use super::*;
+    #[test]
+    fn optional_gallery_context_preserves_legacy_but_verifies_recorded_fields() {
+        let old = Json::parse(r#"{"data":{"cause":"STP"},"global_seq":1}"#).unwrap();
+        let new = Json::parse(
+            r#"{"data":{"cause":"STP","opposing_order":"B","session_phase":2},"global_seq":1}"#,
+        )
+        .unwrap();
+        assert!(compatible_trace(
+            std::slice::from_ref(&old),
+            std::slice::from_ref(&new)
+        ));
+        assert!(compatible_trace(
+            std::slice::from_ref(&new),
+            std::slice::from_ref(&new)
+        ));
+        let tampered = Json::parse(
+            r#"{"data":{"cause":"STP","opposing_order":"OTHER","session_phase":2},"global_seq":1}"#,
+        )
+        .unwrap();
+        assert!(!compatible_trace(std::slice::from_ref(&new), &[tampered]));
+        let changed = Json::parse(r#"{"data":{"cause":"other"},"global_seq":1}"#).unwrap();
+        assert!(!compatible_trace(&[old], &[changed]));
+    }
+}

@@ -111,6 +111,7 @@ pub(crate) fn command(input: &Input) -> Json {
 pub(crate) struct Collector {
     pub rows: Vec<Json>,
     command_time: Option<Time>,
+    phases: BTreeMap<String, i32>,
     identities: BTreeMap<(String, String), (String, String)>,
 }
 impl Collector {
@@ -213,7 +214,7 @@ impl Collector {
             }
             for d in ds
                 .iter()
-                .filter(|d| !matches!(d.kind, "fill_context" | "cancel_context"))
+                .filter(|d| !matches!(d.kind, "fill_context" | "cancel_context" | "stp_context"))
             {
                 if d.kind=="order_accepted" && outputs.iter().any(|o|matches!(o,Output::ExecutionReport(_,r) if r.order_id==d.order_id && r.execution_type==fxp::ExecutionType::ExecNew as i32)) {continue;}
                 let mut data = Json::object([("cause", Json::string(&d.cause))]);
@@ -348,8 +349,22 @@ impl Collector {
                 Output::AuctionInfo(m) => m.timestamp,
                 _ => None,
             };
+            if let Output::TradingSessionStatus(t) = output {
+                self.phases.insert(symbol.into(), t.phase);
+            }
             let mut data = data;
             if let Json::Object(m) = &mut data {
+                if kind == "accepted"
+                    && let Some(phase) = self.phases.get(symbol)
+                {
+                    m.insert("session_phase".into(), integer(i64::from(*phase)));
+                }
+                if let Some(d) = ds
+                    .iter()
+                    .find(|d| d.kind == "stp_context" && d.order_id == id)
+                {
+                    m.insert("opposing_order".into(), Json::string(&d.counterparty));
+                }
                 m.insert(
                     "business_time".into(),
                     business_time.map_or(Json::Null, |t| {

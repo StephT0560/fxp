@@ -1348,6 +1348,13 @@ fn report_execution<R: Clone>(
             });
         }
         while let Some(e) = stp.next_if(|e| e.before_fill <= i) {
+            emit(diagnostics, || Diagnostic {
+                output_index: outputs.len(),
+                kind: "stp_context",
+                order_id: e.order_id.clone(),
+                counterparty: e.opposing_order.clone(),
+                ..Default::default()
+            });
             report_stp(ids, outputs, states, symbol, e, ts);
         }
         for id in [&f.buy_order_id, &f.sell_order_id] {
@@ -1404,6 +1411,13 @@ fn report_execution<R: Clone>(
         });
     }
     for e in stp {
+        emit(diagnostics, || Diagnostic {
+            output_index: outputs.len(),
+            kind: "stp_context",
+            order_id: e.order_id.clone(),
+            counterparty: e.opposing_order.clone(),
+            ..Default::default()
+        });
         report_stp(ids, outputs, states, symbol, e, ts);
     }
     for id in &exec.cancels {

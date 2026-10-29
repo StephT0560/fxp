@@ -136,13 +136,15 @@ fn parse(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
 fn redact(row: &Json, owner: Option<&str>) -> Json {
     let mut row = row.clone();
     let scoped = owner.is_some_and(|owner| text(&row, "owner") == owner);
-    if let Json::Object(m) = &mut row
-        && let Some(Json::Object(data)) = m.get_mut("data")
-        && let Some(Json::String(other)) = data.get_mut("counterparty")
-        && !other.is_empty()
-        && !scoped
-    {
-        *other = format!("anon:{}", &sha256(other.as_bytes())[..12]);
+    for field in ["counterparty", "opposing_order"] {
+        if let Json::Object(m) = &mut row
+            && let Some(Json::Object(data)) = m.get_mut("data")
+            && let Some(Json::String(other)) = data.get_mut(field)
+            && !other.is_empty()
+            && !scoped
+        {
+            *other = format!("anon:{}", &sha256(other.as_bytes())[..12]);
+        }
     }
     row
 }
@@ -258,7 +260,16 @@ fn line(row: &Json) -> String {
             text(data, "cause")
         ),
         "rejected" | "canceled" | "expired" | "restated" | "stop_trigger" => {
-            format!("cause={}", text(data, "cause"))
+            let opposing = text(data, "opposing_order");
+            format!(
+                "cause={}{}",
+                text(data, "cause"),
+                if opposing.is_empty() {
+                    String::new()
+                } else {
+                    format!(" opposing_order={opposing}")
+                }
+            )
         }
         _ => data.encode(),
     };
@@ -356,11 +367,17 @@ fn explanation(rows: &[Json], order: &str) -> String {
             "iceberg_refresh" => refreshes += 1,
             "stop_trigger" => triggers += 1,
             "rejected" | "canceled" | "expired" | "replaced" | "restated" => {
-                let cause = if text(row, "kind") == "replaced" {
+                let mut cause = if text(row, "kind") == "replaced" {
                     format!("new order {}", text(data, "new_order_id"))
                 } else {
                     text(data, "cause").to_string()
                 };
+                if !text(data, "opposing_order").is_empty() {
+                    cause.push_str(&format!(
+                        "; opposing order {}",
+                        text(data, "opposing_order")
+                    ));
+                }
                 let kind = if text(row, "kind") == "rejected" {
                     format!(
                         "{} rejected",
@@ -389,6 +406,27 @@ fn explanation(rows: &[Json], order: &str) -> String {
     let mut summary = format!(
         "{order}: {fills} fill reports, {quantity} units; {triggers} stop triggers; {refreshes} iceberg refreshes.\n"
     );
+    for row in rows {
+        let data = row.get("data").unwrap();
+        if text(row, "kind") == "accepted"
+            && let Ok(phase) = data.get("session_phase")
+        {
+            let name = crate::fxp::TradingPhase::try_from(number(data, "session_phase") as i32)
+                .map(|p| format!("{p:?}"))
+                .unwrap_or_else(|_| phase.encode());
+            summary.push_str(&format!(
+                "Accepted in session phase {name} (seq {}).\n",
+                number(row, "global_seq")
+            ));
+        }
+        if text(row, "kind") == "fill" && matches!(data.get("auction"), Ok(Json::Bool(true))) {
+            summary.push_str(&format!(
+                "Auction fill at price {} (seq {}).\n",
+                number(data, "price"),
+                number(row, "global_seq")
+            ));
+        }
+    }
     let mut causes = causes.into_iter().collect::<Vec<_>>();
     causes.sort_by_key(|(_, (seq, _))| *seq);
     for ((id, kind, cause), (seq, count)) in causes {
@@ -637,6 +675,25 @@ mod tests {
         ])
     }
     #[test]
+    fn opposing_stp_order_is_anonymized_without_owner_scope() {
+        let r = Json::parse(r#"{"owner":"alice","data":{"opposing_order":"OWN-B"}}"#).unwrap();
+        assert!(text(redact(&r, None).get("data").unwrap(), "opposing_order").starts_with("anon:"));
+        assert_eq!(
+            text(
+                redact(&r, Some("alice")).get("data").unwrap(),
+                "opposing_order"
+            ),
+            "OWN-B"
+        );
+        assert!(
+            text(
+                redact(&r, Some("bob")).get("data").unwrap(),
+                "opposing_order"
+            )
+            .starts_with("anon:")
+        );
+    }
+    #[test]
     fn explanation_includes_recorded_stp_restatement() {
         use crate::engine::{Clock, Engine, ExecIds, Time};
         use crate::{event_log::Input, fxp, reproducibility::trace::Collector};
@@ -698,6 +755,7 @@ mod tests {
             "{summary}"
         );
         assert!(!summary.contains("No terminal cause"));
+        assert!(summary.contains("opposing order BUY"), "{summary}");
     }
     #[test]
     fn client_filter_does_not_cross_owners_reusing_an_order_id() {
