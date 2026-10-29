@@ -1,0 +1,8 @@
+{
+  "bug": "stp-surprise",
+  "seed": 7,
+  "bot_variant": "BUG=stp-surprise",
+  "symptom": "Inventory moved without a logged sale; a strategy quote disappeared.",
+  "root_cause": "Two strategies share an owner; cancel-oldest STP removes the older quote against the opposing own order. The bot counts cancellation as inventory.",
+  "assertions": "gallery/diagnose.py, run after fxp-replay verify, timeline and explain"
+}

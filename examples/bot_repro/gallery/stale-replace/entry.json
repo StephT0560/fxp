@@ -1,0 +1,8 @@
+{
+  "bug": "stale-replace",
+  "seed": 7,
+  "bot_variant": "BUG=stale-replace",
+  "symptom": "Quote reprice failed after a partial fill; the old quote is still live.",
+  "root_cause": "The bot submits leaves as replacement total; the verified rejection names Replace quantity not above filled quantity.",
+  "assertions": "gallery/diagnose.py, run after fxp-replay verify, timeline and explain"
+}

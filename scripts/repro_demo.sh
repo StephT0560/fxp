@@ -16,6 +16,8 @@ else
     run_dir="$(mktemp -d "$repo_root/target/bot-repro.XXXXXX")"
 fi
 seed="${FXP_REPRO_SEED:-7}"
+bug="${BUG:-stale-replace}"
+case "$bug" in stale-replace|stp-surprise|fill-cancel-race|auction-phase) ;; *) echo "unknown BUG: $bug" >&2; exit 2;; esac
 repro_test_client="${FXP_REPRO_TEST_CLIENT:-0}"
 # The core currently binds :8080; do not attach to or stop an existing stack.
 for port in 8080 8081 8082; do
@@ -30,7 +32,7 @@ export FXP_JWT_ISSUER=bot-repro FXP_JWT_AUDIENCE=bot-gateway
 export FXP_GW_TCP_ADDR=127.0.0.1:8082 FXP_GW_WS_ADDR=127.0.0.1:8081
 export FXP_TLS_REQUIRED=false FXP_CLIENT_TLS=false
 export FXP_RUN_RECORD="$run_dir/bundle"
-export FXP_RUN_META_JSON="$("$python" -c 'import json,sys; print(json.dumps({"seed":int(sys.argv[1]),"example":"bot_repro","deliberate_bug":"remaining quantity mistaken for total after fill"}))' "$seed")"
+export FXP_RUN_META_JSON="$("$python" -c 'import json,sys; print(json.dumps({"seed":int(sys.argv[1]),"example":"bot_repro","example_mode":"gallery"}))' "$seed")"
 export FXP_SYMBOL_CONFIG="$repo_root/examples/bot_repro/symbols.csv"
 export RUST_LOG=warn
 # Intentional local-only plaintext; never expose these disposable credentials.
@@ -76,7 +78,7 @@ wait_for_port "$gateway_pid" 8082
 if [[ "${repro_test_client:-0}" == 1 ]]; then
     FXP_REPRO_TEST_CLIENT=1 "$python" -m unittest discover -s sdk/python/tests -p test_integration.py -v
 fi
-"$python" examples/bot_repro/scenario.py --seed "$seed" --result "$run_dir/scenario.json"
+PYTHONPATH="$repo_root/examples/bot_repro${PYTHONPATH:+:$PYTHONPATH}" "$python" -m gallery.scenarios --bug "$bug" --seed "$seed" --result "$run_dir/scenario.json" | tee "$run_dir/bot.log"
 stop "$gateway_pid" gateway; gateway_pid=''
 stop "$core_pid" core; core_pid=''
 replay=fxp_core/target/release/fxp-replay
@@ -84,5 +86,6 @@ replay=fxp_core/target/release/fxp-replay
 order_id="$("$python" -c 'import json,sys;print(json.load(open(sys.argv[1]))["core_order_id"])' "$run_dir/scenario.json")"
 "$replay" timeline "$run_dir/bundle" --order "$order_id" --owner demo-maker --symbol BOTTEST | tee "$run_dir/timeline.txt"
 "$replay" explain "$run_dir/bundle" --order "$order_id" --owner demo-maker --symbol BOTTEST | tee "$run_dir/explain.txt"
-"$replay" timeline "$run_dir/bundle" --order "$order_id" --owner demo-maker --symbol BOTTEST --json >"$run_dir/timeline.json"
-"$python" examples/bot_repro/diagnose.py "$run_dir/timeline.json" "$run_dir/scenario.json" | tee "$run_dir/diagnosis.txt"
+"$replay" timeline "$run_dir/bundle" --owner demo-maker --symbol BOTTEST --json >"$run_dir/timeline.json"
+"$replay" explain "$run_dir/bundle" --order "$order_id" --owner demo-maker --symbol BOTTEST --json >"$run_dir/explain.json"
+PYTHONPATH="$repo_root/examples/bot_repro${PYTHONPATH:+:$PYTHONPATH}" "$python" -m gallery.diagnose "$run_dir/timeline.json" "$run_dir/explain.json" "$run_dir/scenario.json" | tee "$run_dir/diagnosis.txt"

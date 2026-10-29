@@ -66,4 +66,4 @@ record:
 
 .PHONY: repro-demo
 repro-demo:
-	bash scripts/repro_demo.sh
+	BUG="$(BUG)" bash scripts/repro_demo.sh
