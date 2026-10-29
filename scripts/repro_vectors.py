@@ -67,8 +67,18 @@ def vectors():
     return result
 
 
+def metadata_vector():
+    return {"seed": 7, "unicode": "é😀", "escapes": "quote\" slash\\ newline\n control\x01",
+            "types": [True, False, None], "numbers": [0, -12, 1.25, 1e40],
+            "nested": {"array": ["x", {"a": 1}]}}
+
+
 if __name__ == "__main__":
-    if "--lines" in sys.argv:
+    if "--metadata" in sys.argv:
+        print(json.dumps(metadata_vector(), ensure_ascii=True))
+    elif "--check-metadata" in sys.argv:
+        assert json.load(sys.stdin) == metadata_vector()
+    elif "--lines" in sys.argv:
         for key, value in sorted(vectors().items()):
             print(f"{key}={value}")
     else:

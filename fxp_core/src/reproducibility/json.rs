@@ -293,3 +293,50 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod independent_tests {
+    use super::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    #[test]
+    fn json_metadata_matches_python_encoder_and_decoder() {
+        let script =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/repro_vectors.py");
+        let generated = Command::new("python3")
+            .arg(&script)
+            .arg("--metadata")
+            .output()
+            .unwrap();
+        assert!(generated.status.success());
+        let parsed = Json::parse(std::str::from_utf8(&generated.stdout).unwrap()).unwrap();
+        assert_eq!(parsed.get("seed").unwrap(), &Json::number(7));
+        assert_eq!(parsed.get("unicode").unwrap().text().unwrap(), "é😀");
+        assert_eq!(
+            parsed.get("types").unwrap(),
+            &Json::Array(vec![Json::Bool(true), Json::Bool(false), Json::Null])
+        );
+        assert_eq!(
+            parsed.get("numbers").unwrap(),
+            &Json::Array(
+                ["0", "-12", "1.25", "1e+40"]
+                    .into_iter()
+                    .map(|n| Json::Number(n.into()))
+                    .collect()
+            )
+        );
+        let mut child = Command::new("python3")
+            .arg(script)
+            .arg("--check-metadata")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(parsed.encode().as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+    }
+}
