@@ -17,6 +17,10 @@ remains the manual step below.
 ## Scope and provenance
 
 Measured source: `7fdb2a09572b27ebcf30b1690dd4fd03445f5699`, clean working tree.
+Later worker-only fixes preserve private TLS options and cumulative startup
+deadlines. Those startup paths do not change the measured plaintext update loop;
+the archived measurements are attributed to the original SHA, not relabeled as
+measurements of a later revision.
 [Machine/build metadata](../../benchmarks/phase1-lite/environment.json) and
 [independently checked binary hashes](../../benchmarks/phase1-lite/binaries.json): Intel
 Xeon Platinum 8370C, shared KVM, three visible CPUs, shared two-CPU cgroup quota;
@@ -259,7 +263,10 @@ gateway=1, generator=2 layout, after checking topology.
 - `--subscriber-drain-updates`: expected measured incrementals per reader;
   default 0 disables the optional check. For this workload use **4000**.
   A missing delivery fails, and both modes close/join all readers. Child readiness,
-  control, errors, counts and termination are carried over private pipes.
+  control, errors, counts and termination are carried over private pipes. TLS trust,
+  certificate/key paths and server name use a worker-only transfer type so the
+  public report stays redacted. Startup allows the cumulative serial per-reader
+  dial/readiness deadlines rather than one shared reader deadline.
 - Rust `--features phase1` activates the isolated dhat fixtures/counter under
   `cfg(test)`; ordinary server builds have no encode counter.
 - Go `-tags phase1` activates test-only atomic encode/lock/write counters.

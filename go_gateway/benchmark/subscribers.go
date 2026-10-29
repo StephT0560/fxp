@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go_gateway/protobuf"
+	"go_gateway/tlsconfig"
 	"io"
 	"net"
 	"os"
@@ -140,7 +141,11 @@ func waitSubscriberSnapshots(conn net.Conn, symbols []string) error {
 
 // Pipe protocol: parent sends configuration, waits for READY, then sends STOP.
 // The child closes its own sockets, joins every reader and reports counts/errors.
+// This worker-only type deliberately has no report-redacting MarshalJSON method.
+// It travels only over the private stdin pipe, never in benchmark results.
+type subscriberTLS tlsconfig.ClientOptions
 type subscriberRequest struct {
+	TLS    subscriberTLS
 	Config config
 	Nonce  string
 }
@@ -157,6 +162,7 @@ func runSubscriberWorker(input io.Reader, output io.Writer) error {
 	if err := decoder.Decode(&request); err != nil {
 		return err
 	}
+	request.Config.TLS = tlsconfig.ClientOptions(request.TLS)
 	group, err := startSubscribers(request.Config, request.Nonce)
 	if err != nil {
 		_ = encoder.Encode(subscriberReply{Error: err.Error()})
@@ -250,9 +256,12 @@ func startSubscriberProcess(c config, nonce string) (subscriberHandle, error) {
 		_ = command.Wait()
 		return nil, err
 	}
-	timer := time.AfterFunc(c.Timeout, func() { _ = command.Process.Kill() })
+	// Each serial reader can spend Timeout dialing and another Timeout on
+	// Logon/snapshot readiness; preserve the in-process per-reader contract.
+	startupBound := time.Duration(2*c.Subscribers+1)*c.Timeout + 5*time.Second
+	timer := time.AfterFunc(startupBound, func() { _ = command.Process.Kill() })
 	defer timer.Stop()
-	if err = json.NewEncoder(input).Encode(subscriberRequest{c, nonce}); err != nil {
+	if err = json.NewEncoder(input).Encode(subscriberRequest{Config: c, Nonce: nonce, TLS: subscriberTLS(c.TLS)}); err != nil {
 		return fail(err)
 	}
 	decoder := json.NewDecoder(output)
