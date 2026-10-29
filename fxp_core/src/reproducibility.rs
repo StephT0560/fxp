@@ -249,6 +249,9 @@ impl Recording {
         config: &SymbolConfig,
         meta: &str,
     ) -> io::Result<Self> {
+        if meta.len() > 4 * 1024 * 1024 {
+            return Err(invalid("FXP_RUN_META_JSON exceeds 4 MiB size limit"));
+        }
         let meta = Json::parse(meta)?;
         if !matches!(meta, Json::Object(_)) {
             return Err(invalid("FXP_RUN_META_JSON must be a JSON object"));

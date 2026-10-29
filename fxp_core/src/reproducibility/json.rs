@@ -67,9 +67,6 @@ impl Json {
         }
     }
     pub(super) fn parse(s: &str) -> io::Result<Self> {
-        if s.len() > 4 * 1024 * 1024 {
-            return Err(super::invalid("JSON exceeds size limit"));
-        }
         let mut p = Parser {
             s: s.as_bytes(),
             i: 0,

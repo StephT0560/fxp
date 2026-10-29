@@ -266,3 +266,24 @@ fn state_hash_includes_reserves_stops_and_global_exec_counter() {
     let replay = replay_bundle(&dir).unwrap();
     assert_eq!(replay.final_state, j.canonical_state());
 }
+
+#[test]
+fn metadata_budget_does_not_limit_generated_bundle_documents() {
+    let tmp = TestDir::new();
+    let large = "x".repeat(4 * 1024 * 1024 + 1);
+    let text = Json::object([("symbols", Json::string(&large))]).encode();
+    // A generated per-symbol summary can exceed the caller-metadata budget.
+    assert!(Json::parse(&text).is_ok());
+    let err = Journal::record(
+        &tmp.0.join("oversize"),
+        None,
+        StpMode::None,
+        (),
+        SymbolConfig::default(),
+        &text,
+    )
+    .err()
+    .unwrap();
+    assert!(err.to_string().contains("FXP_RUN_META_JSON"));
+    assert!(!tmp.0.join("oversize").exists());
+}
