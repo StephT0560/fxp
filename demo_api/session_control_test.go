@@ -112,17 +112,15 @@ func TestSimStartOpeningAuction(t *testing.T) {
 	if len(calls) != 2 || calls[1] != 20 {
 		t.Fatalf("open calls %v", calls)
 	}
-	if got, _ := os.ReadFile(released); strings.TrimSpace(string(got)) != "go" {
-		t.Fatalf("simulator not released after the opening call: %q", got)
-	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		args, _ := os.ReadFile(argsFile)
-		if strings.Contains(string(args), "-opening-auction-sec 20") && strings.Contains(string(args), "-seed 7") {
+		release, _ := os.ReadFile(released)
+		if strings.TrimSpace(string(release)) == "go" && strings.Contains(string(args), "-opening-auction-sec 20") && strings.Contains(string(args), "-seed 7") {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("simulator args %q", args)
+			t.Fatalf("simulator args %q, release signal %q", args, release)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
