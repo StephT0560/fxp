@@ -1,0 +1,48 @@
+{
+  "orders": [
+    {
+      "aliases": [
+        "demo-maker::q-7"
+      ],
+      "cancel_cause": "self-trade prevention (cancel-oldest)",
+      "order_id": "demo-maker::q-7",
+      "owner": "demo-maker",
+      "reject_reason": "",
+      "status": "canceled",
+      "symbol": "BOTTEST"
+    },
+    {
+      "aliases": [
+        "demo-maker::q-7-b"
+      ],
+      "cancel_cause": "mass cancel",
+      "order_id": "demo-maker::q-7-b",
+      "owner": "demo-maker",
+      "reject_reason": "",
+      "status": "canceled",
+      "symbol": "BOTTEST"
+    }
+  ],
+  "phases": [
+    "Continuous"
+  ],
+  "summary": {
+    "cancels_by_cause": {
+      "mass cancel": "1",
+      "self-trade prevention (cancel-oldest)": "1"
+    },
+    "fills": "0",
+    "orders": "2",
+    "owners": [
+      {
+        "cancels": "2",
+        "fill_reports": "0",
+        "orders": "2",
+        "owner": "demo-maker",
+        "rejects": "0"
+      }
+    ],
+    "rejects_by_reason": {}
+  },
+  "tape": []
+}
