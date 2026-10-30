@@ -10,6 +10,7 @@ use std::path::PathBuf;
 const MAX_INPUT: u64 = 256 * 1024 * 1024;
 const MAX_ROWS: usize = 100_000;
 const MAX_DATA: usize = 96 * 1024 * 1024;
+const MAX_HTML: usize = 100 * 1024 * 1024;
 #[derive(Default)]
 struct Config {
     bundle: PathBuf,
@@ -723,7 +724,7 @@ pub(super) fn execute(args: &[String], out: &mut impl Write) -> io::Result<i32> 
     let c = options(args)?;
     let (data, exit) = generate(&c)?;
     if let Some(p) = &c.html {
-        save(p, &c.bundle, html(&data).as_bytes())?;
+        save(p, &c.bundle, bounded_html(&data, MAX_HTML)?.as_bytes())?;
         writeln!(out, "HTML report: {}", p.display())?;
     }
     if let Some(p) = &c.json {
@@ -773,4 +774,14 @@ fn html(data: &Json) -> String {
         .replace("__CSS__", &css)
         .replace("__SCRIPT__", &js)
         .replace("__DATA__", &json)
+}
+fn bounded_html(data: &Json, limit: usize) -> io::Result<String> {
+    let page = html(data);
+    if page.len() > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "HTML report exceeds size limit; narrow the --from/--to window",
+        ));
+    }
+    Ok(page)
 }

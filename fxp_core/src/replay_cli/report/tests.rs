@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 #[test]
+fn html_size_limit_includes_escaped_data() {
+    let data = Json::string("<".repeat(10_000));
+    let plain_size = html(&Json::string("x".repeat(10_000))).len();
+    assert!(data.encode().len() < plain_size);
+    assert!(bounded_html(&data, plain_size).is_err());
+    let page = html(&data);
+    assert_eq!(bounded_html(&data, page.len()).unwrap(), page);
+}
+#[test]
 fn html_never_embeds_untrusted_markup_and_has_hashed_csp() {
     let data = Json::object([(
         "hostile",
