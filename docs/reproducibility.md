@@ -346,8 +346,10 @@ verification status and the first divergence when available, whole-run counts,
 per-owner counts, a filterable order table, linked replacement lifecycles and
 the same event-derived explanation as `timeline` / `explain`. Rejecting a cancel
 or replace does not turn a filled or still-working order into a rejected order.
-Orders with successful replacements share one chain; rejected attempts remain
-visible in that chain. Summary `orders` counts new commands, `fills` counts
+Orders with successful replacements share one chain; rejected cancel/replace
+attempts remain visible in that chain. New submissions reusing an ID form
+separate lifecycles, including rejected duplicates, without changing the
+existing working order. Summary `orders` counts new commands, `fills` counts
 public trade prints, and per-owner `fill_reports` counts private fill reports.
 Expiry is included in cancels by cause. There is no visual two-bundle diff.
 

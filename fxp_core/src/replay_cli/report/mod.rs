@@ -116,13 +116,6 @@ fn summary(rows: &[Json]) -> Json {
     ])
 }
 type Key = (String, String, String);
-fn root(parents: &mut [usize], mut n: usize) -> usize {
-    while parents[n] != n {
-        parents[n] = parents[parents[n]];
-        n = parents[n];
-    }
-    n
-}
 fn key(r: &Json) -> Key {
     (
         text(r, "symbol").into(),
@@ -131,45 +124,50 @@ fn key(r: &Json) -> Key {
     )
 }
 fn orders(rows: &[Json], from: u64, to: u64, owner: Option<&str>) -> Vec<Json> {
-    let mut ids = BTreeMap::<Key, usize>::new();
-    let mut parents = Vec::new();
+    // A submission is an attempt, not a permanent (owner, ID) identity. Keep
+    // rejected duplicates separate without displacing the existing live chain.
+    let mut current = BTreeMap::<Key, usize>::new();
+    let mut pending: Option<(u64, Key, usize)> = None;
+    let mut groups = Vec::<Vec<&Json>>::new();
     for r in rows {
-        if text(r, "order_id").is_empty()
-            && !(text(r, "kind") == "command_received"
-                && r.get("data").is_ok_and(|d| text(d, "kind") == "new"))
-        {
+        let kind = text(r, "kind");
+        let d = r.get("data").unwrap();
+        let new = kind == "command_received" && text(d, "kind") == "new";
+        if text(r, "order_id").is_empty() && !new {
             continue;
         }
         let k = key(r);
-        let len = ids.len();
-        let a = *ids.entry(k.clone()).or_insert_with(|| {
-            parents.push(len);
-            len
-        });
-        if text(r, "kind") == "replaced" {
-            let bkey = (
-                k.0,
-                k.1,
-                text(r.get("data").unwrap(), "new_order_id").into(),
-            );
-            let len = ids.len();
-            let b = *ids.entry(bkey).or_insert_with(|| {
-                parents.push(len);
-                len
-            });
-            let a = root(&mut parents, a);
-            let b = root(&mut parents, b);
-            parents[b] = a;
+        let seq = number(r, "global_seq");
+        let group = if new {
+            let n = groups.len();
+            groups.push(Vec::new());
+            pending = Some((seq, k.clone(), n));
+            n
+        } else if let Some((_, _, n)) = pending
+            .as_ref()
+            .filter(|(s, key, _)| *s == seq && *key == k)
+        {
+            *n
+        } else {
+            *current.entry(k.clone()).or_insert_with(|| {
+                let n = groups.len();
+                groups.push(Vec::new());
+                n
+            })
+        };
+        groups[group].push(r);
+        if kind == "accepted" {
+            current.insert(k.clone(), group);
         }
-    }
-    let mut groups = BTreeMap::<usize, Vec<&Json>>::new();
-    for r in rows {
-        if let Some(id) = ids.get(&key(r)) {
-            groups.entry(root(&mut parents, *id)).or_default().push(r);
+        if kind == "replaced" {
+            let next = text(d, "new_order_id");
+            if !next.is_empty() {
+                current.insert((k.0, k.1, next.into()), group);
+            }
         }
     }
     groups
-        .into_values()
+        .into_iter()
         .filter_map(|all| {
             let retained: Vec<Json> = all
                 .iter()

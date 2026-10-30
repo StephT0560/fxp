@@ -318,3 +318,65 @@ fn divergence_incomplete_tamper_versions_and_output_guards() {
     assert!(save(&output, &bundle, b"replacement").is_err());
     assert_eq!(fs::read(output).unwrap(), b"original");
 }
+
+fn lifecycle_row(seq: u64, kind: &str, id: &str, data: Json) -> Json {
+    Json::object([
+        ("global_seq", Json::number(seq)),
+        (
+            "event_index",
+            Json::number(u64::from(kind != "command_received")),
+        ),
+        ("symbol", Json::string("TEST")),
+        ("owner", Json::string("alice")),
+        ("order_id", Json::string(id)),
+        ("client_order_id", Json::string(format!("client-{seq}"))),
+        ("kind", Json::string(kind)),
+        ("data", data),
+    ])
+}
+fn details(s: &str) -> Json {
+    Json::parse(s).unwrap()
+}
+#[test]
+fn recycled_ids_and_duplicate_rejections_have_separate_lifecycles() {
+    let rows = vec![
+        lifecycle_row(1, "command_received", "B", details(r#"{"kind":"new"}"#)),
+        lifecycle_row(1, "accepted", "B", details("{}")),
+        lifecycle_row(
+            2,
+            "fill",
+            "B",
+            details(r#"{"quantity":3,"leaves_quantity":0}"#),
+        ),
+        lifecycle_row(3, "command_received", "B", details(r#"{"kind":"new"}"#)),
+        lifecycle_row(3, "accepted", "B", details("{}")),
+        lifecycle_row(4, "command_received", "B", details(r#"{"kind":"new"}"#)),
+        lifecycle_row(
+            4,
+            "rejected",
+            "B",
+            details(r#"{"cause":"duplicate order id"}"#),
+        ),
+        lifecycle_row(5, "replaced", "B", details(r#"{"new_order_id":"B2"}"#)),
+        lifecycle_row(5, "accepted", "B2", details("{}")),
+        lifecycle_row(6, "canceled", "B2", details(r#"{"cause":"user"}"#)),
+        lifecycle_row(7, "command_received", "B2", details(r#"{"kind":"new"}"#)),
+        lifecycle_row(7, "accepted", "B2", details("{}")),
+    ];
+    let chains = orders(&rows, 0, u64::MAX, Some("alice"));
+    assert_eq!(chains.len(), 4);
+    assert_eq!(text(&chains[0], "status"), "filled");
+    assert_eq!(text(&chains[1], "status"), "canceled");
+    assert_eq!(text(&chains[2], "status"), "rejected");
+    assert_eq!(text(&chains[3], "status"), "working");
+    assert_eq!(
+        chains[0].get("positions").unwrap().encode(),
+        "[[1,0],[1,1],[2,1]]"
+    );
+    assert_eq!(chains[1].get("aliases").unwrap().encode(), r#"["B","B2"]"#);
+    assert_eq!(chains[3].get("aliases").unwrap().encode(), r#"["B2"]"#);
+    assert!(!text(&chains[1], "explanation").contains("duplicate order id"));
+    let window = orders(&rows, 5, 6, Some("alice"));
+    assert_eq!(window.len(), 1);
+    assert_eq!(text(&window[0], "status"), "canceled");
+}
