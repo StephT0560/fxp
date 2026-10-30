@@ -438,6 +438,35 @@ impl<R: Clone> Journal<R> {
         complete: bool,
         inspect: bool,
     ) -> io::Result<Self> {
+        Self::replay_observed(
+            path,
+            schedule,
+            stp_default,
+            detached,
+            symbol_config,
+            complete,
+            inspect,
+            |_, _, _, _| Ok(()),
+        )
+    }
+
+    /// Read-only replay hook, used only by offline report generation.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn replay_observed(
+        path: &Path,
+        schedule: Option<SessionSchedule>,
+        stp_default: StpMode,
+        detached: R,
+        symbol_config: crate::symbol_config::SymbolConfig,
+        complete: bool,
+        inspect: bool,
+        mut observe: impl FnMut(
+            u64,
+            &str,
+            &Engine<R, RecordedClock, ReplayIds>,
+            &[Output<R>],
+        ) -> io::Result<()>,
+    ) -> io::Result<Self> {
         let mut file = File::open(path)?;
         let mut magic = [0; 8];
         file.read_exact(&mut magic)?;
@@ -503,7 +532,7 @@ impl<R: Clone> Journal<R> {
                 return Err(invalid("event log sequence gap"));
             }
             let input = Input::decode(&record)?;
-            journal.execute(
+            let outputs = journal.execute(
                 &record.symbol,
                 Time {
                     seconds: record.seconds,
@@ -512,6 +541,12 @@ impl<R: Clone> Journal<R> {
                 input,
                 journal.detached.clone(),
             );
+            observe(
+                record.seq,
+                &record.symbol,
+                &journal.engines[&record.symbol],
+                &outputs,
+            )?;
             journal.log.next_seq = journal
                 .log
                 .next_seq

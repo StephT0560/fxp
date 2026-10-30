@@ -25,6 +25,7 @@ mod persistence_tests;
 #[cfg(test)]
 mod phase_tests;
 mod phases;
+mod report_view;
 mod session;
 #[cfg(test)]
 mod status_tests;
