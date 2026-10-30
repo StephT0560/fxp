@@ -380,3 +380,17 @@ fn recycled_ids_and_duplicate_rejections_have_separate_lifecycles() {
     assert_eq!(window.len(), 1);
     assert_eq!(text(&window[0], "status"), "canceled");
 }
+#[test]
+fn report_window_does_not_expose_future_aliases_or_client_ids() {
+    let rows = vec![
+        lifecycle_row(1, "command_received", "B", details(r#"{"kind":"new"}"#)),
+        lifecycle_row(1, "accepted", "B", details("{}")),
+        lifecycle_row(5, "replaced", "B", details(r#"{"new_order_id":"FUTURE"}"#)),
+        lifecycle_row(5, "accepted", "FUTURE", details("{}")),
+    ];
+    let chains = orders(&rows, 0, 2, Some("alice"));
+    assert_eq!(chains.len(), 1);
+    assert!(!chains[0].encode().contains("FUTURE"));
+    assert!(!chains[0].encode().contains("client-5"));
+    assert_eq!(chains[0].get("aliases").unwrap().encode(), r#"["B"]"#);
+}

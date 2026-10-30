@@ -213,7 +213,11 @@ fn orders(rows: &[Json], from: u64, to: u64, owner: Option<&str>) -> Vec<Json> {
                     _ => (),
                 }
             }
-            let aliases: BTreeSet<_> = all.iter().map(|r| text(r, "order_id")).collect();
+            let aliases: BTreeSet<_> = all
+                .iter()
+                .filter(|r| number(r, "global_seq") <= to)
+                .map(|r| text(r, "order_id"))
+                .collect();
             let explanation = super::explanation(&retained, text(first, "order_id"));
             Some(Json::object([
                 ("order_id", Json::string(text(first, "order_id"))),
@@ -230,6 +234,7 @@ fn orders(rows: &[Json], from: u64, to: u64, owner: Option<&str>) -> Vec<Json> {
                     "client_order_ids",
                     Json::Array(
                         all.iter()
+                            .filter(|r| number(r, "global_seq") <= to)
                             .map(|r| text(r, "client_order_id"))
                             .filter(|s| !s.is_empty())
                             .collect::<BTreeSet<_>>()
