@@ -381,7 +381,13 @@ jobs:
       - name: Local client integration and seeded bot recording, replay and diagnosis
         env:
           FXP_REPRO_TEST_CLIENT: "1"
-        run: make repro-demo
+        run: |
+          make repro-demo BUG=stale-replace
+          for bug in stp-surprise fill-cancel-race auction-phase; do
+            FXP_REPRO_TEST_CLIENT=0 make repro-demo BUG="$bug"
+          done
+      - name: Blind output has no answer before reveal
+        run: python3 scripts/check_repro_blind.py
       - name: Unfilled control scenario
         env:
           FXP_REPRO_SEED: "1"

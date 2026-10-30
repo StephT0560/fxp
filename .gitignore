@@ -51,3 +51,6 @@ work/
 # Local Python SDK installations
 .venv/
 *.egg-info/
+
+# Local blind exercise answer/start time (never commit spoilers).
+/target/.repro-sealed.json

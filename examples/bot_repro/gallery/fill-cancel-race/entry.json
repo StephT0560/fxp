@@ -1,0 +1,8 @@
+{
+  "bug": "fill-cancel-race",
+  "seed": 7,
+  "bot_variant": "BUG=fill-cancel-race",
+  "symptom": "Two hedges were sent for one sale; inventory overshot.",
+  "root_cause": "The aggressor fill is journaled before the cancel. The maker reads late and hedges once for the fill and again for its cancel reject.",
+  "assertions": "gallery/diagnose.py, run after fxp-replay verify, timeline and explain"
+}

@@ -1,0 +1,8 @@
+{
+  "bug": "auction-phase",
+  "seed": 7,
+  "bot_variant": "BUG=auction-phase",
+  "symptom": "An order rested first, then filled at a different price than expected.",
+  "root_cause": "The bot assumes continuous matching. Verified acceptance occurred in OpeningCall, followed by an auction fill at 10200 instead of the assumed resting ask 9900.",
+  "assertions": "gallery/diagnose.py, run after fxp-replay verify, timeline and explain"
+}

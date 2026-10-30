@@ -91,4 +91,16 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Independent gallery operator-role vector, with a fixed clock/JTI.
+	operatorClaims := base64.RawURLEncoding.EncodeToString([]byte(`{"sub": "demo-operator", "iss": "test", "aud": "gateway", "iat": 1700000000, "nbf": 1700000000, "exp": 1700000900, "jti": "test-jti", "fxp_role": "operator"}`))
+	operatorInput := header + "." + operatorClaims
+	operatorMAC := hmac.New(sha256.New, []byte(strings.Repeat("a", 32)))
+	if _, err := operatorMAC.Write([]byte(operatorInput)); err != nil {
+		log.Fatal(err)
+	}
+	operatorToken := operatorInput + "." + base64.RawURLEncoding.EncodeToString(operatorMAC.Sum(nil)) + "\n"
+	if err := os.WriteFile(filepath.Join(out, "operator-token.txt"), []byte(operatorToken), 0644); err != nil {
+		log.Fatal(err)
+	}
+
 }

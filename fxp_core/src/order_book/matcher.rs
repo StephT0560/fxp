@@ -20,6 +20,7 @@ pub enum StpAction {
 /// the order the book changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StpEvent {
+    pub opposing_order: String,
     pub order_id: String,
     pub action: StpAction,
     pub mode: StpMode,
@@ -136,6 +137,8 @@ impl OrderBook {
                         (newer.quantity - q, older.quantity - q)
                     }
                 };
+                let old_id = older.order_id.clone();
+                let new_id = newer.order_id.clone();
                 for (order, left) in [(older, old_left), (newer, new_left)] {
                     let cut = order.quantity - left;
                     if cut == 0 {
@@ -155,6 +158,11 @@ impl OrderBook {
                     self.sync_visible_fill(order, 0, visible);
                     self.stp.events.push(StpEvent {
                         order_id: order.order_id.clone(),
+                        opposing_order: if order.order_id == old_id {
+                            new_id.clone()
+                        } else {
+                            old_id.clone()
+                        },
                         action: if left == 0 {
                             StpAction::Canceled
                         } else {
@@ -324,7 +332,7 @@ impl OrderBook {
         };
         let want = u64::from(order.quantity);
         let mut available = 0u64;
-        let mut self_matched = false;
+        let mut self_matched = None;
         let mut crossing = crossing.peekable();
         while available < want {
             let Some(first) = crossing.peek() else { break };
@@ -344,20 +352,21 @@ impl OrderBook {
                     break;
                 }
                 if self_match(&order, resting) {
-                    self_matched = true;
+                    self_matched = Some(resting.order_id.clone());
                     break;
                 }
                 available += u64::from(if has_self { visible } else { total });
             }
-            if self_matched {
+            if self_matched.is_some() {
                 break;
             }
         }
 
         drop(crossing);
-        if self_matched {
+        if let Some(opposing_order) = self_matched {
             self.stp.events.push(StpEvent {
                 order_id: order.order_id.clone(),
+                opposing_order,
                 action: StpAction::Canceled,
                 mode: order.stp.mode,
                 before_fill: 0,
@@ -427,6 +436,7 @@ impl OrderBook {
                     self.sync_visible_fill(&top, 0, left_visible);
                     self.stp.events.push(StpEvent {
                         order_id: top.order_id.clone(),
+                        opposing_order: aggressor.order_id.clone(),
                         action: if top_left == 0 {
                             StpAction::Canceled
                         } else {
@@ -441,6 +451,7 @@ impl OrderBook {
                     sweep.stopped = true;
                     self.stp.events.push(StpEvent {
                         order_id: aggressor.order_id.clone(),
+                        opposing_order: top.order_id.clone(),
                         action: StpAction::Canceled,
                         mode,
                         before_fill,
@@ -449,6 +460,7 @@ impl OrderBook {
                     sweep.remaining = aggr_left;
                     self.stp.events.push(StpEvent {
                         order_id: aggressor.order_id.clone(),
+                        opposing_order: top.order_id.clone(),
                         action: StpAction::Restated(aggr_cut),
                         mode,
                         before_fill,

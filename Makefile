@@ -66,4 +66,10 @@ record:
 
 .PHONY: repro-demo
 repro-demo:
-	bash scripts/repro_demo.sh
+	BUG="$(BUG)" bash scripts/repro_demo.sh
+
+.PHONY: repro-blind repro-reveal
+repro-blind:
+	@PYTHONPATH="$(CURDIR)/examples/bot_repro$${PYTHONPATH:+:$$PYTHONPATH}" $${FXP_REPRO_PYTHON:-python3} -m gallery.blind blind
+repro-reveal:
+	@PYTHONPATH="$(CURDIR)/examples/bot_repro$${PYTHONPATH:+:$$PYTHONPATH}" $${FXP_REPRO_PYTHON:-python3} -m gallery.blind reveal

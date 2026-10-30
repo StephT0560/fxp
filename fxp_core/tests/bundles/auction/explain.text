@@ -1,3 +1,4 @@
 explain source=recorded verified=true
 B: 1 fill reports, 3 units; 0 stop triggers; 0 iceberg refreshes.
+Auction fill at price 100 (seq 3).
 TEST B owner=alice: canceled: auction remainder (first seq 3, count 1).
