@@ -325,7 +325,7 @@ impl Privacy {
                     "opposing_order",
                 ] {
                     let v = text(object, k);
-                    if !v.is_empty() && !v.starts_with("anon:") {
+                    if !v.is_empty() {
                         names.insert(v.to_string());
                     }
                 }

@@ -394,3 +394,125 @@ fn report_window_does_not_expose_future_aliases_or_client_ids() {
     assert!(!chains[0].encode().contains("client-5"));
     assert_eq!(chains[0].get("aliases").unwrap().encode(), r#"["B"]"#);
 }
+#[test]
+fn anonymization_masks_ids_even_when_they_start_with_anon() {
+    let rows = vec![lifecycle_row(
+        1,
+        "accepted",
+        "anon:private-order",
+        details(r#"{"client_order_id":"anon:private-client"}"#),
+    )];
+    let mut data = Json::object([
+        ("events", Json::Array(rows.clone())),
+        (
+            "explanation",
+            Json::string("anon:private-order uses anon:private-client"),
+        ),
+        (
+            "aliases",
+            Json::Array(vec![Json::string("anon:private-order")]),
+        ),
+    ]);
+    Privacy::new(&rows, None).apply(&mut data, "");
+    assert!(!data.encode().contains("anon:private"));
+    assert!(data.encode().contains("id-000"));
+}
+
+#[test]
+fn recorded_recycled_order_ids_verify_and_report_distinct_generations() {
+    let bundle = temporary("recycled").join("bundle");
+    let mut j = Journal::record(
+        &bundle,
+        None,
+        StpMode::None,
+        (),
+        SymbolConfig::default(),
+        "{}",
+    )
+    .unwrap();
+    let at = Time {
+        seconds: 1,
+        nanos: 0,
+    };
+    j.apply("TEST", at, Input::New(order("B", "alice")), ())
+        .unwrap();
+    let mut take = order("TAKE", "bob");
+    take.side = 2;
+    j.apply("TEST", at, Input::New(take), ()).unwrap();
+    j.apply("TEST", at, Input::New(order("B", "alice")), ())
+        .unwrap();
+    j.apply("TEST", at, Input::New(order("B", "alice")), ())
+        .unwrap();
+    j.apply(
+        "TEST",
+        at,
+        Input::Replace(fxp::OrderCancelReplaceRequest {
+            symbol: "TEST".into(),
+            sender: "alice".into(),
+            order_id: "B".into(),
+            new_order_id: "B2".into(),
+            client_replace_id: "future-client".into(),
+            new_price: 99,
+            ..Default::default()
+        }),
+        (),
+    )
+    .unwrap();
+    j.apply(
+        "TEST",
+        at,
+        Input::Cancel(fxp::OrderCancelRequest {
+            symbol: "TEST".into(),
+            sender: "alice".into(),
+            order_id: "B2".into(),
+            ..Default::default()
+        }),
+        (),
+    )
+    .unwrap();
+    let mut recycled = order("B2", "alice");
+    recycled.client_order_id = "anon:private-client".into();
+    j.apply("TEST", at, Input::New(recycled), ()).unwrap();
+    j.apply(
+        "TEST",
+        at,
+        Input::New(order("anon:private-order", "bob")),
+        (),
+    )
+    .unwrap();
+    j.finish().unwrap();
+    drop(j);
+    let (data, code) = generate(&config(bundle.clone())).unwrap();
+    assert_eq!(code, 0);
+    let Json::Array(chains) = data.get("orders").unwrap() else {
+        panic!()
+    };
+    let alice: Vec<_> = chains
+        .iter()
+        .filter(|r| text(r, "owner") == "alice")
+        .collect();
+    assert_eq!(alice.len(), 4);
+    assert_eq!(
+        alice.iter().map(|r| text(r, "status")).collect::<Vec<_>>(),
+        vec!["filled", "canceled", "rejected", "working"]
+    );
+    let (early, _) = generate(&Config {
+        to: 3,
+        ..config(bundle.clone())
+    })
+    .unwrap();
+    assert!(!early.get("orders").unwrap().encode().contains("B2"));
+    assert!(
+        !early
+            .get("orders")
+            .unwrap()
+            .encode()
+            .contains("future-client")
+    );
+    let (masked, _) = generate(&Config {
+        anonymize: true,
+        ..config(bundle)
+    })
+    .unwrap();
+    assert!(!masked.encode().contains("anon:private"));
+}
