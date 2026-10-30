@@ -3,6 +3,7 @@
 """Independent JSON/HTML/CSP validation and semantic gallery snapshots (stdlib)."""
 import argparse
 import base64
+from collections import Counter
 import hashlib
 from html.parser import HTMLParser
 import json
@@ -58,7 +59,34 @@ def validate(path):
     return data
 
 
+def event_summary(rows):
+    owners = {}
+    rejects, cancels = Counter(), Counter()
+    orders = fills = 0
+    for row in rows:
+        kind, d = row['kind'], row['data']
+        new = kind == 'command_received' and d.get('kind') == 'new'
+        orders += new
+        fills += kind == 'trade'
+        if kind == 'rejected': rejects[d['cause']] += 1
+        if kind in ('canceled', 'expired'): cancels[d['cause']] += 1
+        if row['owner']:
+            counts = owners.setdefault(row['owner'], dict(orders=0, fill_reports=0, rejects=0, cancels=0))
+            for key, inc in [('orders', new), ('fill_reports', kind == 'fill'), ('rejects', kind == 'rejected'), ('cancels', kind in ('canceled', 'expired'))]:
+                counts[key] += inc
+    return dict(orders=str(orders), fills=str(fills),
+                rejects_by_reason={k:str(v) for k,v in rejects.items()},
+                cancels_by_cause={k:str(v) for k,v in cancels.items()},
+                owners=[dict(owner=o, **{k:str(v) for k,v in n.items()}) for o,n in sorted(owners.items())])
+
+
 def projection(data):
+    # SDK smoke traffic shares the bundle but is outside the seeded gallery symbol.
+    assert event_summary(data['events']) == data['summary']
+    data = dict(data)
+    for key in ('events', 'orders', 'books', 'tape'):
+        data[key] = [row for row in data[key] if row['symbol'] == 'BOTTEST']
+    data['summary'] = event_summary(data['events'])
     phases = []
     for frame in data['books']:
         phase = frame['ladder']['phase']
