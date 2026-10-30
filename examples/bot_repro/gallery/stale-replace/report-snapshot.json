@@ -1,0 +1,73 @@
+{
+  "orders": [
+    {
+      "aliases": [
+        "demo-maker::quote-7-ask"
+      ],
+      "cancel_cause": "mass cancel",
+      "order_id": "demo-maker::quote-7-ask",
+      "owner": "demo-maker",
+      "reject_reason": "Replace quantity not above filled quantity",
+      "status": "canceled",
+      "symbol": "BOTTEST"
+    },
+    {
+      "aliases": [
+        "demo-maker::quote-7-bid"
+      ],
+      "cancel_cause": "mass cancel",
+      "order_id": "demo-maker::quote-7-bid",
+      "owner": "demo-maker",
+      "reject_reason": "",
+      "status": "canceled",
+      "symbol": "BOTTEST"
+    },
+    {
+      "aliases": [
+        "demo-taker::take-7"
+      ],
+      "cancel_cause": "",
+      "order_id": "demo-taker::take-7",
+      "owner": "demo-taker",
+      "reject_reason": "",
+      "status": "filled",
+      "symbol": "BOTTEST"
+    }
+  ],
+  "phases": [
+    "Continuous"
+  ],
+  "summary": {
+    "cancels_by_cause": {
+      "mass cancel": "2"
+    },
+    "fills": "1",
+    "orders": "3",
+    "owners": [
+      {
+        "cancels": "2",
+        "fill_reports": "1",
+        "orders": "2",
+        "owner": "demo-maker",
+        "rejects": "1"
+      },
+      {
+        "cancels": "0",
+        "fill_reports": "1",
+        "orders": "1",
+        "owner": "demo-taker",
+        "rejects": "0"
+      }
+    ],
+    "rejects_by_reason": {
+      "Replace quantity not above filled quantity": "1"
+    }
+  },
+  "tape": [
+    {
+      "auction": false,
+      "price": "10100",
+      "quantity": "7"
+    }
+  ]
+}

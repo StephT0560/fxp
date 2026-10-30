@@ -89,3 +89,6 @@ order_id="$("$python" -c 'import json,sys;print(json.load(open(sys.argv[1]))["co
 "$replay" timeline "$run_dir/bundle" --owner demo-maker --symbol BOTTEST --json >"$run_dir/timeline.json"
 "$replay" explain "$run_dir/bundle" --order "$order_id" --owner demo-maker --symbol BOTTEST --json >"$run_dir/explain.json"
 PYTHONPATH="$repo_root/examples/bot_repro${PYTHONPATH:+:$PYTHONPATH}" "$python" -m gallery.diagnose "$run_dir/timeline.json" "$run_dir/explain.json" "$run_dir/scenario.json" | tee "$run_dir/diagnosis.txt"
+
+"$replay" report "$run_dir/bundle" --html "$run_dir/report.html" --json "$run_dir/report.json" --owner demo-maker
+"$python" scripts/check_run_report.py --file "$run_dir/report.json" --scenario "$run_dir/scenario.json"

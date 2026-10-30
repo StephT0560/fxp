@@ -43,6 +43,15 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
           cargo bench --no-run --locked
           cargo audit
+      - name: Offline run report JSON, CSP and large fixture
+        run: |
+          cargo test --locked --manifest-path fxp_core/Cargo.toml --lib -- --ignored --exact replay_cli::report::tests::fifty_thousand_business_events_fit_size_and_generation_budget
+          python3 scripts/check_run_report.py --goldens "$RUNNER_TEMP/run-reports"
+          cp target/report-smoke/hostile.html "$RUNNER_TEMP/run-reports/hostile.html"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: offline-run-reports
+          path: ${{ runner.temp }}/run-reports/*.html
       - name: Replay golden bundles and independent trace vectors
         run: |
           python3 scripts/check_replay_goldens.py
@@ -281,6 +290,7 @@ jobs:
 
   console-e2e:
     name: console-e2e
+    needs: [rust]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -332,6 +342,13 @@ jobs:
           for a in $(grep -oE '/assets/[^"]+' /tmp/served/index.html); do curl -fsS "http://127.0.0.1:3000$a" -o "/tmp/served/$(basename "$a")"; done
           bash web/scripts/check-bundle-secrets.sh /tmp/served
       - run: npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v7
+        with:
+          name: offline-run-reports
+          path: ${{ runner.temp }}/run-reports
+      - name: Offline file report browser smoke (existing Chromium)
+        run: node scripts/report-smoke.mjs "$RUNNER_TEMP/run-reports"
+
       - run: npm run e2e
         env:
           CI: "1"

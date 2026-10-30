@@ -9,7 +9,8 @@ use crate::reproducibility::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
-const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> --order ID [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]";
+mod report;
+const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> --order ID [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ]";
 #[derive(Default)]
 struct Options {
     command: String,
@@ -352,6 +353,12 @@ fn stats(rows: &[Json]) -> Json {
     ])
 }
 fn explanation(rows: &[Json], order: &str) -> String {
+    let commands: BTreeMap<u64, &Json> = rows
+        .iter()
+        .filter(|r| text(r, "kind") == "command_received")
+        .filter_map(|r| r.get("data").ok().map(|d| (number(r, "global_seq"), d)))
+        .collect();
+    let missing = Json::Null;
     let mut fills = 0;
     let mut quantity = 0;
     let mut refreshes = 0;
@@ -381,7 +388,13 @@ fn explanation(rows: &[Json], order: &str) -> String {
                 let kind = if text(row, "kind") == "rejected" {
                     format!(
                         "{} rejected",
-                        text(&command_at(rows, number(row, "global_seq")), "kind")
+                        text(
+                            commands
+                                .get(&number(row, "global_seq"))
+                                .copied()
+                                .unwrap_or(&missing),
+                            "kind"
+                        )
                     )
                 } else {
                     text(row, "kind").to_string()
@@ -480,6 +493,10 @@ fn execute(
     out: &mut impl Write,
     err: &mut impl Write,
 ) -> io::Result<i32> {
+    let args: Vec<String> = args.into_iter().collect();
+    if args.first().is_some_and(|a| a == "report") {
+        return report::execute(&args[1..], out);
+    }
     let o = parse(args)?;
     let run = inspect_bundle(Path::new(&o.paths[0]))?;
     if o.command == "verify" {

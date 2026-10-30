@@ -326,3 +326,124 @@ first-divergence coordinates, legacy bundles and exit codes. An independent
 Python implementation validates event-log protobuf/CRC framing, trace JSON,
 canonical frame fields and SHA-256 digests against those fixtures. The existing
 required `rust` CI job runs `fxp-replay verify` over every golden bundle.
+
+## Run report
+
+```sh
+fxp-replay report /path/to/bundle --html out.html
+fxp-replay report /path/to/bundle --html mine.html --json mine.json --owner alice --anonymize-owners
+fxp-replay report /path/to/bundle --json window.json --from 10000 --to 20000
+```
+
+Open the generated HTML by double-clicking it. It is one self-contained file,
+with a console-style dark theme, no server, network calls, fonts, dependencies
+or external assets. `--json PATH` emits the same embedded data without HTML;
+both formats can be requested together. Output files must be new and outside
+the bundle; existing files are refused. Unix output permissions are 0600.
+
+The report shows original bundle provenance and expected/actual digests,
+verification status and the first divergence when available, whole-run counts,
+per-owner counts, a filterable order table, linked replacement lifecycles and
+the same event-derived explanation as `timeline` / `explain`. Rejecting a cancel
+or replace does not turn a filled or still-working order into a rejected order.
+Orders with successful replacements share one chain; rejected cancel/replace
+attempts remain visible in that chain. New submissions reusing an ID form
+separate lifecycles, including rejected duplicates, without changing the
+existing working order. Displayed aliases and client IDs include only events
+at or before `--to`. Summary `orders` counts new commands, `fills` counts
+public trade prints, and per-owner `fill_reports` counts private fill reports.
+Expiry is included in cancels by cause. There is no visual two-bundle diff.
+
+`--owner NAME` selects working-order ladder marks and the same counterparty
+scope as timeline. It **does not hide other owners' orders**; table owner filters
+are available in the report. Without owner scope, counterparties and STP opposing
+IDs are anonymized by default. `--anonymize-owners` gives non-selected owners
+stable labels from sorted identities; all order/client IDs are pseudonymized,
+even for the selected owner, so namespaced IDs cannot expose other owners.
+Account/STP-group fields and raw protobuf/canonical hex are omitted, and free-form
+manifest `meta` and unknown manifest extensions are omitted in anonymized reports. The banner states that owner
+anonymization was applied. Labels are stable within a bundle, not an encryption
+or de-identification guarantee; financial symbols, prices, quantities, timestamps
+and original digests remain. Free-text explanations/reasons are masked as well.
+
+All bundle strings are untrusted. Embedded JSON escapes `<`, `>`, `&` and Unicode
+line separators; rendering uses DOM `textContent`, never HTML interpolation.
+The CSP allows only the hashes of the shipped static script/style and disables
+network, images, objects, frames, forms and base URLs. There are no inline event
+handlers. A file can safely display an owner or client ID containing HTML as
+literal text. The CSP hashes are checked with an independent Python SHA-256 /
+Base64 implementation; browser smoke reuses Chromium already installed for the
+console CI job, with offline file URLs and no report server.
+
+### Book boundaries and bounds
+
+The scrubber uses **post-command global journal sequence**, not an intermediate
+execution-report index. Matching, stop cascades and auction uncrosses complete
+atomically before that boundary's engine snapshot. It shows the actual visible
+best 10 bid and ask levels, and the selected owner's displayed/leaves quantities
+and order IDs on those levels. Hidden iceberg reserves, untriggered stops,
+held auction market orders and working orders outside those levels are not
+public ladder levels. The displayed leaves for the selected owner's iceberg can
+include its reserve; aggregate ladder quantity is displayed quantity only.
+
+Replay precomputes frames only when a symbol's ladder, marks or phase changes.
+Identical frames are coalesced; tape prints are stored once. The scrubber can
+select any retained command boundary. Tape shows the last 100 prints up to that
+boundary; all window prints are in JSON. Values are fixed-point integer units,
+not floating-point prices. Symbol configuration and its hash are in the source
+bundle; the report identifies that configuration via manifest provenance.
+
+Limits: at most **256 MiB** of source bundle files, **100,000 retained timeline
+rows**, **48 MiB** of book frames, **96 MiB** serialized JSON, and **100 MiB** HTML.
+A durable fixture with **50,000 business events** (100,000 command/event rows)
+is exercised in CI with a 120-second *generation* test budget, excluding fixture
+creation. This is a functional safety bound, not an absolute performance claim.
+
+For larger runs use `--from SEQ --to SEQ`. The entire source is still replayed
+and verified; the ladder includes exact prefix state immediately before `from`.
+Table lifecycle/tape data is windowed and whole-run summaries remain whole-run.
+The initial prefix has no earlier tape prints; there is no claim to display
+prints outside the chosen window. The source-file cap still applies, and very
+large books can exceed the frame/data cap even in a small window. The generator
+fails clearly rather than silently truncating. `FXP_UPDATE_REPORT_GOLDENS=1` is
+a test-only opt-in to regenerate checked-in report JSON snapshots; never use it
+to bless unexpected changes without reviewing their diff.
+
+Exit codes follow verify: **0** identical, **1** divergence, **2** invalid or
+incomplete. Incomplete bundles can produce a conspicuously unverified report;
+tampered logs and unknown versions fail before output. Divergent reports show
+replayed lifecycles/books alongside the first expected/actual event difference;
+legacy aggregate-only bundles cannot identify a missing first event. Neither
+report nor replay reproduces bot decisions. `make repro-demo BUG=<name>` also
+writes and validates `report.html` / `report.json` and prints their paths.
+
+### Stable JSON contract: `fxp-run-report-v1`
+
+The machine-readable schema is [run-report.schema.json](run-report.schema.json).
+Consumers must check `schema`, accept additive keys, and reject unsupported
+major schema versions. All integers, including nested timeline fields and
+provenance counts, are **decimal strings** to preserve signed 64-bit prices and
+unsigned 64-bit sequences in JavaScript. Booleans and null retain their JSON
+types; strings are never trusted markup.
+
+| Key | Meaning |
+| --- | --- |
+| `schema` | Exactly `fxp-run-report-v1` |
+| `manifest` | Bundle manifest; free-form meta omitted when anonymized |
+| `verification` | `result` (`identical`, `divergent`, `incomplete`), event `source`, first divergence, expected/actual digest summaries |
+| `privacy` | `anonymized_owners` boolean, selected owner or null |
+| `window` | Inclusive from/to, bounds, atomic-boundary description |
+| `summary` | Whole-run new orders, public fills, rejects/cancels by reason/cause and owner counts |
+| `orders` | Replacement-chain root ID, aliases, client IDs, owner/symbol, end-of-window status, reasons, explanation, event-position pairs |
+| `events` | Windowed timeline rows, all owners; raw canonical/protobuf bytes excluded; numeric values are strings |
+| `symbols` | Sorted symbols in the run |
+| `books` | Chronological per-symbol changed frames: sequence, symbol and ladder (`bids`, `asks`, phase); optional prefix frames precede the window |
+| `tape` | Window public trade rows, ordered by global sequence/event index |
+
+Each order's `positions` is a list of `[global_seq,event_index]` pairs into
+`events`; replacements are connected before windowing. Levels carry `price`,
+`quantity` and `own_orders` (`order_id`, `displayed`, `leaves`). Report status and
+explanations use recorded rows when verified; the book always comes from a fresh
+engine replay whose final digest/state summary is cross-checked against the
+verification pass. This export is an inspection artifact, not a new wire format
+or a signed verification receipt.

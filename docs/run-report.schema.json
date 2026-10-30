@@ -1,0 +1,414 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fxp:run-report:v1",
+  "title": "FXP offline run report v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "manifest",
+    "verification",
+    "privacy",
+    "window",
+    "summary",
+    "orders",
+    "events",
+    "symbols",
+    "books",
+    "tape"
+  ],
+  "properties": {
+    "schema": {
+      "const": "fxp-run-report-v1"
+    },
+    "manifest": {
+      "$ref": "#/$defs/exactObject"
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "result",
+        "source",
+        "first_divergence",
+        "expected",
+        "actual"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "identical",
+            "divergent",
+            "incomplete"
+          ]
+        },
+        "source": {
+          "enum": [
+            "recorded",
+            "replayed"
+          ]
+        },
+        "first_divergence": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "expected": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "actual": {
+          "type": "object"
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "required": [
+        "anonymized_owners",
+        "selected_owner"
+      ],
+      "properties": {
+        "anonymized_owners": {
+          "type": "boolean"
+        },
+        "selected_owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "max_rows",
+        "max_data_bytes",
+        "boundary"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/uint"
+        },
+        "to": {
+          "$ref": "#/$defs/uint"
+        },
+        "max_rows": {
+          "$ref": "#/$defs/uint"
+        },
+        "max_data_bytes": {
+          "$ref": "#/$defs/uint"
+        },
+        "boundary": {
+          "type": "string"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "orders",
+        "fills",
+        "rejects_by_reason",
+        "cancels_by_cause",
+        "owners"
+      ],
+      "properties": {
+        "orders": {
+          "$ref": "#/$defs/uint"
+        },
+        "fills": {
+          "$ref": "#/$defs/uint"
+        },
+        "rejects_by_reason": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/uint"
+          }
+        },
+        "cancels_by_cause": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/uint"
+          }
+        },
+        "owners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "owner",
+              "orders",
+              "fill_reports",
+              "rejects",
+              "cancels"
+            ]
+          }
+        }
+      }
+    },
+    "orders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "order_id",
+          "owner",
+          "symbol",
+          "status",
+          "reject_reason",
+          "cancel_cause",
+          "aliases",
+          "client_order_ids",
+          "explanation",
+          "positions"
+        ],
+        "properties": {
+          "order_id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "working",
+              "partially_filled",
+              "filled",
+              "canceled",
+              "expired",
+              "rejected"
+            ]
+          },
+          "reject_reason": {
+            "type": "string"
+          },
+          "cancel_cause": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "client_order_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/uint"
+                },
+                {
+                  "$ref": "#/$defs/uint"
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "symbols": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "books": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "seq",
+          "symbol",
+          "ladder"
+        ],
+        "properties": {
+          "seq": {
+            "$ref": "#/$defs/uint"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "ladder": {
+            "type": "object",
+            "required": [
+              "bids",
+              "asks",
+              "phase"
+            ],
+            "properties": {
+              "bids": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {
+                  "$ref": "#/$defs/level"
+                }
+              },
+              "asks": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {
+                  "$ref": "#/$defs/level"
+                }
+              },
+              "phase": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tape": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    }
+  },
+  "$defs": {
+    "uint": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "int": {
+      "type": "string",
+      "pattern": "^-?[0-9]+$"
+    },
+    "exact": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/exact"
+          }
+        },
+        {
+          "$ref": "#/$defs/exactObject"
+        }
+      ]
+    },
+    "exactObject": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/exact"
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "global_seq",
+        "event_index",
+        "symbol",
+        "kind",
+        "owner",
+        "order_id",
+        "client_order_id",
+        "data"
+      ],
+      "properties": {
+        "global_seq": {
+          "$ref": "#/$defs/uint"
+        },
+        "event_index": {
+          "$ref": "#/$defs/uint"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "order_id": {
+          "type": "string"
+        },
+        "client_order_id": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/exactObject"
+        }
+      }
+    },
+    "level": {
+      "type": "object",
+      "required": [
+        "price",
+        "quantity",
+        "own_orders"
+      ],
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/int"
+        },
+        "quantity": {
+          "$ref": "#/$defs/uint"
+        },
+        "own_orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "order_id",
+              "displayed",
+              "leaves"
+            ],
+            "properties": {
+              "order_id": {
+                "type": "string"
+              },
+              "displayed": {
+                "$ref": "#/$defs/uint"
+              },
+              "leaves": {
+                "$ref": "#/$defs/uint"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/exactObject"
+    }
+  ]
+}
