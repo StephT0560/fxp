@@ -105,6 +105,13 @@ test("symbol movement is labeled as change since first print seen", async ({ pag
   await page.getByTestId("sim-start").click();
   await expect(page.getByTestId("symbol-AAPL")).toContainText("since first print seen", { timeout: 30000 });
   await expect(page.getByTestId("symbol-AAPL").getByTestId("symbol-last")).toHaveAttribute("data-direction", /-1|0|1/);
+  // The change figure is colored by its own sign; tick direction colors only the price.
+  for (const change of await page.getByTestId("symbol-change").all()) {
+    const text = (await change.textContent()) ?? "";
+    const sign = text.startsWith("+") ? "1" : text.startsWith("-") ? "-1" : "0";
+    await expect(change).toHaveAttribute("data-sign", sign);
+    await expect(change).toHaveClass(sign === "1" ? /text-emerald-400/ : sign === "-1" ? /text-red-400/ : /text-neutral-500/);
+  }
   await page.request.post("/api/sim/stop");
 });
 
