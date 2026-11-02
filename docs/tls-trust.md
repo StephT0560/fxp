@@ -171,8 +171,13 @@ stack before starting the other; their published ports overlap.
 
 For repeatable verification, `bash scripts/compose_check.sh` builds a disposable
 secure stack (`--no-build` reuses a prebuilt image), checks mTLS on TCP/WS/FIX plus a WebSocket upgrade, and crosses a
-FIX order through gateway/core; it then removes its own containers/volumes and
-throwaway certificates. `scripts/compose_smoke.py` can check an already-running
+FIX order through gateway/core. It then disrupts core (stop + start, restart, and
+a killed process brought back by its restart policy) and requires the same checks
+to pass again within 30 s. Core, gateway and bridge share a network namespace
+owned by a sleep-only `netns` service, so a restarted core rejoins it; `netns`
+has no restart policy, so if it stops the published ports disappear. Finally it
+removes its own containers/volumes and throwaway certificates.
+`scripts/compose_smoke.py` can check an already-running
 stack using exported credentials and host certificate paths; `--dev` selects the
 development profile explicitly.
 
