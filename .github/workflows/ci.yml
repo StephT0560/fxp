@@ -352,6 +352,9 @@ jobs:
       - run: npm run e2e
         env:
           CI: "1"
+      - name: Demo resilience (core stop/start, restart, killed process)
+        working-directory: .
+        run: bash scripts/demo_resilience_check.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:

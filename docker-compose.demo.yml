@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Requires Compose >=2.24.4 for !override. Layer on docker-compose.dev.yml.
 services:
-  core:
+  netns:
     ports: !override
       - 127.0.0.1:3000:3000
+  core:
     # Replace the base environment to exclude FXP_SYMBOLS even if the caller
     # has an allow-list in its shell; scenarios need fresh unlisted books.
     environment: !override
@@ -30,8 +31,12 @@ services:
       context: .
       dockerfile: Dockerfile.demo
     init: true
-    network_mode: service:core
+    network_mode: service:netns
+    restart: unless-stopped
     depends_on:
+      netns:
+        condition: service_started
+        restart: true
       core:
         condition: service_healthy
       gateway:

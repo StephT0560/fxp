@@ -15,8 +15,15 @@ the WSL filesystem (such as `~/fxp`) for POSIX file protection.
 
 Only **127.0.0.1:3000** is published. Core, gateway TCP/WS and FIX ports are not
 published by this overlay; the FIX bridge is disabled unless the `fix` profile
-is explicitly added. BFF, simulator, core and gateway share the core container's
-network namespace and use loopback for upstream connections. This is a local
+is explicitly added. BFF, simulator, core and gateway share one loopback network
+namespace, owned by a `netns` container that only sleeps and publishes the
+port. Restarting core (`docker compose stop`/`start`/`restart core`, or a crash
+brought back by its restart policy) rejoins that same namespace, so the gateway
+and BFF reconnect and the console returns to live without manual action.
+`netns` has no restart policy: if it stops, port 3000 disappears and the
+stack fails loudly. The trust model is unchanged: the same processes share
+loopback as before, and core stays unauthenticated inside it.
+`bash scripts/demo_resilience_check.sh` checks this against a running demo. This is a local
 demo, with plaintext traffic and no user authentication beyond choosing a fixed
 demo identity. Do not expose it as a hosted service.
 
