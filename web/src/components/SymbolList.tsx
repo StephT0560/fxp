@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
-import { priceMovement } from "../lib/movement";
+import { changeSign, priceMovement } from "../lib/movement";
 import { formatPrice } from "../lib/format";
 import { useSymbols, useTape } from "../lib/stores";
+
+const signTone = { 1: "text-emerald-400", 0: "text-neutral-500", [-1]: "text-red-400" } as const;
 
 export function SymbolList() {
   const { list, selected, select } = useSymbols();
@@ -22,7 +24,7 @@ export function SymbolList() {
             }`}
           >
             <span className="flex justify-between gap-1 text-xs 2xl:text-sm"><span>{s.symbol}</span><span data-testid="symbol-last" data-direction={movement.direction} className={`num ${movement.direction > 0 ? "text-emerald-400" : movement.direction < 0 ? "text-red-400" : "text-neutral-400"}`}>{formatPrice(t?.lastPrice, s.price_scale)}</span></span>
-            {movement.change !== undefined && <span className="text-right text-[10px] leading-tight text-neutral-500" title="Change since first print seen by this console, not daily or session-open change">{movement.change > 0n ? "+" : ""}{formatPrice(movement.change, s.price_scale)} <span className="text-[10px]">since first print seen</span></span>}
+            {movement.change !== undefined && <span className="text-right text-[10px] leading-tight text-neutral-500" title="Change since first print seen by this console, not daily or session-open change"><span data-testid="symbol-change" data-sign={changeSign(movement.change)} className={signTone[changeSign(movement.change)]}>{movement.change > 0n ? "+" : ""}{formatPrice(movement.change, s.price_scale)}</span> <span className="text-[10px]">since first print seen</span></span>}
           </button>
         );
       })}

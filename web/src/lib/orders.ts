@@ -283,6 +283,9 @@ export function rebuild(b: Blotter, reports: ExecutionReport[], now = Date.now()
   const old = b.rows;
   b.rows = new Map();
   b.replaces.clear();
+  // Execution IDs are only unique within one core process; a restarted core
+  // reuses them, so dedupe starts over from this snapshot.
+  b.seen.clear();
   for (const r of reports) {
     const row = fromReport(r, now);
     const prev = old.get(r.orderId);

@@ -194,7 +194,7 @@ export function OrderTicket({ rules, pricePick }: { rules: SymbolRules; pricePic
         </div>
       </details>
       {shownErrors.length > 0 && (
-        <ul className="text-xs text-red-400" data-testid="ticket-errors">
+        <ul id="ticket-errors" className="text-xs text-red-400" data-testid="ticket-errors">
           {shownErrors.map((e) => (
             <li key={e}>{e}</li>
           ))}
@@ -203,7 +203,8 @@ export function OrderTicket({ rules, pricePick }: { rules: SymbolRules; pricePic
       <button
         type="submit"
         data-testid="ticket-submit"
-        disabled={!live || inFlight !== undefined}
+        disabled={!live || inFlight !== undefined || shownErrors.length > 0}
+        aria-describedby={shownErrors.length > 0 ? "ticket-errors" : undefined}
         className={`shrink-0 rounded py-0.5 font-medium disabled:opacity-40 ${t.side === OrderSide.BUY ? "bg-emerald-700 hover:bg-emerald-600" : "bg-red-700 hover:bg-red-600"}`}
       >
         {inFlight ? "Sending…" : `${t.side === OrderSide.BUY ? "Buy" : "Sell"} ${rules.symbol}`}

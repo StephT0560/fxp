@@ -108,7 +108,7 @@ func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 	sessionID := ""
 	defer func() {
 		if sessionID != "" {
-			endSession(sessionID)
+			endSessionFor(clientConn, sessionID)
 		}
 	}()
 	bucket := newTokenBucket(lim.RatePerSec, lim.RateBurst)

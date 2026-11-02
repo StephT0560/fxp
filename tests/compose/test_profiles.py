@@ -62,3 +62,22 @@ class ComposeTests(unittest.TestCase):
         core = json.loads(result.stdout)['services']['core']['environment']
         self.assertNotIn('FXP_SYMBOLS', core)
         self.assertEqual(str(core['FXP_MAX_SYMBOLS']), '4096')
+
+    def test_dev_and_demo_share_a_stable_namespace_owner(self):
+        # Peers join `netns`, never core: restarting core must rejoin the same
+        # namespace instead of stranding gateway/BFF in a stale one.
+        env = {k: v for k, v in os.environ.items() if not k.startswith('FXP_')}
+        env.update(FXP_JWT_SECRET='x' * 32, FXP_FIX_CREDENTIALS='TEST:fixture-password')
+        result = subprocess.run(['docker', 'compose', '--env-file', '/dev/null',
+            '-f', 'docker-compose.dev.yml', '-f', 'docker-compose.demo.yml',
+            '--profile', 'dev', '--profile', 'demo', '--profile', 'fix', 'config', '--format', 'json'],
+            cwd=ROOT, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        services = json.loads(result.stdout)['services']
+        for name in ['core', 'gateway', 'bridge', 'demo_api']:
+            self.assertEqual(services[name]['network_mode'], 'service:netns', name)
+            self.assertTrue(services[name]['depends_on']['netns']['restart'], name)
+            self.assertNotIn('ports', services[name])
+        self.assertIn(services['netns'].get('restart', 'no'), ['no', None])
+        self.assertEqual([(p['host_ip'], str(p['published'])) for p in services['netns']['ports']],
+                         [('127.0.0.1', '3000')])

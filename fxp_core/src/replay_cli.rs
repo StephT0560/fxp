@@ -6,11 +6,12 @@ use crate::reproducibility::{
     sha256,
     trace::{number, text},
 };
+use crate::symbol_config::SymbolConfig;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
 mod report;
-const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> --order ID [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ]";
+const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> [--order ID] [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ] [--force]";
 #[derive(Default)]
 struct Options {
     command: String,
@@ -26,6 +27,14 @@ struct Options {
 }
 fn invalid(s: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, s.into())
+}
+/// OS error text without the raw " (os error N)" suffix.
+fn os_text(e: &io::Error) -> String {
+    let text = e.to_string();
+    match (e.raw_os_error(), text.rfind(" (os error ")) {
+        (Some(_), Some(i)) => text[..i].to_string(),
+        _ => text,
+    }
 }
 fn parse(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
     let mut it = args.into_iter();
@@ -103,9 +112,6 @@ fn parse(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
     }
     if o.from.zip(o.to).is_some_and(|(a, b)| a > b) {
         return Err(invalid("--from exceeds --to"));
-    }
-    if o.command == "explain" && o.order.is_none() {
-        return Err(invalid("explain requires --order"));
     }
     if o.command == "export" && !o.jsonl {
         return Err(invalid("export requires --jsonl"));
@@ -215,66 +221,151 @@ fn selected(run: &Inspection, o: &Options) -> Vec<Json> {
         .map(|r| redact(r, o.owner.as_deref()))
         .collect()
 }
-fn line(row: &Json) -> String {
+/// Display name for enum-valued command fields; prefixes dropped (CANCEL_OLDEST).
+fn enum_name(key: &str, value: i32) -> Option<&'static str> {
+    use crate::fxp;
+    let name = match key {
+        "side" => fxp::OrderSide::try_from(value).ok()?.as_str_name(),
+        "order_type" => fxp::OrderType::try_from(value).ok()?.as_str_name(),
+        "time_in_force" | "new_time_in_force" => {
+            fxp::TimeInForce::try_from(value).ok()?.as_str_name()
+        }
+        "stp_mode" => fxp::SelfTradePrevention::try_from(value)
+            .ok()?
+            .as_str_name()
+            .trim_start_matches("SELF_TRADE_PREVENTION_"),
+        "phase" | "session_phase" => fxp::TradingPhase::try_from(value).ok()?.as_str_name(),
+        "reason" => fxp::MassCancelReason::try_from(value)
+            .ok()?
+            .as_str_name()
+            .trim_start_matches("MASS_CANCEL_REASON_"),
+        _ => return None,
+    };
+    Some(name)
+}
+/// Integer price in minor units rendered with the symbol's scale (10100 -> 101.00).
+fn scaled_price(raw: &str, scale: u32) -> String {
+    let Ok(v) = raw.parse::<i128>() else {
+        return raw.to_string();
+    };
+    if scale == 0 {
+        return v.to_string();
+    }
+    let unit = 10i128.pow(scale);
+    let sign = if v < 0 { "-" } else { "" };
+    format!(
+        "{sign}{}.{:0width$}",
+        v.abs() / unit,
+        v.abs() % unit,
+        width = scale as usize
+    )
+}
+const PRICE_FIELDS: [&str; 4] = ["price", "stop_price", "new_price", "new_stop_price"];
+/// `key=value` pairs with enums humanized, prices scaled and empty/zero fields omitted.
+fn fields(data: &Json, skip: &[&str], scale: u32) -> Vec<String> {
+    let Json::Object(m) = data else {
+        return vec![data.encode()];
+    };
+    m.iter()
+        .filter(|(k, _)| !skip.contains(&k.as_str()))
+        .filter_map(|(k, v)| {
+            let value = match v {
+                Json::Null | Json::Bool(false) => return None,
+                Json::Bool(true) => return Some(k.clone()),
+                Json::String(s) if s.is_empty() => return None,
+                Json::String(s) => s.clone(),
+                Json::Number(n) if n.parse::<f64>().is_ok_and(|n| n == 0.0) => return None,
+                Json::Number(n) => {
+                    if PRICE_FIELDS.contains(&k.as_str()) {
+                        scaled_price(n, scale)
+                    } else if let Some(name) = n.parse().ok().and_then(|n: i32| enum_name(k, n)) {
+                        name.to_string()
+                    } else {
+                        n.clone()
+                    }
+                }
+                other => other.encode(),
+            };
+            Some(format!("{k}={value}"))
+        })
+        .collect()
+}
+fn line(row: &Json, config: &SymbolConfig) -> String {
     let empty = Json::Null;
     let data = row.get("data").unwrap_or(&empty);
-    let base = format!(
-        "{}:{} {} {} owner={} client={} {}",
-        number(row, "global_seq"),
-        number(row, "event_index"),
-        text(row, "symbol"),
-        text(row, "order_id"),
-        text(row, "owner"),
-        text(row, "client_order_id"),
-        text(row, "kind")
-    );
-    let detail = match text(row, "kind") {
-        "command_received" => {
-            let mut data = data.clone();
-            if let Json::Object(m) = &mut data {
-                m.remove("protobuf_hex");
-            }
-            data.encode()
-        }
-        "fill" => format!(
-            "price={} quantity={} leaves={} role={} counterparty={}{}",
-            number(data, "price"),
-            number(data, "quantity"),
-            number(data, "leaves_quantity"),
-            text(data, "role"),
-            text(data, "counterparty"),
-            if matches!(data.get("auction"), Ok(Json::Bool(true))) {
-                " auction"
-            } else {
-                ""
-            }
+    let scale = config.get(text(row, "symbol")).price_scale;
+    let mut parts = vec![
+        format!(
+            "{}:{}",
+            number(row, "global_seq"),
+            number(row, "event_index")
         ),
-        "accepted" => format!(
+        text(row, "symbol").to_string(),
+    ];
+    for (key, label) in [
+        ("order_id", ""),
+        ("owner", "owner="),
+        ("client_order_id", "client="),
+    ] {
+        let value = text(row, key);
+        if !value.is_empty() {
+            parts.push(format!("{label}{value}"));
+        }
+    }
+    let kind = text(row, "kind");
+    parts.push(kind.to_string());
+    match kind {
+        "command_received" => {
+            // The row already names the order, owner and client ID.
+            let mut skip = vec!["protobuf_hex", "kind"];
+            for key in ["order_id", "owner", "client_order_id"] {
+                if text(data, key) == text(row, key) {
+                    skip.push(key);
+                }
+            }
+            let command = text(data, "kind");
+            if !command.is_empty() {
+                parts.push(command.to_string());
+            }
+            parts.extend(fields(data, &skip, scale));
+        }
+        "fill" => {
+            parts.push(format!(
+                "price={} quantity={} leaves={}",
+                scaled_price(&number(data, "price").to_string(), scale),
+                number(data, "quantity"),
+                number(data, "leaves_quantity")
+            ));
+            for key in ["role", "counterparty"] {
+                if !text(data, key).is_empty() {
+                    parts.push(format!("{key}={}", text(data, key)));
+                }
+            }
+            if matches!(data.get("auction"), Ok(Json::Bool(true))) {
+                parts.push("auction".into());
+            }
+        }
+        "accepted" => parts.push(format!(
             "quantity={} leaves={}",
             number(data, "order_quantity"),
             number(data, "leaves_quantity")
-        ),
-        "replaced" => format!("new_order_id={}", text(data, "new_order_id")),
-        "iceberg_refresh" => format!(
+        )),
+        "replaced" => parts.push(format!("new_order_id={}", text(data, "new_order_id"))),
+        "iceberg_refresh" => parts.push(format!(
             "quantity={} cause={}",
             number(data, "quantity"),
             text(data, "cause")
-        ),
+        )),
         "rejected" | "canceled" | "expired" | "restated" | "stop_trigger" => {
+            parts.push(format!("cause={}", text(data, "cause")));
             let opposing = text(data, "opposing_order");
-            format!(
-                "cause={}{}",
-                text(data, "cause"),
-                if opposing.is_empty() {
-                    String::new()
-                } else {
-                    format!(" opposing_order={opposing}")
-                }
-            )
+            if !opposing.is_empty() {
+                parts.push(format!("opposing_order={opposing}"));
+            }
         }
-        _ => data.encode(),
-    };
-    format!("{base} {detail}")
+        _ => parts.extend(fields(data, &[], scale)),
+    }
+    parts.join(" ")
 }
 fn command_at(rows: &[Json], seq: u64) -> Json {
     rows.iter()
@@ -351,6 +442,101 @@ fn stats(rows: &[Json]) -> Json {
             Json::object(rejects.into_iter().map(|(k, v)| (k, Json::number(v)))),
         ),
     ])
+}
+/// An order with at least one fill, reject or cancel, for `explain` without --order.
+struct Notable {
+    symbol: String,
+    order_id: String,
+    owner: String,
+    fills: u64,
+    quantity: u64,
+    outcomes: Vec<(String, String, u64)>,
+}
+impl Notable {
+    fn text(&self) -> String {
+        let mut parts = vec![format!("{} fills ({} units)", self.fills, self.quantity)];
+        parts.extend(
+            self.outcomes
+                .iter()
+                .map(|(kind, cause, seq)| format!("{kind}: {cause} (seq {seq})")),
+        );
+        format!(
+            "{} {} owner={}: {}",
+            self.symbol,
+            self.order_id,
+            self.owner,
+            parts.join("; ")
+        )
+    }
+    fn json(&self) -> Json {
+        Json::object([
+            ("symbol", Json::string(&self.symbol)),
+            ("order_id", Json::string(&self.order_id)),
+            ("owner", Json::string(&self.owner)),
+            ("fills", Json::number(self.fills)),
+            ("fill_quantity", Json::number(self.quantity)),
+            (
+                "outcomes",
+                Json::Array(
+                    self.outcomes
+                        .iter()
+                        .map(|(kind, cause, seq)| {
+                            Json::object([
+                                ("kind", Json::string(kind)),
+                                ("cause", Json::string(cause)),
+                                ("global_seq", Json::number(*seq)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ])
+    }
+}
+fn notable_orders(rows: &[Json]) -> Vec<Notable> {
+    let mut orders: Vec<Notable> = Vec::new();
+    // Live lifecycle per (symbol, order ID, owner); a new submission of a reused
+    // ID starts a separate entry.
+    let mut live = BTreeMap::<(String, String, String), usize>::new();
+    for row in rows {
+        let kind = text(row, "kind");
+        let key = (
+            text(row, "symbol").to_string(),
+            text(row, "order_id").to_string(),
+            text(row, "owner").to_string(),
+        );
+        if kind == "accepted" {
+            live.remove(&key);
+            continue;
+        }
+        if !matches!(kind, "fill" | "rejected" | "canceled" | "expired") || key.1.is_empty() {
+            continue;
+        }
+        let index = *live.entry(key.clone()).or_insert_with(|| {
+            orders.push(Notable {
+                symbol: key.0,
+                order_id: key.1,
+                owner: key.2,
+                fills: 0,
+                quantity: 0,
+                outcomes: Vec::new(),
+            });
+            orders.len() - 1
+        });
+        let data = row.get("data").unwrap_or(&Json::Null);
+        let order = &mut orders[index];
+        if kind == "fill" {
+            order.fills += 1;
+            order.quantity += number(data, "quantity");
+        } else {
+            order.outcomes.push((
+                kind.into(),
+                text(data, "cause").into(),
+                number(row, "global_seq"),
+            ));
+        }
+    }
+    orders
 }
 fn explanation(rows: &[Json], order: &str) -> String {
     let commands: BTreeMap<u64, &Json> = rows
@@ -483,7 +669,7 @@ pub fn run(
         Ok(code) => code,
         Err(error) if streaming && error.kind() == io::ErrorKind::BrokenPipe => 0,
         Err(error) => {
-            let _ = writeln!(err, "invalid: {error}");
+            let _ = writeln!(err, "invalid: {}", os_text(&error));
             2
         }
     }
@@ -601,6 +787,43 @@ fn execute(
         )?;
     }
     let rows = selected(&run, &o);
+    if o.command == "explain" && o.order.is_none() {
+        let orders = notable_orders(&rows);
+        if o.json {
+            writeln!(
+                out,
+                "{}",
+                Json::object([
+                    ("source", Json::string(run.source())),
+                    ("verified", Json::Bool(run.complete && !run.diverged)),
+                    (
+                        "orders",
+                        Json::Array(orders.iter().map(|o| o.json()).collect())
+                    ),
+                ])
+                .encode()
+            )?;
+        } else {
+            writeln!(
+                out,
+                "explain source={} verified={}",
+                run.source(),
+                run.complete && !run.diverged
+            )?;
+            if orders.is_empty() {
+                writeln!(out, "No fills, rejects or cancels in this scope.")?;
+            }
+            for order in &orders {
+                writeln!(out, "{}", order.text())?;
+            }
+            writeln!(
+                out,
+                "Explain one with: fxp-replay explain {} --order ID",
+                o.paths[0]
+            )?;
+        }
+        return Ok(0);
+    }
     if o.command == "explain" {
         if rows.is_empty() {
             return Err(invalid("order not found in selected scope"));
@@ -652,7 +875,7 @@ fn execute(
             run.complete && !run.diverged
         )?;
         for row in rows {
-            writeln!(out, "{}", line(&row))?;
+            writeln!(out, "{}", line(&row, &run.config))?;
         }
     }
     Ok(0)
@@ -661,8 +884,54 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn notable_orders_split_reused_ids_into_lifecycles() {
+        let mut rows = Vec::new();
+        for (seq, kind, cause) in [
+            (1, "accepted", ""),
+            (2, "fill", ""),
+            (3, "accepted", ""),
+            (4, "canceled", "user"),
+        ] {
+            let mut r = row(kind, "B", "alice", "");
+            if let Json::Object(m) = &mut r {
+                m.insert("global_seq".into(), Json::number(seq));
+                m.insert(
+                    "data".into(),
+                    Json::object([
+                        ("quantity", Json::number(2)),
+                        ("cause", Json::string(cause)),
+                    ]),
+                );
+            }
+            rows.push(r);
+        }
+        let orders = notable_orders(&rows);
+        assert_eq!(orders.len(), 2);
+        assert_eq!((orders[0].fills, orders[0].outcomes.len()), (1, 0));
+        assert_eq!((orders[1].fills, orders[1].outcomes.len()), (0, 1));
+    }
+    #[test]
+    fn timeline_text_humanizes_enums_scales_prices_and_omits_empty_fields() {
+        let mut row = row("command_received", "q-7", "demo-maker", "");
+        if let Json::Object(m) = &mut row {
+            m.insert("symbol".into(), Json::string("BOTTEST"));
+            m.insert(
+                "data".into(),
+                Json::parse(r#"{"account":"","client_order_id":"","display_quantity":0,"expire_date":"","kind":"new","order_id":"q-7","order_type":2,"owner":"demo-maker","price":10100,"quantity":4,"side":2,"stop_price":0,"stp_group":"","stp_mode":3,"time_in_force":2}"#).unwrap(),
+            );
+        }
+        assert_eq!(
+            line(&row, &SymbolConfig::default()),
+            "1:1 BOTTEST q-7 owner=demo-maker command_received new order_type=LIMIT price=101.00 quantity=4 side=SELL stp_mode=CANCEL_OLDEST time_in_force=GTC"
+        );
+        let config = SymbolConfig::parse("symbol,price_scale,tick_size,lot_size,min_quantity,max_quantity\nBOTTEST,4,1,1,1,100\n").unwrap();
+        assert!(line(&row, &config).contains(" price=1.0100 "));
+        assert_eq!(scaled_price("-5", 2), "-0.05");
+    }
     fn fixture(rows: Vec<Json>) -> Inspection {
         Inspection {
+            config: SymbolConfig::default(),
             complete: true,
             diverged: false,
             expected: None,

@@ -160,6 +160,16 @@ describe("order state machine", () => {
     expect(b.log[0]?.text).toMatch(/2 orders, 1 unknown to the core dropped/);
   });
 
+  it("accepts execution ids reused by a restarted core after a rebuild", () => {
+    const b = emptyBlotter();
+    trackNew(b, "A", draft);
+    expect(applyReport(b, er("A", ET.EXEC_NEW, OS.ORDER_NEW, { executionId: "E1" }))).toBe(true);
+    rebuild(b, [er("A", ET.EXEC_ORDER_STATUS, OS.ORDER_NEW, { executionId: "" })]);
+    trackNew(b, "B", draft);
+    expect(applyReport(b, er("B", ET.EXEC_NEW, OS.ORDER_NEW, { executionId: "E1" }))).toBe(true);
+    expect(b.rows.get("B")?.state).toBe("new");
+  });
+
   it("generates unique client order ids", () => {
     const ids = new Set(Array.from({ length: 1000 }, () => newOrderId(0)));
     expect(ids.size).toBe(1000);

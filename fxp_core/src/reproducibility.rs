@@ -199,6 +199,8 @@ pub(crate) struct Inspection {
     pub final_state: Vec<u8>,
     pub rows: Vec<Json>,
     pub expected_rows: Option<Vec<Json>>,
+    /// Symbol rules from the bundle's own symbols.csv (price scale for display).
+    pub config: SymbolConfig,
 }
 impl Inspection {
     pub fn source_rows(&self) -> &[Json] {
@@ -241,8 +243,27 @@ fn validate_expected(j: &Json) -> io::Result<()> {
     }
     hash(j.get("final_state_sha256")?.text()?)
 }
+/// Names the missing file instead of surfacing a raw OS error.
+fn missing_as_incomplete<T>(name: &str, result: io::Result<T>) -> io::Result<T> {
+    result.map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            invalid(format!("incomplete bundle: {name} missing"))
+        } else {
+            e
+        }
+    })
+}
+fn read_bundle_file(dir: &Path, name: &str) -> io::Result<String> {
+    missing_as_incomplete(name, fs::read_to_string(dir.join(name)))
+}
 pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
-    let manifest = Json::parse(&fs::read_to_string(dir.join("manifest.json"))?)?;
+    if !dir.is_dir() {
+        return Err(invalid(format!(
+            "bundle directory not found: {}",
+            dir.display()
+        )));
+    }
+    let manifest = Json::parse(&read_bundle_file(dir, "manifest.json")?)?;
     require(&manifest, "bundle_format", BUNDLE_VERSION)?;
     require(
         &manifest,
@@ -252,7 +273,7 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
     require(&manifest, "canonical_version", CANONICAL_VERSION)?;
     require(&manifest, "state_version", STATE_VERSION)?;
     require(&manifest, "proto_schema_sha256", &sha256(SCHEMA))?;
-    let symbols = fs::read_to_string(dir.join("symbols.csv"))?;
+    let symbols = read_bundle_file(dir, "symbols.csv")?;
     require(
         &manifest,
         "symbol_config_sha256",
@@ -270,10 +291,14 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
     };
     let log = dir.join("commands.log");
     if complete {
-        require(&manifest, "commands_sha256", &hash_file(&log)?)?;
+        require(
+            &manifest,
+            "commands_sha256",
+            &missing_as_incomplete("commands.log", hash_file(&log))?,
+        )?;
     }
     let expected = if complete {
-        let j = Json::parse(&fs::read_to_string(dir.join("expected.json"))?)?;
+        let j = Json::parse(&read_bundle_file(dir, "expected.json")?)?;
         validate_expected(&j)?;
         Some(j)
     } else {
@@ -290,8 +315,12 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
         }
         if complete {
             let path = dir.join("events.jsonl");
-            require(&manifest, "trace_sha256", &hash_file(&path)?)?;
-            let rows = fs::read_to_string(path)?
+            require(
+                &manifest,
+                "trace_sha256",
+                &missing_as_incomplete("events.jsonl", hash_file(&path))?,
+            )?;
+            let rows = read_bundle_file(dir, "events.jsonl")?
                 .lines()
                 .map(Json::parse)
                 .collect::<io::Result<Vec<_>>>()?;
@@ -315,14 +344,17 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
     } else {
         None
     };
-    let mut journal = crate::event_log::Journal::replay_inspected(
-        &log,
-        schedule,
-        stp,
-        (),
-        config,
-        complete,
-        true,
+    let mut journal = missing_as_incomplete(
+        "commands.log",
+        crate::event_log::Journal::replay_inspected(
+            &log,
+            schedule,
+            stp,
+            (),
+            config.clone(),
+            complete,
+            true,
+        ),
     )?;
     let final_state = journal.canonical_state();
     let summary = journal.summary();
@@ -332,6 +364,7 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
             .as_ref()
             .is_some_and(|r| !compatible_trace(r, &rows));
     Ok(Inspection {
+        config,
         complete,
         diverged,
         summary,
@@ -362,9 +395,10 @@ fn compatible_trace(expected: &[Json], actual: &[Json]) -> bool {
 }
 
 fn require(j: &Json, key: &str, expected: &str) -> io::Result<()> {
-    if j.get(key)?.text()? != expected {
+    let found = j.get(key)?.text()?;
+    if found != expected {
         return Err(invalid(format!(
-            "bundle {key} mismatch: expected {expected}"
+            "bundle {key} mismatch: expected {expected}, found {found}"
         )));
     }
     Ok(())

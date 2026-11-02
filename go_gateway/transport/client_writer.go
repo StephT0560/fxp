@@ -65,6 +65,27 @@ func unregisterClientWriter(conn any) {
 	if value, ok := clientWriters.LoadAndDelete(conn); ok {
 		value.(*clientWriter).stop()
 	}
+	coreLossClosed.Delete(conn)
+}
+
+// disconnectClients closes every client connection so each client sees the
+// loss of core and resynchronises when it reconnects.
+func disconnectClients() {
+	n := 0
+	clientWriters.Range(func(conn, _ any) bool {
+		if c, ok := conn.(interface{ Close() error }); ok {
+			coreLossClosed.Store(conn, struct{}{})
+			if _, live := clientWriters.Load(conn); !live {
+				coreLossClosed.Delete(conn)
+			}
+			_ = c.Close()
+			n++
+		}
+		return true
+	})
+	if n > 0 {
+		log.Printf("🔌 Core connection lost — disconnected %d client(s)", n)
+	}
 }
 
 func shutdownClientWriters(timeout time.Duration) {
