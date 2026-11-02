@@ -59,6 +59,9 @@ fn options(args: &[String]) -> io::Result<Config> {
             _ => return Err(invalid(format!("unknown report option {k}"))),
         }
     }
+    if c.html.is_some() && c.html == c.json {
+        return Err(invalid("--html and --json must name different files"));
+    }
     if c.html.is_none() && c.json.is_none() || c.from > c.to {
         return Err(invalid(
             "report requires --html and/or --json; --from must not exceed --to",
@@ -716,25 +719,29 @@ fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()>
     if parent.starts_with(bundle.canonicalize()?) {
         return Err(invalid("report output must be outside the bundle"));
     }
-    let exists = || {
+    let already_exists = || {
         invalid(format!(
             "{} already exists; choose another path or pass --force",
             path.display()
         ))
     };
-    if fs::symlink_metadata(path).is_ok() {
-        if !force {
-            return Err(exists());
-        }
-        // Remove (never follow) the old entry, then create a fresh private file.
-        fs::remove_file(path).map_err(|e| {
-            invalid(format!(
-                "cannot replace {}: {}",
-                path.display(),
-                os_text(&e)
-            ))
-        })?;
+    let exists = fs::symlink_metadata(path).is_ok();
+    if exists && !force {
+        return Err(already_exists());
     }
+    // Forced output goes to a private temporary file first and is renamed over
+    // the old report only after a complete write, so a failure keeps it intact.
+    let target = if exists {
+        parent.join(format!(
+            ".{}.tmp-{}",
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("report"),
+            std::process::id()
+        ))
+    } else {
+        path.to_path_buf()
+    };
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -742,17 +749,30 @@ fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()>
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path).map_err(|e| {
-        if e.kind() == io::ErrorKind::AlreadyExists {
-            exists()
+    let mut file = options.open(&target).map_err(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists && !exists {
+            already_exists()
         } else {
             invalid(format!("cannot write {}: {}", path.display(), os_text(&e)))
         }
     })?;
-    if let Err(e) = file.write_all(bytes) {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(e);
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(e) = written {
+        let _ = fs::remove_file(&target);
+        return Err(invalid(format!(
+            "cannot write {}: {}",
+            path.display(),
+            os_text(&e)
+        )));
+    }
+    if exists && let Err(e) = fs::rename(&target, path) {
+        let _ = fs::remove_file(&target);
+        return Err(invalid(format!(
+            "cannot replace {}: {}",
+            path.display(),
+            os_text(&e)
+        )));
     }
     Ok(())
 }

@@ -495,35 +495,34 @@ impl Notable {
 }
 fn notable_orders(rows: &[Json]) -> Vec<Notable> {
     let mut orders: Vec<Notable> = Vec::new();
+    // Live lifecycle per (symbol, order ID, owner); a new submission of a reused
+    // ID starts a separate entry.
+    let mut live = BTreeMap::<(String, String, String), usize>::new();
     for row in rows {
         let kind = text(row, "kind");
-        if !matches!(kind, "fill" | "rejected" | "canceled" | "expired")
-            || text(row, "order_id").is_empty()
-        {
+        let key = (
+            text(row, "symbol").to_string(),
+            text(row, "order_id").to_string(),
+            text(row, "owner").to_string(),
+        );
+        if kind == "accepted" {
+            live.remove(&key);
             continue;
         }
-        let key = (
-            text(row, "symbol"),
-            text(row, "order_id"),
-            text(row, "owner"),
-        );
-        let index = match orders
-            .iter()
-            .position(|o| (o.symbol.as_str(), o.order_id.as_str(), o.owner.as_str()) == key)
-        {
-            Some(i) => i,
-            None => {
-                orders.push(Notable {
-                    symbol: key.0.into(),
-                    order_id: key.1.into(),
-                    owner: key.2.into(),
-                    fills: 0,
-                    quantity: 0,
-                    outcomes: Vec::new(),
-                });
-                orders.len() - 1
-            }
-        };
+        if !matches!(kind, "fill" | "rejected" | "canceled" | "expired") || key.1.is_empty() {
+            continue;
+        }
+        let index = *live.entry(key.clone()).or_insert_with(|| {
+            orders.push(Notable {
+                symbol: key.0,
+                order_id: key.1,
+                owner: key.2,
+                fills: 0,
+                quantity: 0,
+                outcomes: Vec::new(),
+            });
+            orders.len() - 1
+        });
         let data = row.get("data").unwrap_or(&Json::Null);
         let order = &mut orders[index];
         if kind == "fill" {
@@ -885,6 +884,33 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn notable_orders_split_reused_ids_into_lifecycles() {
+        let mut rows = Vec::new();
+        for (seq, kind, cause) in [
+            (1, "accepted", ""),
+            (2, "fill", ""),
+            (3, "accepted", ""),
+            (4, "canceled", "user"),
+        ] {
+            let mut r = row(kind, "B", "alice", "");
+            if let Json::Object(m) = &mut r {
+                m.insert("global_seq".into(), Json::number(seq));
+                m.insert(
+                    "data".into(),
+                    Json::object([
+                        ("quantity", Json::number(2)),
+                        ("cause", Json::string(cause)),
+                    ]),
+                );
+            }
+            rows.push(r);
+        }
+        let orders = notable_orders(&rows);
+        assert_eq!(orders.len(), 2);
+        assert_eq!((orders[0].fills, orders[0].outcomes.len()), (1, 0));
+        assert_eq!((orders[1].fills, orders[1].outcomes.len()), (0, 1));
+    }
     #[test]
     fn timeline_text_humanizes_enums_scales_prices_and_omits_empty_fields() {
         let mut row = row("command_received", "q-7", "demo-maker", "");

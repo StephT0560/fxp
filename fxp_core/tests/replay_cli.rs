@@ -334,6 +334,31 @@ fn report_refuses_to_overwrite_unless_forced() {
     let forced = report(&["--force"]);
     assert_eq!(forced.status.code(), Some(0), "{}", stderr(&forced));
     assert_ne!(std::fs::read_to_string(html).unwrap(), "stale");
+    let same = cli(&[
+        "report",
+        bundle.to_str().unwrap(),
+        "--html",
+        html,
+        "--json",
+        html,
+        "--force",
+    ]);
+    assert_eq!(same.status.code(), Some(2));
+    assert_eq!(
+        stderr(&same),
+        "invalid: --html and --json must name different files\n"
+    );
+    let leftovers = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")
+        })
+        .count();
+    assert_eq!(leftovers, 0);
     let missing_parent = dir.join("no-such-dir/out.html");
     let out = cli(&[
         "report",
