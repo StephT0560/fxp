@@ -731,17 +731,6 @@ fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()>
     }
     // Forced output goes to a private temporary file first and is renamed over
     // the old report only after a complete write, so a failure keeps it intact.
-    let target = if exists {
-        parent.join(format!(
-            ".{}.tmp-{}",
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("report"),
-            std::process::id()
-        ))
-    } else {
-        path.to_path_buf()
-    };
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -749,13 +738,43 @@ fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()>
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(&target).map_err(|e| {
-        if e.kind() == io::ErrorKind::AlreadyExists && !exists {
-            already_exists()
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("report");
+    let mut attempt = 0u32;
+    let (target, mut file) = loop {
+        // Forced output goes to a fresh temporary file and is renamed over the old
+        // report only after a complete write, so a failure keeps it intact. A
+        // stale temp name (e.g. from a killed run) is skipped, not fatal.
+        let target = if exists {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos());
+            parent.join(format!(
+                ".{name}.tmp-{}-{nanos}-{attempt}",
+                std::process::id()
+            ))
         } else {
-            invalid(format!("cannot write {}: {}", path.display(), os_text(&e)))
+            path.to_path_buf()
+        };
+        match options.open(&target) {
+            Ok(file) => break (target, file),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && exists && attempt < 16 => {
+                attempt += 1;
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && !exists => {
+                return Err(already_exists());
+            }
+            Err(e) => {
+                return Err(invalid(format!(
+                    "cannot write {}: {}",
+                    path.display(),
+                    os_text(&e)
+                )));
+            }
         }
-    })?;
+    };
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
     if let Err(e) = written {
