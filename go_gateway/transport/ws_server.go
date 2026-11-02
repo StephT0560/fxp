@@ -120,7 +120,6 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 	registerClientWriter(conn)
 	defer unregisterClientWriter(conn)
-	defer coreLossClosed.Delete(conn)
 	conn.SetReadLimit(int64(lim.MaxFramePreAuth))
 	_ = conn.SetReadDeadline(time.Now().Add(lim.HandshakeTimeout))
 	bucket := newTokenBucket(lim.RatePerSec, lim.RateBurst)

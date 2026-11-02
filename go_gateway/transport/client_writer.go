@@ -65,6 +65,7 @@ func unregisterClientWriter(conn any) {
 	if value, ok := clientWriters.LoadAndDelete(conn); ok {
 		value.(*clientWriter).stop()
 	}
+	coreLossClosed.Delete(conn)
 }
 
 // disconnectClients closes every client connection so each client sees the
@@ -74,6 +75,9 @@ func disconnectClients() {
 	clientWriters.Range(func(conn, _ any) bool {
 		if c, ok := conn.(interface{ Close() error }); ok {
 			coreLossClosed.Store(conn, struct{}{})
+			if _, live := clientWriters.Load(conn); !live {
+				coreLossClosed.Delete(conn)
+			}
 			_ = c.Close()
 			n++
 		}

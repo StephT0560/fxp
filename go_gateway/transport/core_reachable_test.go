@@ -67,3 +67,18 @@ func TestCoreLossDisconnectSkipsCancelOnDisconnect(t *testing.T) {
 		t.Fatalf("client disconnect must still cancel on disconnect, got %v", canceled)
 	}
 }
+
+func TestUnregisterClearsCoreLossMarker(t *testing.T) {
+	a, b := net.Pipe()
+	defer b.Close()
+	registerClientWriter(a)
+	disconnectClients()
+	if _, ok := coreLossClosed.Load(a); !ok {
+		t.Fatal("disconnectClients did not mark the connection")
+	}
+	// A TLS handshake that fails on the closed socket only unregisters.
+	unregisterClientWriter(a)
+	if _, ok := coreLossClosed.Load(a); ok {
+		t.Fatal("core-loss marker outlived its connection")
+	}
+}
