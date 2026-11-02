@@ -199,6 +199,8 @@ pub(crate) struct Inspection {
     pub final_state: Vec<u8>,
     pub rows: Vec<Json>,
     pub expected_rows: Option<Vec<Json>>,
+    /// Symbol rules from the bundle's own symbols.csv (price scale for display).
+    pub config: SymbolConfig,
 }
 impl Inspection {
     pub fn source_rows(&self) -> &[Json] {
@@ -349,7 +351,7 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
             schedule,
             stp,
             (),
-            config,
+            config.clone(),
             complete,
             true,
         ),
@@ -362,6 +364,7 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
             .as_ref()
             .is_some_and(|r| !compatible_trace(r, &rows));
     Ok(Inspection {
+        config,
         complete,
         diverged,
         summary,

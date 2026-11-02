@@ -6,6 +6,7 @@ use crate::reproducibility::{
     sha256,
     trace::{number, text},
 };
+use crate::symbol_config::SymbolConfig;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
@@ -223,66 +224,151 @@ fn selected(run: &Inspection, o: &Options) -> Vec<Json> {
         .map(|r| redact(r, o.owner.as_deref()))
         .collect()
 }
-fn line(row: &Json) -> String {
+/// Display name for enum-valued command fields; prefixes dropped (CANCEL_OLDEST).
+fn enum_name(key: &str, value: i32) -> Option<&'static str> {
+    use crate::fxp;
+    let name = match key {
+        "side" => fxp::OrderSide::try_from(value).ok()?.as_str_name(),
+        "order_type" => fxp::OrderType::try_from(value).ok()?.as_str_name(),
+        "time_in_force" | "new_time_in_force" => {
+            fxp::TimeInForce::try_from(value).ok()?.as_str_name()
+        }
+        "stp_mode" => fxp::SelfTradePrevention::try_from(value)
+            .ok()?
+            .as_str_name()
+            .trim_start_matches("SELF_TRADE_PREVENTION_"),
+        "phase" | "session_phase" => fxp::TradingPhase::try_from(value).ok()?.as_str_name(),
+        "reason" => fxp::MassCancelReason::try_from(value)
+            .ok()?
+            .as_str_name()
+            .trim_start_matches("MASS_CANCEL_REASON_"),
+        _ => return None,
+    };
+    Some(name)
+}
+/// Integer price in minor units rendered with the symbol's scale (10100 -> 101.00).
+fn scaled_price(raw: &str, scale: u32) -> String {
+    let Ok(v) = raw.parse::<i128>() else {
+        return raw.to_string();
+    };
+    if scale == 0 {
+        return v.to_string();
+    }
+    let unit = 10i128.pow(scale);
+    let sign = if v < 0 { "-" } else { "" };
+    format!(
+        "{sign}{}.{:0width$}",
+        v.abs() / unit,
+        v.abs() % unit,
+        width = scale as usize
+    )
+}
+const PRICE_FIELDS: [&str; 4] = ["price", "stop_price", "new_price", "new_stop_price"];
+/// `key=value` pairs with enums humanized, prices scaled and empty/zero fields omitted.
+fn fields(data: &Json, skip: &[&str], scale: u32) -> Vec<String> {
+    let Json::Object(m) = data else {
+        return vec![data.encode()];
+    };
+    m.iter()
+        .filter(|(k, _)| !skip.contains(&k.as_str()))
+        .filter_map(|(k, v)| {
+            let value = match v {
+                Json::Null | Json::Bool(false) => return None,
+                Json::Bool(true) => return Some(k.clone()),
+                Json::String(s) if s.is_empty() => return None,
+                Json::String(s) => s.clone(),
+                Json::Number(n) if n.parse::<f64>().is_ok_and(|n| n == 0.0) => return None,
+                Json::Number(n) => {
+                    if PRICE_FIELDS.contains(&k.as_str()) {
+                        scaled_price(n, scale)
+                    } else if let Some(name) = n.parse().ok().and_then(|n: i32| enum_name(k, n)) {
+                        name.to_string()
+                    } else {
+                        n.clone()
+                    }
+                }
+                other => other.encode(),
+            };
+            Some(format!("{k}={value}"))
+        })
+        .collect()
+}
+fn line(row: &Json, config: &SymbolConfig) -> String {
     let empty = Json::Null;
     let data = row.get("data").unwrap_or(&empty);
-    let base = format!(
-        "{}:{} {} {} owner={} client={} {}",
-        number(row, "global_seq"),
-        number(row, "event_index"),
-        text(row, "symbol"),
-        text(row, "order_id"),
-        text(row, "owner"),
-        text(row, "client_order_id"),
-        text(row, "kind")
-    );
-    let detail = match text(row, "kind") {
-        "command_received" => {
-            let mut data = data.clone();
-            if let Json::Object(m) = &mut data {
-                m.remove("protobuf_hex");
-            }
-            data.encode()
-        }
-        "fill" => format!(
-            "price={} quantity={} leaves={} role={} counterparty={}{}",
-            number(data, "price"),
-            number(data, "quantity"),
-            number(data, "leaves_quantity"),
-            text(data, "role"),
-            text(data, "counterparty"),
-            if matches!(data.get("auction"), Ok(Json::Bool(true))) {
-                " auction"
-            } else {
-                ""
-            }
+    let scale = config.get(text(row, "symbol")).price_scale;
+    let mut parts = vec![
+        format!(
+            "{}:{}",
+            number(row, "global_seq"),
+            number(row, "event_index")
         ),
-        "accepted" => format!(
+        text(row, "symbol").to_string(),
+    ];
+    for (key, label) in [
+        ("order_id", ""),
+        ("owner", "owner="),
+        ("client_order_id", "client="),
+    ] {
+        let value = text(row, key);
+        if !value.is_empty() {
+            parts.push(format!("{label}{value}"));
+        }
+    }
+    let kind = text(row, "kind");
+    parts.push(kind.to_string());
+    match kind {
+        "command_received" => {
+            // The row already names the order, owner and client ID.
+            let mut skip = vec!["protobuf_hex", "kind"];
+            for key in ["order_id", "owner", "client_order_id"] {
+                if text(data, key) == text(row, key) {
+                    skip.push(key);
+                }
+            }
+            let command = text(data, "kind");
+            if !command.is_empty() {
+                parts.push(command.to_string());
+            }
+            parts.extend(fields(data, &skip, scale));
+        }
+        "fill" => {
+            parts.push(format!(
+                "price={} quantity={} leaves={}",
+                scaled_price(&number(data, "price").to_string(), scale),
+                number(data, "quantity"),
+                number(data, "leaves_quantity")
+            ));
+            for key in ["role", "counterparty"] {
+                if !text(data, key).is_empty() {
+                    parts.push(format!("{key}={}", text(data, key)));
+                }
+            }
+            if matches!(data.get("auction"), Ok(Json::Bool(true))) {
+                parts.push("auction".into());
+            }
+        }
+        "accepted" => parts.push(format!(
             "quantity={} leaves={}",
             number(data, "order_quantity"),
             number(data, "leaves_quantity")
-        ),
-        "replaced" => format!("new_order_id={}", text(data, "new_order_id")),
-        "iceberg_refresh" => format!(
+        )),
+        "replaced" => parts.push(format!("new_order_id={}", text(data, "new_order_id"))),
+        "iceberg_refresh" => parts.push(format!(
             "quantity={} cause={}",
             number(data, "quantity"),
             text(data, "cause")
-        ),
+        )),
         "rejected" | "canceled" | "expired" | "restated" | "stop_trigger" => {
+            parts.push(format!("cause={}", text(data, "cause")));
             let opposing = text(data, "opposing_order");
-            format!(
-                "cause={}{}",
-                text(data, "cause"),
-                if opposing.is_empty() {
-                    String::new()
-                } else {
-                    format!(" opposing_order={opposing}")
-                }
-            )
+            if !opposing.is_empty() {
+                parts.push(format!("opposing_order={opposing}"));
+            }
         }
-        _ => data.encode(),
-    };
-    format!("{base} {detail}")
+        _ => parts.extend(fields(data, &[], scale)),
+    }
+    parts.join(" ")
 }
 fn command_at(rows: &[Json], seq: u64) -> Json {
     rows.iter()
@@ -660,7 +746,7 @@ fn execute(
             run.complete && !run.diverged
         )?;
         for row in rows {
-            writeln!(out, "{}", line(&row))?;
+            writeln!(out, "{}", line(&row, &run.config))?;
         }
     }
     Ok(0)
@@ -669,8 +755,27 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn timeline_text_humanizes_enums_scales_prices_and_omits_empty_fields() {
+        let mut row = row("command_received", "q-7", "demo-maker", "");
+        if let Json::Object(m) = &mut row {
+            m.insert("symbol".into(), Json::string("BOTTEST"));
+            m.insert(
+                "data".into(),
+                Json::parse(r#"{"account":"","client_order_id":"","display_quantity":0,"expire_date":"","kind":"new","order_id":"q-7","order_type":2,"owner":"demo-maker","price":10100,"quantity":4,"side":2,"stop_price":0,"stp_group":"","stp_mode":3,"time_in_force":2}"#).unwrap(),
+            );
+        }
+        assert_eq!(
+            line(&row, &SymbolConfig::default()),
+            "1:1 BOTTEST q-7 owner=demo-maker command_received new order_type=LIMIT price=101.00 quantity=4 side=SELL stp_mode=CANCEL_OLDEST time_in_force=GTC"
+        );
+        let config = SymbolConfig::parse("symbol,price_scale,tick_size,lot_size,min_quantity,max_quantity\nBOTTEST,4,1,1,1,100\n").unwrap();
+        assert!(line(&row, &config).contains(" price=1.0100 "));
+        assert_eq!(scaled_price("-5", 2), "-0.05");
+    }
     fn fixture(rows: Vec<Json>) -> Inspection {
         Inspection {
+            config: SymbolConfig::default(),
             complete: true,
             diverged: false,
             expected: None,
