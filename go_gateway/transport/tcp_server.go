@@ -104,11 +104,12 @@ func handleTCPClient(clientConn net.Conn) {
 
 func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 	defer unregisterClientWriter(clientConn)
+	defer coreLossClosed.Delete(clientConn)
 	lim := currentLimits()
 	sessionID := ""
 	defer func() {
 		if sessionID != "" {
-			endSession(sessionID)
+			endSessionFor(clientConn, sessionID)
 		}
 	}()
 	bucket := newTokenBucket(lim.RatePerSec, lim.RateBurst)

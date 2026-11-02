@@ -73,6 +73,7 @@ func disconnectClients() {
 	n := 0
 	clientWriters.Range(func(conn, _ any) bool {
 		if c, ok := conn.(interface{ Close() error }); ok {
+			coreLossClosed.Store(conn, struct{}{})
 			_ = c.Close()
 			n++
 		}

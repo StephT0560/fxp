@@ -85,6 +85,22 @@ func endSession(sessionID string) {
 	}
 }
 
+// coreLossClosed holds client connections the gateway closed itself because
+// core went away; their sessions end without cancel-on-disconnect, which is
+// for clients that drop, not for a gateway-initiated resync.
+var coreLossClosed sync.Map // client conn → struct{}
+
+// endSessionFor ends the session of conn, skipping cancel-on-disconnect when
+// the gateway closed conn because core was lost.
+func endSessionFor(conn any, sessionID string) {
+	if _, ok := coreLossClosed.LoadAndDelete(conn); ok {
+		sessionCOD.Delete(sessionID)
+		invalidateSession(sessionID)
+		return
+	}
+	endSession(sessionID)
+}
+
 // cancelOnDisconnect sends the internal owner-scoped mass cancel.
 var cancelOnDisconnect = func(traderID string) {
 	msg := &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_OrderMassCancel{
