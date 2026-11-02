@@ -46,6 +46,9 @@ Stop the core with SIGTERM or SIGINT and allow its normal shutdown drain to
 complete. Only successful task draining and journal sync finalize a bundle.
 The recorder does not finalize from `Drop`. A timeout, task failure, SIGKILL or
 crash leaves the manifest incomplete. A finalized journal refuses further inputs.
+There is no hook to kill a run at a chosen point mid-recording (the gallery
+runs finish in about a second); to exercise the incomplete path, use a bundle
+whose manifest has `"complete": false`, as the replay tests do.
 
 Recording runs at **event-log speed**: every command still writes and calls
 `sync_data` before execution; shutdown calls `sync_all`. No group commit, altered
