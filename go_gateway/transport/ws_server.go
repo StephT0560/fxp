@@ -101,6 +101,10 @@ func runWebSocketServer(ctx context.Context, listener net.Listener, timeout time
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
+	if !coreReachable() {
+		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	lim, conns := currentLimits(), wsConnsP.Load()
 	if !conns.tryAcquire() {
 		log.Printf("⛔ WebSocket connection limit (%d) reached — rejecting %s", lim.MaxConns, r.RemoteAddr)

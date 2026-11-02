@@ -192,6 +192,19 @@ func restoreMarketData(pc *pooledConn) {
 	}
 }
 
+// up reports whether the connection to core is currently established.
+func (p *pooledConn) up() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.conn != nil && !p.closed
+}
+
+// coreReachable is false while the market-data connection to core is down.
+// Before the pool exists (tests, startup) it does not gate anything.
+func coreReachable() bool {
+	return mdConn == nil || mdConn.up()
+}
+
 // nextConn blocks until a live connection is available, or returns nil once
 // the pool connection is shut down.
 func (p *pooledConn) nextConn() net.Conn {
@@ -362,6 +375,10 @@ func poolReader(pc *pooledConn) {
 		log.Printf("⚠️ Pool reader %d: %v — waiting for reconnect", pc.id, err)
 		pc.markDead(c)
 		if pc.md {
+			// Losing core invalidates every client's view (book, orders, routes).
+			// Drop them so they show a reconnecting state instead of a dead
+			// "live" one; new connections are refused until core is back.
+			disconnectClients()
 			go restoreMarketData(pc)
 		}
 	}

@@ -47,18 +47,26 @@ wait_core_restarted() {
     fail "killed core was not restarted by its restart policy"
 }
 
-check_live "baseline"
+if [[ "${1:-}" == --kill-core ]]; then
+    restarts="$(docker inspect -f '{{.RestartCount}}' "$("${compose[@]}" ps -q core)")"
+    kill_core_process
+    wait_core_restarted "$restarts"
+    exit 0
+fi
 
-"${compose[@]}" stop core >/dev/null
-"${compose[@]}" start core >/dev/null
-check_live "compose stop core && start core"
+check_live "baseline (fresh login)"
 
-"${compose[@]}" restart core >/dev/null
-check_live "compose restart core"
+# One page held open across every disruption: it must leave "live" while core
+# is down and acknowledge the first order after each recovery, without reload.
+compose_cmd="cd $(printf %q "$repo_root") && $(printf '%q ' "${compose[@]}")"
+export FXP_STOP="$compose_cmd stop core >/dev/null"
+export FXP_START="$compose_cmd start core >/dev/null"
+export FXP_RESTART="$compose_cmd restart core >/dev/null"
+export FXP_KILL="bash '$repo_root/scripts/demo_resilience_check.sh' --kill-core"
+if ! (cd web && FXP_CONSOLE_URL=http://127.0.0.1:3000 node scripts/resilience-probe.mjs "$deadline"); then
+    fail "held-open console did not ride through core disruptions"
+fi
 
-restarts="$(docker inspect -f '{{.RestartCount}}' "$("${compose[@]}" ps -q core)")"
-kill_core_process
-wait_core_restarted "$restarts"
-check_live "killed core process (restart policy)"
+check_live "fresh login after disruptions"
 
-echo "PASS demo resilience: console returned to live after every core disruption"
+echo "PASS demo resilience: console followed core down and back after every disruption"

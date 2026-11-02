@@ -26,6 +26,10 @@ loopback as before, and core stays unauthenticated inside it.
 `bash scripts/demo_resilience_check.sh` checks this against a running demo. This is a local
 demo, with plaintext traffic and no user authentication beyond choosing a fixed
 demo identity. Do not expose it as a hosted service.
+When the gateway loses its market-data connection to core it closes every
+client connection and refuses new ones until core is back, so an open console
+shows "reconnecting" (Submit disabled) instead of a stale "live", then
+resynchronises on its own once core returns.
 
 The equivalent Compose command (after `make demo` has created `.env.demo`) is:
 
