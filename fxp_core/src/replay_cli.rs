@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
 mod report;
-const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> --order ID [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ]";
+const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> --order ID [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ] [--force]";
 #[derive(Default)]
 struct Options {
     command: String,
@@ -26,6 +26,14 @@ struct Options {
 }
 fn invalid(s: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, s.into())
+}
+/// OS error text without the raw " (os error N)" suffix.
+fn os_text(e: &io::Error) -> String {
+    let text = e.to_string();
+    match (e.raw_os_error(), text.rfind(" (os error ")) {
+        (Some(_), Some(i)) => text[..i].to_string(),
+        _ => text,
+    }
 }
 fn parse(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
     let mut it = args.into_iter();
@@ -483,7 +491,7 @@ pub fn run(
         Ok(code) => code,
         Err(error) if streaming && error.kind() == io::ErrorKind::BrokenPipe => 0,
         Err(error) => {
-            let _ = writeln!(err, "invalid: {error}");
+            let _ = writeln!(err, "invalid: {}", os_text(&error));
             2
         }
     }

@@ -211,7 +211,7 @@ JSONL is an output format, not a promise of constant-memory replay.
 | --- | --- |
 | 0 | `verify`: counts, digests, final state and available recorded trace match; `diff`: equal runs; other commands: success |
 | 1 | Valid complete inputs diverge (`verify` or `diff`) |
-| 2 | Invalid arguments, I/O failure, tampering, unsupported versions, missing required files, or incomplete `verify`/`diff` input |
+| 2 | Invalid arguments, I/O failure, tampering, unsupported versions (`expected …, found …`), missing required files (`incomplete bundle: <file> missing`), or incomplete `verify`/`diff` input |
 
 Verification runs a fresh engine. On event divergence it prints the first differing
 trace row's global command sequence, symbol, decoded input, expected event and
@@ -339,7 +339,8 @@ Open the generated HTML by double-clicking it. It is one self-contained file,
 with a console-style dark theme, no server, network calls, fonts, dependencies
 or external assets. `--json PATH` emits the same embedded data without HTML;
 both formats can be requested together. Output files must be new and outside
-the bundle; existing files are refused. Unix output permissions are 0600.
+the bundle; an existing file is refused with `<path> already exists; choose
+another path or pass --force`, and `--force` replaces it. Unix output permissions are 0600.
 
 The report shows original bundle provenance and expected/actual digests,
 verification status and the first divergence when available, whole-run counts,

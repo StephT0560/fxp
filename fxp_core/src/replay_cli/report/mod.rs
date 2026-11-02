@@ -20,6 +20,7 @@ struct Config {
     anonymize: bool,
     from: u64,
     to: u64,
+    force: bool,
 }
 fn options(args: &[String]) -> io::Result<Config> {
     let mut c = Config {
@@ -39,6 +40,10 @@ fn options(args: &[String]) -> io::Result<Config> {
         }
         if k == "--anonymize-owners" {
             c.anonymize = true;
+            continue;
+        }
+        if k == "--force" {
+            c.force = true;
             continue;
         }
         let v = it
@@ -700,13 +705,35 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
         },
     ))
 }
-fn save(path: &Path, bundle: &Path, bytes: &[u8]) -> io::Result<()> {
+fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    if parent.canonicalize()?.starts_with(bundle.canonicalize()?) {
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| invalid(format!("cannot write {}: {}", path.display(), os_text(&e))))?;
+    if parent.starts_with(bundle.canonicalize()?) {
         return Err(invalid("report output must be outside the bundle"));
+    }
+    let exists = || {
+        invalid(format!(
+            "{} already exists; choose another path or pass --force",
+            path.display()
+        ))
+    };
+    if fs::symlink_metadata(path).is_ok() {
+        if !force {
+            return Err(exists());
+        }
+        // Remove (never follow) the old entry, then create a fresh private file.
+        fs::remove_file(path).map_err(|e| {
+            invalid(format!(
+                "cannot replace {}: {}",
+                path.display(),
+                os_text(&e)
+            ))
+        })?;
     }
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -715,7 +742,13 @@ fn save(path: &Path, bundle: &Path, bytes: &[u8]) -> io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path)?;
+    let mut file = options.open(path).map_err(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists {
+            exists()
+        } else {
+            invalid(format!("cannot write {}: {}", path.display(), os_text(&e)))
+        }
+    })?;
     if let Err(e) = file.write_all(bytes) {
         drop(file);
         let _ = fs::remove_file(path);
@@ -727,11 +760,16 @@ pub(super) fn execute(args: &[String], out: &mut impl Write) -> io::Result<i32> 
     let c = options(args)?;
     let (data, exit) = generate(&c)?;
     if let Some(p) = &c.html {
-        save(p, &c.bundle, bounded_html(&data, MAX_HTML)?.as_bytes())?;
+        save(
+            p,
+            &c.bundle,
+            bounded_html(&data, MAX_HTML)?.as_bytes(),
+            c.force,
+        )?;
         writeln!(out, "HTML report: {}", p.display())?;
     }
     if let Some(p) = &c.json {
-        save(p, &c.bundle, data.encode().as_bytes())?;
+        save(p, &c.bundle, data.encode().as_bytes(), c.force)?;
         writeln!(out, "JSON report: {}", p.display())?;
     }
     Ok(exit)
