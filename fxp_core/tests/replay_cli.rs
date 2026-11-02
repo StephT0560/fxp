@@ -345,3 +345,42 @@ fn report_refuses_to_overwrite_unless_forced() {
     assert!(!stderr(&out).contains("os error"), "{}", stderr(&out));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn explain_without_order_lists_notable_orders_and_how_to_explain_one() {
+    let dir = golden("replace");
+    let out = cli(&["explain", dir.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.starts_with("explain source=recorded verified=true\n"),
+        "{text}"
+    );
+    assert!(text.contains("TEST B2 owner=alice: 0 fills (0 units); rejected: negative replace fields are invalid (seq 3); canceled: user (seq 4)\n"), "{text}");
+    assert!(
+        text.ends_with(&format!(
+            "Explain one with: fxp-replay explain {} --order ID\n",
+            dir.display()
+        )),
+        "{text}"
+    );
+    let json = cli(&["explain", dir.to_str().unwrap(), "--json"]);
+    assert_eq!(json.status.code(), Some(0));
+    assert!(
+        String::from_utf8(json.stdout)
+            .unwrap()
+            .contains("\"orders\":[")
+    );
+    // --order still explains one order.
+    assert_eq!(
+        cli(&["explain", dir.to_str().unwrap(), "--order", "B"])
+            .status
+            .code(),
+        Some(0)
+    );
+}

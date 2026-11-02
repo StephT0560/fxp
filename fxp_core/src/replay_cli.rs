@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
 mod report;
-const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> --order ID [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ] [--force]";
+const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> [--order ID] [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ] [--force]";
 #[derive(Default)]
 struct Options {
     command: String,
@@ -112,9 +112,6 @@ fn parse(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
     }
     if o.from.zip(o.to).is_some_and(|(a, b)| a > b) {
         return Err(invalid("--from exceeds --to"));
-    }
-    if o.command == "explain" && o.order.is_none() {
-        return Err(invalid("explain requires --order"));
     }
     if o.command == "export" && !o.jsonl {
         return Err(invalid("export requires --jsonl"));
@@ -446,6 +443,102 @@ fn stats(rows: &[Json]) -> Json {
         ),
     ])
 }
+/// An order with at least one fill, reject or cancel, for `explain` without --order.
+struct Notable {
+    symbol: String,
+    order_id: String,
+    owner: String,
+    fills: u64,
+    quantity: u64,
+    outcomes: Vec<(String, String, u64)>,
+}
+impl Notable {
+    fn text(&self) -> String {
+        let mut parts = vec![format!("{} fills ({} units)", self.fills, self.quantity)];
+        parts.extend(
+            self.outcomes
+                .iter()
+                .map(|(kind, cause, seq)| format!("{kind}: {cause} (seq {seq})")),
+        );
+        format!(
+            "{} {} owner={}: {}",
+            self.symbol,
+            self.order_id,
+            self.owner,
+            parts.join("; ")
+        )
+    }
+    fn json(&self) -> Json {
+        Json::object([
+            ("symbol", Json::string(&self.symbol)),
+            ("order_id", Json::string(&self.order_id)),
+            ("owner", Json::string(&self.owner)),
+            ("fills", Json::number(self.fills)),
+            ("fill_quantity", Json::number(self.quantity)),
+            (
+                "outcomes",
+                Json::Array(
+                    self.outcomes
+                        .iter()
+                        .map(|(kind, cause, seq)| {
+                            Json::object([
+                                ("kind", Json::string(kind)),
+                                ("cause", Json::string(cause)),
+                                ("global_seq", Json::number(*seq)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ])
+    }
+}
+fn notable_orders(rows: &[Json]) -> Vec<Notable> {
+    let mut orders: Vec<Notable> = Vec::new();
+    for row in rows {
+        let kind = text(row, "kind");
+        if !matches!(kind, "fill" | "rejected" | "canceled" | "expired")
+            || text(row, "order_id").is_empty()
+        {
+            continue;
+        }
+        let key = (
+            text(row, "symbol"),
+            text(row, "order_id"),
+            text(row, "owner"),
+        );
+        let index = match orders
+            .iter()
+            .position(|o| (o.symbol.as_str(), o.order_id.as_str(), o.owner.as_str()) == key)
+        {
+            Some(i) => i,
+            None => {
+                orders.push(Notable {
+                    symbol: key.0.into(),
+                    order_id: key.1.into(),
+                    owner: key.2.into(),
+                    fills: 0,
+                    quantity: 0,
+                    outcomes: Vec::new(),
+                });
+                orders.len() - 1
+            }
+        };
+        let data = row.get("data").unwrap_or(&Json::Null);
+        let order = &mut orders[index];
+        if kind == "fill" {
+            order.fills += 1;
+            order.quantity += number(data, "quantity");
+        } else {
+            order.outcomes.push((
+                kind.into(),
+                text(data, "cause").into(),
+                number(row, "global_seq"),
+            ));
+        }
+    }
+    orders
+}
 fn explanation(rows: &[Json], order: &str) -> String {
     let commands: BTreeMap<u64, &Json> = rows
         .iter()
@@ -695,6 +788,43 @@ fn execute(
         )?;
     }
     let rows = selected(&run, &o);
+    if o.command == "explain" && o.order.is_none() {
+        let orders = notable_orders(&rows);
+        if o.json {
+            writeln!(
+                out,
+                "{}",
+                Json::object([
+                    ("source", Json::string(run.source())),
+                    ("verified", Json::Bool(run.complete && !run.diverged)),
+                    (
+                        "orders",
+                        Json::Array(orders.iter().map(|o| o.json()).collect())
+                    ),
+                ])
+                .encode()
+            )?;
+        } else {
+            writeln!(
+                out,
+                "explain source={} verified={}",
+                run.source(),
+                run.complete && !run.diverged
+            )?;
+            if orders.is_empty() {
+                writeln!(out, "No fills, rejects or cancels in this scope.")?;
+            }
+            for order in &orders {
+                writeln!(out, "{}", order.text())?;
+            }
+            writeln!(
+                out,
+                "Explain one with: fxp-replay explain {} --order ID",
+                o.paths[0]
+            )?;
+        }
+        return Ok(0);
+    }
     if o.command == "explain" {
         if rows.is_empty() {
             return Err(invalid("order not found in selected scope"));
