@@ -738,10 +738,6 @@ fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()>
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("report");
     let mut attempt = 0u32;
     let (target, mut file) = loop {
         // Forced output goes to a fresh temporary file and is renamed over the old
@@ -751,8 +747,10 @@ fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()>
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.subsec_nanos());
+            // Bounded, unrelated to the output name, so a long but valid
+            // report name never pushes the temp name past the filename limit.
             parent.join(format!(
-                ".{name}.tmp-{}-{nanos}-{attempt}",
+                ".fxp-report-{}-{nanos}-{attempt}.tmp",
                 std::process::id()
             ))
         } else {
