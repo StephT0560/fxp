@@ -8,6 +8,7 @@ services:
   # ports disappear and the stack fails loudly rather than looking healthy.
   netns:
     image: fxp:local
+    pull_policy: never
     command: [sleep, infinity]
     init: true
     stop_grace_period: 2s
@@ -19,6 +20,7 @@ services:
     - dev
   core:
     image: fxp:local
+    pull_policy: build
     restart: unless-stopped
     build: .
     command:
@@ -58,6 +60,7 @@ services:
     - dev
   gateway:
     image: fxp:local
+    pull_policy: never
     restart: unless-stopped
     command:
     - sh
@@ -104,6 +107,7 @@ services:
     - dev
   bridge:
     image: fxp:local
+    pull_policy: never
     restart: unless-stopped
     command:
     - sh

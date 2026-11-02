@@ -27,6 +27,7 @@ services:
     profiles: !override [fix]
   demo_api:
     image: fxp-demo:local
+    pull_policy: build
     build:
       context: .
       dockerfile: Dockerfile.demo
