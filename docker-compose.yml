@@ -8,16 +8,33 @@
 # development use docker-compose.dev.yml with --profile dev.
 #
 # The core listens on 127.0.0.1:8080 and the gateway/bridge dial 127.0.0.1, so
-# all three share the core container's network namespace. Only the client-facing
-# ports are published; the core port stays private.
+# all three share one network namespace, owned by `netns`. Only the
+# client-facing ports are published; the core port stays private.
 
 x-image: &image
   image: fxp:local
   restart: unless-stopped
 
 services:
+  # Owns the network namespace shared by core, gateway and bridge, so
+  # restarting any of them rejoins the same namespace instead of stranding its
+  # peers in a stale one. It runs nothing but sleep and has no restart policy:
+  # if it dies, its published ports disappear and the stack fails loudly rather
+  # than looking healthy.
+  netns:
+    image: fxp:local
+    pull_policy: never
+    command: [sleep, infinity]
+    init: true
+    stop_grace_period: 2s
+    ports:
+      - "${FXP_WS_PORT:-8081}:8081"   # gateway WebSocket
+      - "${FXP_TCP_PORT:-8082}:8082"  # gateway TCP (FXP protobuf)
+      - "${FXP_FIX_PORT:-8083}:8083"  # FIX 4.4 bridge
+
   core:
     <<: *image
+    pull_policy: build
     build: .
     command: ["fxp_core"]
     init: true
@@ -36,10 +53,11 @@ services:
     volumes:
       - core_store:/data/core_store
       - ./config:/etc/fxp/config:ro
-    ports:
-      - "${FXP_WS_PORT:-8081}:8081"   # gateway WebSocket
-      - "${FXP_TCP_PORT:-8082}:8082"  # gateway TCP (FXP protobuf)
-      - "${FXP_FIX_PORT:-8083}:8083"  # FIX 4.4 bridge
+    network_mode: "service:netns"
+    depends_on:
+      netns:
+        condition: service_started
+        restart: true
     healthcheck:
       test: ["CMD", "/usr/local/bin/core_healthcheck"]
       interval: 2s
@@ -52,8 +70,12 @@ services:
     command: ["go_gateway"]
     init: true
     stop_grace_period: 15s
-    network_mode: "service:core"
+    pull_policy: never
+    network_mode: "service:netns"
     depends_on:
+      netns:
+        condition: service_started
+        restart: true
       core:
         condition: service_healthy
     environment:
@@ -92,8 +114,12 @@ services:
     command: ["fix_bridge"]
     init: true
     stop_grace_period: 15s
-    network_mode: "service:core"
+    pull_policy: never
+    network_mode: "service:netns"
     depends_on:
+      netns:
+        condition: service_started
+        restart: true
       gateway:
         condition: service_started
     environment:

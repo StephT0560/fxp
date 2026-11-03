@@ -268,3 +268,155 @@ fn diff_reports_final_state_hashes_when_events_match() {
     assert!(s.contains(&format!("\"final_state_sha256\":\"{}\"", "0".repeat(64))));
     assert!(s.contains("no event-level difference"));
 }
+
+fn stderr(out: &std::process::Output) -> String {
+    String::from_utf8(out.stderr.clone()).unwrap()
+}
+#[test]
+fn bundle_errors_name_the_file_or_version_and_never_raw_os_errors() {
+    for file in [
+        "expected.json",
+        "symbols.csv",
+        "commands.log",
+        "manifest.json",
+        "events.jsonl",
+    ] {
+        let bundle = Temp::copy("stp");
+        std::fs::remove_file(bundle.0.join(file)).unwrap();
+        let out = cli(&["verify", bundle.path()]);
+        assert_eq!(out.status.code(), Some(2), "{file}");
+        let err = stderr(&out);
+        assert_eq!(
+            err,
+            format!("invalid: incomplete bundle: {file} missing\n"),
+            "{file}"
+        );
+    }
+    let bundle = Temp::copy("stp");
+    bundle.edit(
+        "import json,sys,pathlib\np=pathlib.Path(sys.argv[1])/'manifest.json'\nm=json.loads(p.read_text())\nm['bundle_format']='fxp-run-v999'\np.write_text(json.dumps(m))",
+    );
+    let out = cli(&["verify", bundle.path()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(
+        stderr(&out),
+        "invalid: bundle bundle_format mismatch: expected fxp-run-v1, found fxp-run-v999\n"
+    );
+    let out = cli(&["timeline", "definitely-not-a-bundle"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(
+        stderr(&out),
+        "invalid: bundle directory not found: definitely-not-a-bundle\n"
+    );
+}
+#[test]
+fn report_refuses_to_overwrite_unless_forced() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../work/replay-cli-tests")
+        .join(format!("report-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let html = dir.join("mine.html");
+    let html = html.to_str().unwrap();
+    let bundle = golden("stp");
+    let report = |extra: &[&str]| {
+        let mut args = vec!["report", bundle.to_str().unwrap(), "--html", html];
+        args.extend_from_slice(extra);
+        cli(&args)
+    };
+    assert_eq!(report(&[]).status.code(), Some(0));
+    let refused = report(&[]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(
+        stderr(&refused),
+        format!("invalid: {html} already exists; choose another path or pass --force\n")
+    );
+    std::fs::write(html, "stale").unwrap();
+    let forced = report(&["--force"]);
+    assert_eq!(forced.status.code(), Some(0), "{}", stderr(&forced));
+    assert_ne!(std::fs::read_to_string(html).unwrap(), "stale");
+    let same = cli(&[
+        "report",
+        bundle.to_str().unwrap(),
+        "--html",
+        html,
+        "--json",
+        html,
+        "--force",
+    ]);
+    assert_eq!(same.status.code(), Some(2));
+    assert_eq!(
+        stderr(&same),
+        "invalid: --html and --json must name different files\n"
+    );
+    let long = dir.join(format!("{}.html", "r".repeat(245)));
+    std::fs::write(&long, "old").unwrap();
+    let forced = cli(&[
+        "report",
+        bundle.to_str().unwrap(),
+        "--html",
+        long.to_str().unwrap(),
+        "--force",
+    ]);
+    assert_eq!(forced.status.code(), Some(0), "{}", stderr(&forced));
+    assert_ne!(std::fs::read_to_string(&long).unwrap(), "old");
+    let leftovers = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")
+        })
+        .count();
+    assert_eq!(leftovers, 0);
+    let missing_parent = dir.join("no-such-dir/out.html");
+    let out = cli(&[
+        "report",
+        bundle.to_str().unwrap(),
+        "--html",
+        missing_parent.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!stderr(&out).contains("os error"), "{}", stderr(&out));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn explain_without_order_lists_notable_orders_and_how_to_explain_one() {
+    let dir = golden("replace");
+    let out = cli(&["explain", dir.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.starts_with("explain source=recorded verified=true\n"),
+        "{text}"
+    );
+    assert!(text.contains("TEST B2 owner=alice: 0 fills (0 units); rejected: negative replace fields are invalid (seq 3); canceled: user (seq 4)\n"), "{text}");
+    assert!(
+        text.ends_with(&format!(
+            "Explain one with: fxp-replay explain {} --order ID\n",
+            dir.display()
+        )),
+        "{text}"
+    );
+    let json = cli(&["explain", dir.to_str().unwrap(), "--json"]);
+    assert_eq!(json.status.code(), Some(0));
+    assert!(
+        String::from_utf8(json.stdout)
+            .unwrap()
+            .contains("\"orders\":[")
+    );
+    // --order still explains one order.
+    assert_eq!(
+        cli(&["explain", dir.to_str().unwrap(), "--order", "B"])
+            .status
+            .code(),
+        Some(0)
+    );
+}

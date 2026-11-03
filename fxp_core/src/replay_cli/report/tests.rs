@@ -312,11 +312,17 @@ fn divergence_incomplete_tamper_versions_and_output_guards() {
     fs::write(bundle.join("commands.log"), b"tampered").unwrap();
     assert!(generate(&config(bundle)).is_err());
     let bundle = copy_fixture("reject");
-    assert!(save(&bundle.join("bad.html"), &bundle, b"x").is_err());
+    assert!(save(&bundle.join("bad.html"), &bundle, b"x", true).is_err());
     let output = temporary("output").join("report.html");
-    save(&output, &bundle, b"original").unwrap();
-    assert!(save(&output, &bundle, b"replacement").is_err());
-    assert_eq!(fs::read(output).unwrap(), b"original");
+    save(&output, &bundle, b"original", false).unwrap();
+    let refused = save(&output, &bundle, b"replacement", false).unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .ends_with("already exists; choose another path or pass --force")
+    );
+    save(&output, &bundle, b"replacement", true).unwrap();
+    assert_eq!(fs::read(&output).unwrap(), b"replacement");
 }
 
 fn lifecycle_row(seq: u64, kind: &str, id: &str, data: Json) -> Json {

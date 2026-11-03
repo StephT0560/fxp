@@ -18,7 +18,7 @@ ports = [(service, port) for service, cfg in config['services'].items()
          for port in cfg.get('ports', [])]
 assert len(ports) == 1, 'demo must publish exactly one port'
 service, port = ports[0]
-assert service == 'core' and str(port['published']) == '3000' and port['host_ip'] == '127.0.0.1'
+assert service == 'netns' and str(port['published']) == '3000' and port['host_ip'] == '127.0.0.1'
 core_env = config['services']['core']['environment']
 assert 'FXP_SYMBOLS' not in core_env, 'scenario symbols must not be blocked by an inherited allow-list'
 assert str(core_env['FXP_MAX_SYMBOLS']) == '4096'

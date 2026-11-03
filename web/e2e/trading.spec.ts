@@ -59,6 +59,10 @@ test("two users: rest, cross, partial fill, replace, rejects and cancel", async 
   // Client-side validation from /api/symbols.
   await a.getByTestId("ticket-price").fill("50.001");
   await expect(a.getByTestId("ticket-errors")).toContainText("2 decimal places");
+  // Submit stays disabled while an error shows, and names it for assistive tech.
+  await expect(a.getByTestId("ticket-submit")).toBeDisabled();
+  await expect(a.getByTestId("ticket-submit")).toHaveAttribute("aria-describedby", "ticket-errors");
+  await expect(a.locator("#ticket-errors")).toContainText("2 decimal places");
 
   const resting = await place(a, "buy", 100, "50.00");
   await expect(row(a, resting)).toHaveAttribute("data-state", "new");
