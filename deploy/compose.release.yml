@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: MIT
+# Images only. Each project owns one recorded run; no source/config bind mounts.
+x-runtime: &runtime
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  stop_grace_period: 15s
+  stop_signal: SIGTERM
+  restart: "no"
+services:
+  core:
+    <<: *runtime
+    image: ${FXP_CORE_IMAGE:-${FXP_IMAGE_PREFIX:-ghcr.io/stepht0560/fxp}/fxp_core:${FXP_IMAGE_TAG:-v0.1.0}}
+    # Core's fixed loopback namespace is shared by the other online processes.
+    ports:
+      - "127.0.0.1:${FXP_TCP_PORT:-8082}:8082"
+      - "127.0.0.1:${FXP_WS_PORT:-8081}:8081"
+      - "127.0.0.1:${FXP_FIX_PORT:-8083}:8083"
+    environment:
+      FXP_CORE_AUTH_TOKEN: ${FXP_CORE_AUTH_TOKEN:?set a fresh core token}
+      FXP_RUN_RECORD: /data/${FXP_RUN_ID:-run-001}
+      # Null passes through only when set; otherwise core's default {} applies.
+      FXP_RUN_META_JSON:
+    volumes: [run_data:/data]
+    healthcheck:
+      test: [CMD, /healthcheck, -core]
+      interval: 1s
+      timeout: 6s
+      retries: 30
+  gateway:
+    <<: *runtime
+    image: ${FXP_GATEWAY_IMAGE:-${FXP_IMAGE_PREFIX:-ghcr.io/stepht0560/fxp}/go_gateway:${FXP_IMAGE_TAG:-v0.1.0}}
+    network_mode: service:core
+    depends_on:
+      core: {condition: service_healthy}
+    environment:
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set a fresh JWT secret}
+      FXP_CORE_AUTH_TOKEN: ${FXP_CORE_AUTH_TOKEN:?set a fresh core token}
+      FXP_JWT_ISSUER: fxp-release
+      FXP_JWT_AUDIENCE: fxp-release-gateway
+      FXP_JWT_REPLAY_CACHE: "on"
+      # The only published ports are bound to host loopback. Never host this
+      # disposable plaintext example on an external interface.
+      FXP_GW_TCP_ADDR: 0.0.0.0:8082
+      FXP_GW_WS_ADDR: 0.0.0.0:8081
+      FXP_ALLOW_PLAINTEXT: "true"
+    healthcheck:
+      test: [CMD, /healthcheck, -addr, "127.0.0.1:8082"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  simday:
+    <<: *runtime
+    image: ${FXP_SIMDAY_IMAGE:-${FXP_IMAGE_PREFIX:-ghcr.io/stepht0560/fxp}/simday:${FXP_IMAGE_TAG:-v0.1.0}}
+    network_mode: service:core
+    depends_on:
+      gateway: {condition: service_healthy}
+    environment:
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set a fresh JWT secret}
+      FXP_JWT_ISSUER: fxp-release
+      FXP_JWT_AUDIENCE: fxp-release-gateway
+    command: [-symbols, "2", -participants, "6", -duration, "${FXP_SIM_DURATION:-300}", -seed, "7"]
+  bridge:
+    <<: *runtime
+    image: ${FXP_FIX_IMAGE:-${FXP_IMAGE_PREFIX:-ghcr.io/stepht0560/fxp}/fix_bridge:${FXP_IMAGE_TAG:-v0.1.0}}
+    profiles: [fix]
+    network_mode: service:core
+    depends_on:
+      gateway: {condition: service_healthy}
+    environment:
+      FXP_JWT_SECRET: ${FXP_JWT_SECRET:?set a fresh JWT secret}
+      FXP_JWT_ISSUER: fxp-release
+      FXP_JWT_AUDIENCE: fxp-release-gateway
+      FXP_FIX_CREDENTIALS: ${FXP_FIX_CREDENTIALS:-}
+      FXP_FIX_STORE_DIR: /data/fix_store
+      FXP_FIX_ADDR: 0.0.0.0:8083
+      FXP_ALLOW_PLAINTEXT: "true"
+    volumes: [fix_data:/data]
+  replay:
+    <<: *runtime
+    image: ${FXP_REPLAY_IMAGE:-${FXP_IMAGE_PREFIX:-ghcr.io/stepht0560/fxp}/fxp-replay:${FXP_IMAGE_TAG:-v0.1.0}}
+    profiles: [tools]
+    network_mode: none
+    volumes: [run_data:/runs:ro, reports:/data]
+    command: [verify, "/runs/${FXP_RUN_ID:-run-001}"]
+volumes:
+  run_data:
+  fix_data:
+  reports:

@@ -37,6 +37,17 @@ optional JSON object (default `{}`), for caller metadata such as simulator seeds
 Invalid JSON, duplicate keys and non-object metadata are rejected before the
 server accepts traffic. Metadata is limited to 4 MiB and 64 nesting levels.
 
+Sandbox can inject immutable image references with this existing object, for
+example `{"images":{"fxp_core":"ghcr.io/owner/fxp/fxp_core@sha256:<resolved-digest>"}}`.
+The reference must come from the Runner's resolved image, not an untrusted upload;
+recording metadata does not authenticate it. Normal (non-anonymized)
+`fxp-replay report --html ... --json ...` preserves the digest strings in manifest
+provenance; integer metadata follows the report's decimal-string JSON contract.
+Anonymized reports intentionally omit free-form meta. See [release packaging and
+the tested injection workflow](releasing.md#inject-image-digests-through-existing-bundle-meta-f2)
+and `make release-smoke`. No bundle or report schema changes are needed.
+
+
 Session schedule, symbol rules and STP are still configured with
 `FXP_SESSION_SCHEDULE`, `FXP_SYMBOL_CONFIG` and `FXP_STP_DEFAULT`. The effective
 symbol configuration is copied as normalized CSV, including the empty file when
