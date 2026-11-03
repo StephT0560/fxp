@@ -33,7 +33,7 @@ pub fn sha256(bytes: &[u8]) -> String {
     digest_hex(&Sha256::digest(bytes))
 }
 fn hash_file(path: &Path) -> io::Result<String> {
-    let mut f = File::open(path)?;
+    let mut f = crate::replay_limits::input(path)?;
     let mut h = Sha256::new();
     let mut buf = [0; 65536];
     loop {
@@ -41,6 +41,7 @@ fn hash_file(path: &Path) -> io::Result<String> {
         if n == 0 {
             break;
         }
+        crate::replay_limits::checkpoint()?;
         h.update(&buf[..n]);
     }
     Ok(digest_hex(&h.finalize()))
@@ -261,8 +262,8 @@ fn missing_as_incomplete<T>(name: &str, result: io::Result<T>) -> io::Result<T> 
         }
     })
 }
-fn read_bundle_file(dir: &Path, name: &str) -> io::Result<String> {
-    missing_as_incomplete(name, fs::read_to_string(dir.join(name)))
+pub(crate) fn read_bundle_file(dir: &Path, name: &str) -> io::Result<String> {
+    missing_as_incomplete(name, crate::replay_limits::read_text(&dir.join(name)))
 }
 pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
     if !dir.is_dir() {
@@ -271,8 +272,10 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
             dir.display()
         )));
     }
+    crate::replay_limits::preflight(dir)?;
     let manifest = Json::parse(&read_bundle_file(dir, "manifest.json")?)?;
     require(&manifest, "bundle_format", BUNDLE_VERSION)?;
+    require(&manifest, "symbol_config_file", "symbols.csv")?;
     require(
         &manifest,
         "replay_version",
@@ -328,9 +331,13 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
                 "trace_sha256",
                 &missing_as_incomplete("events.jsonl", hash_file(&path))?,
             )?;
-            let rows = read_bundle_file(dir, "events.jsonl")?
-                .lines()
-                .map(Json::parse)
+            // Stream rows so --max-events does not first allocate an entire trace.
+            let file = missing_as_incomplete("events.jsonl", crate::replay_limits::input(&path))?;
+            let rows = std::io::BufRead::lines(std::io::BufReader::new(file))
+                .map(|line| {
+                    crate::replay_limits::events(1)?;
+                    Json::parse(&line?)
+                })
                 .collect::<io::Result<Vec<_>>>()?;
             for row in &rows {
                 for key in ["symbol", "kind", "order_id", "owner", "client_order_id"] {

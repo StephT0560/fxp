@@ -464,6 +464,7 @@ impl Privacy {
     }
 }
 fn generate(c: &Config) -> io::Result<(Json, i32)> {
+    crate::replay_limits::preflight(&c.bundle)?;
     let mut bytes = 0;
     for name in [
         "manifest.json",
@@ -482,7 +483,10 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
         return Err(invalid("report input exceeds 256 MiB limit"));
     }
     let run = inspect_bundle(&c.bundle)?;
-    let manifest = Json::parse(&fs::read_to_string(c.bundle.join("manifest.json"))?)?;
+    let manifest = Json::parse(&crate::reproducibility::read_bundle_file(
+        &c.bundle,
+        "manifest.json",
+    )?)?;
     let rows = if run.diverged {
         &run.rows
     } else {
@@ -509,9 +513,9 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
         Json::Null => None,
         j => Some(j.text()?.parse().map_err(invalid)?),
     };
-    let config = crate::symbol_config::SymbolConfig::parse(&fs::read_to_string(
-        c.bundle.join("symbols.csv"),
-    )?)
+    let config = crate::symbol_config::SymbolConfig::parse(
+        &crate::reproducibility::read_bundle_file(&c.bundle, "symbols.csv")?,
+    )
     .map_err(invalid)?;
     let stp = crate::order_book::order::StpMode::parse(manifest.get("stp_default")?.text()?)
         .map_err(invalid)?;

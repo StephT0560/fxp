@@ -29,6 +29,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked --bin fxp_core --bin fxp-replay
 
 FROM golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS go-build
+ARG VERSION=dev
+ARG GIT_SHA=unknown
 ENV PATH=/opt/protoc/bin:/go/bin:$PATH CGO_ENABLED=0 GOMAXPROCS=4 GOFLAGS=-p=4
 COPY --from=protoc /opt/protoc /opt/protoc
 WORKDIR /src
@@ -44,7 +46,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
     bash scripts/gen_proto.sh \
     && mkdir -m 700 -p /out/data \
-    && (cd go_gateway && go build -trimpath -o /out/go_gateway . \
+    && (cd go_gateway && go build -trimpath -ldflags "-X go_gateway/metrics.Version=${VERSION} -X go_gateway/metrics.GitSHA=${GIT_SHA}" -o /out/go_gateway . \
         && go build -trimpath -o /out/simday ./simulation \
         && go build -trimpath -o /out/healthcheck ./cmd/healthcheck) \
     && (cd fix_bridge && go build -trimpath -o /out/fix_bridge .)

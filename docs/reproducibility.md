@@ -462,3 +462,47 @@ explanations use recorded rows when verified; the book always comes from a fresh
 engine replay whose final digest/state summary is cross-checked against the
 verification pass. This export is an inspection artifact, not a new wire format
 or a signed verification receipt.
+
+## Optional replay processing budgets
+
+Every `fxp-replay` subcommand accepts these flags before or after its normal
+arguments, as `--name VALUE` or `--name=VALUE`. Omit them to retain the existing
+unlimited CLI behavior (including the report command's existing internal caps).
+
+| Flag | Unit and scope |
+| --- | --- |
+| `--max-events N` | Processing work budget: journal records replayed, recorded trace rows parsed, and replay outputs produced. Counts all of those work items together, across both diff inputs and report replay passes. It is **not** the canonical business-event digest count. Zero refuses the first work event. |
+| `--max-bytes N` | Aggregate lengths of the five fixed bundle input files (`manifest.json`, `symbols.csv`, `commands.log`, `events.jsonl`, `expected.json`), across distinct files in the invocation. Re-reading a file for hashing/reporting does not charge it again. Preflight runs before allocation; bounded text reads also enforce actual bytes. Extra unrelated files are not processed. Zero refuses nonempty inputs. |
+| `--max-wall-seconds SECONDS` | Positive finite elapsed wall duration, measured with a monotonic clock; fractional seconds supported. Cooperative checkpoints plus an executable watchdog cover parsing, hashing, replay and report generation. |
+| `--max-memory-mb MiB` | Positive integer, best-effort **process RSS**, in 1024² bytes. Linux `/proc/self/status` required; unsupported platforms reject the flag with exit 2 instead of pretending it is enforced. Checkpoints and a 10 ms watchdog can miss short spikes and are not an OS allocation/address-space limit. |
+
+Example for a worker, using temporary output paths it controls:
+
+```bash
+fxp-replay report /work/bundle --html /work/report.html \
+  --max-events 500000 --max-bytes 134217728 \
+  --max-wall-seconds 30 --max-memory-mb 256
+```
+
+A breached budget exits **3** and emits one JSON error line on stderr, for example:
+
+```json
+{"error":"resource_limit","limit":"max-events"}
+```
+
+The other `limit` values are `max-bytes`, `max-wall-seconds` and `max-memory-mb`.
+Existing codes remain: 0 success/equality, 1 divergence, 2 invalid/incomplete
+input or invalid flags. Multiple simultaneous breaches may report either limit.
+Warnings are held until successful completion when budgets are enabled, keeping
+limit failures machine-readable. Stdout or output files can be partial on a late
+wall/memory breach: never publish/consume them as a successful report on exit 3.
+
+Bundles must be immutable/read-only throughout an invocation. Readers use fixed
+filenames, reject symlinks and special files (including FIFOs), and reject a
+manifest whose `symbol_config_file` is not `symbols.csv`. No archive extraction or
+bundle-supplied path evaluation is performed. Existing 64-level JSON nesting and
+4 MiB journal-record bounds remain intact. Use **all** budgets for untrusted
+worker input; no-flags verify/timeline are not a resource sandbox. Run a worker as
+an unprivileged user with read-only input, private temporary output, no network,
+and external OS/container CPU/memory/time limits. RSS sampling cannot guarantee
+survival of host/container OOM pressure or concurrent input replacement.

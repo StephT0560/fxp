@@ -4,6 +4,7 @@ package transport
 
 import (
 	"context"
+	"go_gateway/metrics"
 	"log"
 	"net"
 	"net/http"
@@ -118,6 +119,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		log.Println("❌ WebSocket upgrade failed:", err)
 		return
 	}
+	defer metrics.Client()()
 	registerClientWriter(conn)
 	defer unregisterClientWriter(conn)
 	conn.SetReadLimit(int64(lim.MaxFramePreAuth))
@@ -153,6 +155,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		metrics.Raw(message, true)
 		// Auth-aware router: enforces Logon before any other message type.
 		HandleFXPMessageAuthenticated(conn, msg, &sessionID)
 		if !authed && sessionID != "" {

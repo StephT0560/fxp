@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"go_gateway/diagnostics"
+	"go_gateway/metrics"
 	"io"
 	"log"
 	"log/slog"
@@ -107,7 +108,10 @@ func (p *pooledConn) write(frame []byte) error {
 		return errConnDown
 	}
 	diagnostics.Raw("gateway_core_write", frame[4:])
-	_, err := p.conn.Write(frame)
+	n, err := p.conn.Write(frame)
+	if err == nil && n == len(frame) {
+		metrics.Command(frame[4:])
+	}
 	return err
 }
 
@@ -423,6 +427,7 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		routeStatusResponse(msg)
 
 	case *protobuf.FXPMessage_ExecutionReport:
+		metrics.Response(msg)
 		rep := payload.ExecutionReport
 		orderID := rep.OrderId
 		status := protobuf.OrderStatus(rep.OrderStatus)

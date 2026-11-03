@@ -6,6 +6,7 @@ import (
 	"context"
 	"go_gateway/diagnostics"
 	"go_gateway/logging"
+	"go_gateway/metrics"
 	"go_gateway/startup"
 	"go_gateway/tlsconfig"
 	"go_gateway/transport"
@@ -28,6 +29,12 @@ func main() {
 	defer stopSignals()
 	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
+
+	stopMetrics, metricsErr := metrics.Start(ctx, os.Getenv("FXP_GW_METRICS_ADDR"))
+	if metricsErr != nil {
+		log.Fatalf("metrics: %v", metricsErr)
+	}
+	defer stopMetrics()
 
 	manager, err := tlsconfig.ServerFromEnv()
 	if err != nil {
