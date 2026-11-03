@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { consoleFetch, useRun } from "../lib/run-config";
 import { useState } from "react";
 import { useInspector, type InspectedFrame } from "../lib/inspector";
 import { parseFixPreview } from "../lib/fix-preview";
@@ -9,6 +10,7 @@ const control = `rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text
 const block = "rounded border border-neutral-800 bg-neutral-900/50 p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-all";
 
 export function ProtocolInspector() {
+  const run = useRun();
   useInspector((s) => s.version);
   const rows = useInspector.getState().rows;
   const [type, setType] = useState("");
@@ -20,7 +22,7 @@ export function ProtocolInspector() {
   async function compare(row: InspectedFrame) {
     setComparison({ id: row.id, text: "Translating…" });
     try {
-      const res = await fetch("/api/inspect/fix", {
+      const res = await consoleFetch(run, "/api/inspect/fix", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ frame: row.orderFrame }),
@@ -89,7 +91,7 @@ export function ProtocolInspector() {
         {selected && (
           <div className="mt-4 min-w-0 space-y-3" data-testid="frame-detail">
             {!preview && <div className="min-w-0">{details}</div>}
-            {selected.orderFrame && <button className={`${neutralButton} text-sm`} onClick={() => void compare(selected)}>FXP vs FIX for this order</button>}
+            {selected.orderFrame && (!run || run.apiUrl) && <button className={`${neutralButton} text-sm`} onClick={() => void compare(selected)}>FXP vs FIX for this order</button>}
             {comparison?.id === selected.id && (
               <div className="min-w-0" role="status">
                 {preview ? <>

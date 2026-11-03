@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { consoleEvents, consoleFetch, useRun } from "../lib/run-config";
 import { fromJson } from "@bufbuild/protobuf";
 import { useEffect, useRef, useState } from "react";
 import { FXPMessageSchema } from "../gen/fxp_pb";
@@ -70,6 +71,7 @@ function ObserverBlotter({ symbol }: { symbol: string }) {
   );
 }
 export default function ScenariosPage() {
+  const hostRun = useRun();
   const [list, setList] = useState<Scenario[]>([]);
   const [run, setRun] = useState<Run>();
   const [seed, setSeed] = useState("71");
@@ -77,7 +79,7 @@ export default function ScenariosPage() {
   const [error, setError] = useState("");
   const [streamState, setStreamState] = useState("");
   const [busy, setBusy] = useState(false);
-  const source = useRef<EventSource>();
+  const source = useRef<{ close: () => void }>();
   const current = useRef<Run>();
   const cursor = useRef(0);
   function watch(next: Run) {
@@ -87,8 +89,8 @@ export default function ScenariosPage() {
     setRun(next);
     setEvents([]);
     setStreamState("Connecting narration…");
-    const stream = new EventSource(
-      `/api/scenarios/${next.scenario}/events?run=${encodeURIComponent(next.run_id)}`,
+    const stream = consoleEvents(hostRun,
+      `/api/scenarios/${encodeURIComponent(next.scenario)}/events?run=${encodeURIComponent(next.run_id)}`,
     );
     source.current = stream;
     stream.onopen = () => setStreamState("Narration connected");
@@ -135,7 +137,7 @@ export default function ScenariosPage() {
   }
   useEffect(() => {
     let active = true;
-    fetch("/api/scenarios")
+    consoleFetch(hostRun, "/api/scenarios")
       .then((r) => {
         if (!r.ok) throw Error("Could not load scenarios");
         return r.json();
@@ -161,7 +163,7 @@ export default function ScenariosPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`/api/scenarios/${id}/run`, {
+      const res = await consoleFetch(hostRun, `/api/scenarios/${encodeURIComponent(id)}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ seed: Number(seed) }),
@@ -178,8 +180,8 @@ export default function ScenariosPage() {
     if (!run) return;
     setBusy(true);
     try {
-      const res = await fetch(
-        `/api/scenarios/${run.scenario}/stop?run=${run.run_id}`,
+      const res = await consoleFetch(hostRun,
+        `/api/scenarios/${encodeURIComponent(run.scenario)}/stop?run=${encodeURIComponent(run.run_id)}`,
         { method: "POST" },
       );
       if (!res.ok) throw Error((await res.text()).trim());

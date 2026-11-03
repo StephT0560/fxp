@@ -80,3 +80,8 @@ release-images:
 
 release-smoke:
 	python3 scripts/release_smoke.py
+
+.PHONY: console-embed
+console-embed:
+	cd web && npm run build
+	python3 scripts/serve_console_embed.py

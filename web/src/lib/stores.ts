@@ -18,7 +18,7 @@ import { applyTrade, emptyTape, resyncTape, type Tape } from "./tape";
 import type { SymbolRules } from "./validate";
 
 
-export type ConnState = "idle" | "connecting" | "live" | "reconnecting" | "rejected";
+export type ConnState = "idle" | "connecting" | "live" | "reconnecting" | "rejected" | "ended";
 
 export interface SessionState {
   user?: string;

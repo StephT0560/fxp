@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AuctionBanner } from "./components/AuctionBanner";
 import { Blotter } from "./components/Blotter";
 import { Chart } from "./components/Chart";
@@ -28,6 +28,7 @@ const ScenariosPage = lazy(() => import("./components/ScenariosPage"));
 const LatencyPanel = lazy(() => import("./components/LatencyPanel"));
 import { ProtocolInspector } from "./components/ProtocolInspector";
 import { useInspector } from "./lib/inspector";
+import { RunContext, DEFAULT_RUN_SYMBOLS, type RunSession } from "./lib/run-config";
 
 function Stats({ symbol, scale }: { symbol: string; scale: number }) {
   useTape((s) => s.version);
@@ -52,12 +53,15 @@ function Stats({ symbol, scale }: { symbol: string; scale: number }) {
   );
 }
 
-export function App() {
-  const user = useSession((s) => s.user);
-  useAuctionTimers(Boolean(user));
+export function App({ run, onTokenExpired }: { run?: Omit<RunSession, "expire">; onTokenExpired?: () => void }) {
+  const demoUser = useSession((s) => s.user);
+  const user = run?.runId ?? demoUser;
+  useAuctionTimers(Boolean(user) && !run);
   const setUser = useSession((s) => s.setUser);
   const { list, selected, setList } = useSymbols();
   const client = useRef<ConsoleClient>(undefined);
+  const runSession = useMemo(() => run ? { ...run, expire: () => client.current?.expire() } : undefined, [run]);
+  const demoControls = !run || Boolean(run.features?.demoControls && run.apiUrl && !run.readOnly);
   const [quickDemo, setQuickDemo] = useState(false);
   const quickStarted = useRef(false);
   const conn = useSession((s) => s.conn);
@@ -67,6 +71,7 @@ export function App() {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
+    if (run) { setList(run.symbols ?? DEFAULT_RUN_SYMBOLS); return; }
     fetch("/api/symbols")
       .then((r) =>
         r.ok
@@ -75,7 +80,7 @@ export function App() {
       )
       .then(setList)
       .catch((e: Error) => setError(e.message));
-  }, [setList]);
+  }, [setList, run]);
 
   useEffect(() => {
     if (!user) return;
@@ -83,6 +88,8 @@ export function App() {
     useInspector.getState().clear();
     const c = new ConsoleClient({
       user,
+      run,
+      onTokenExpired,
       symbols: () => useSymbols.getState().list.map((s) => s.symbol),
     });
     client.current = c;
@@ -93,7 +100,7 @@ export function App() {
       useInspector.getState().clear();
       if (activeClient.current === c) activeClient.current = undefined;
     };
-  }, [user]);
+  }, [user, run, onTokenExpired]);
 
   useEffect(() => {
     if (!quickDemo || user !== "alice" || conn !== "live" || quickStarted.current) return;
@@ -110,13 +117,14 @@ export function App() {
   const info = list.find((s) => s.symbol === selected);
   const scale = info?.price_scale ?? 2;
   return (
+    <RunContext.Provider value={runSession}>
     <div className="flex h-full flex-col">
-      <StatusBar symbol={selected} onLogout={() => { setQuickDemo(false); setUser(undefined); }} />
+      <StatusBar symbol={selected} runId={run?.runId} readOnly={run?.readOnly} showLogout={demoControls} onLogout={() => { if (run) { client.current?.expire(); return; } setQuickDemo(false); setUser(undefined); }} />
       <nav
         className="flex gap-1 border-b border-neutral-800 bg-neutral-950 px-4 py-2"
         aria-label="Console panels"
       >
-        {["market", "scenarios", "latency", "protocol"].map((v) => (
+        {["market", ...(demoControls ? ["scenarios", "latency"] : []), "protocol"].map((v) => (
           <button
             key={v}
             className={`rounded px-3 py-1 text-sm text-neutral-400 hover:bg-neutral-800 aria-pressed:bg-neutral-700 aria-pressed:text-white ${buttonFocus}`}
@@ -151,11 +159,11 @@ export function App() {
           <SymbolList />
           {selected && (
             <>
-              <Ladder symbol={selected} scale={scale} onPrice={(price) => setPricePick({ symbol: selected, price })} />
+              <Ladder symbol={selected} scale={scale} onPrice={run?.readOnly || conn === "ended" ? undefined : (price) => setPricePick({ symbol: selected, price })} />
               <main className="flex min-w-0 flex-1 flex-col gap-2 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Stats symbol={selected} scale={scale} />
-                  <SimControls />
+                  {demoControls && <SimControls />}
                 </div>
                 <Chart symbol={selected} scale={scale} />
               </main>
@@ -165,11 +173,12 @@ export function App() {
         </div>
         {info && (
           <div className="trading-panel flex min-h-0 shrink-0 border-t border-neutral-800">
-            <OrderTicket key={selected} rules={info} pricePick={pricePick?.symbol === selected ? pricePick : undefined} />
-            <Blotter symbol={selected!} />
+            {!run?.readOnly && conn !== "ended" && <OrderTicket key={selected} rules={info} pricePick={pricePick?.symbol === selected ? pricePick : undefined} />}
+            <Blotter symbol={selected!} readOnly={run?.readOnly || conn === "ended"} />
           </div>
         )}
       </div>
     </div>
+    </RunContext.Provider>
   );
 }

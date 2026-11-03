@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>FXP Console embed host</title><link rel="stylesheet" href="./host.css"></head>
+<body>
+<h1>Embed one FXP run</h1>
+<p>Use a short-lived token from your trusted host. Nothing is saved to storage or a URL.</p>
+<form id="connect">
+<label>Gateway WebSocket URL <input id="gateway" value="ws://127.0.0.1:8081/ws" required></label>
+<label>Run ID <input id="run-id" value="local-run" required maxlength="128"></label>
+<label>Token <input id="token" type="password" autocomplete="off" required maxlength="16384"></label>
+<label>Delivery <select id="delivery"><option value="injected">Injected object</option><option value="message">Parent handshake</option></select></label>
+<label><input id="read-only" type="checkbox"> Read-only viewer</label>
+<label><input id="notify" type="checkbox"> Notify host when token expires</label>
+<button>Connect run</button>
+</form>
+<p id="host-status" role="status">Not connected</p>
+<iframe id="console" name="fxp-console" title="Run console" referrerpolicy="no-referrer"></iframe>
+<script type="module" src="./host.js"></script>
+</body></html>

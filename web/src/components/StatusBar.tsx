@@ -9,6 +9,7 @@ const connColor: Record<ConnState, string> = {
   reconnecting: "bg-amber-400",
   live: "bg-emerald-400",
   rejected: "bg-red-500",
+  ended: "bg-red-500",
 };
 
 export function phaseName(p: TradingPhase | undefined): string {
@@ -26,7 +27,7 @@ export function phaseName(p: TradingPhase | undefined): string {
   }
 }
 
-export function StatusBar({ symbol, onLogout }: { symbol?: string; onLogout: () => void }) {
+export function StatusBar({ symbol, onLogout, runId, readOnly, showLogout = true }: { symbol?: string; onLogout: () => void; runId?: string; readOnly?: boolean; showLogout?: boolean }) {
   const { conn, attempt, error, user, phases } = useSession();
   const symbols = useSymbols((s) => s.list);
   const select = useSymbols((s) => s.select);
@@ -44,10 +45,10 @@ export function StatusBar({ symbol, onLogout }: { symbol?: string; onLogout: () 
       <span data-testid="phase">
         {symbol ?? "—"}: <span className="text-neutral-100">{phaseName(phase)}</span>
       </span>
-      <span className="ml-auto text-neutral-400">{user}</span>
-      <button onClick={onLogout} className={neutralButton}>
-        Log out
-      </button>
+      <span className="ml-auto text-neutral-400">{runId ? <span data-testid="run-id">Run {runId}{readOnly ? " · read only" : ""}</span> : user}</span>
+      {showLogout && <button onClick={onLogout} className={neutralButton}>
+        {runId ? "Disconnect" : "Log out"}
+      </button>}
     </header>
   );
 }
