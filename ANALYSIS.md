@@ -159,7 +159,7 @@ Maintainer evidence (`docs/performance/phase1-lite.md`, `subscriber-isolation.md
 | 4 | **Hosted sandbox prerequisites** (only after step 3 says yes): real sign-in and per-tenant identities replacing the 3 shared demo users; per-tenant books or namespaces and quotas; BFF multiplexing of one upstream subscription per symbol; TLS + core token between hosts; `/metrics` and an admin API (halts, kill switch, session monitor); log retention and abuse limits | Each item in I4 | several sessions |
 | 5 | Venue-grade capabilities (only if a real-money customer appears): HA/replication, drop copy, pre-trade risk limits, surveillance export, JWKS/asymmetric keys, pegs | Not needed for either sandbox wedge | large |
 
-Also worth doing early: a second maintainer or a company entity. Everything since round 5 was authored by one person (two author names, same email domain), and a paying sandbox user will ask who supports it.
+Also worth doing early: a second maintainer or a company entity. All 162 commits since round 5 come from one person (author names `Stephen` / `Stephen Tisselin`, one personal address plus the GitHub noreply address), and a paying sandbox user will ask who supports it.
 
 ---
 
