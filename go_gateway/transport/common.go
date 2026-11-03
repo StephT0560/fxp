@@ -5,6 +5,7 @@ package transport
 import (
 	"encoding/binary"
 	"fmt"
+	"go_gateway/metrics"
 	"log"
 	"log/slog"
 	"net"
@@ -87,6 +88,7 @@ func EncodeFXPMessage(payload proto.Message) ([]byte, error) {
 // ✅ Unified FXP Message Router (TCP or WebSocket, based on conn type)
 // ===================================================================
 func HandleFXPMessage(conn any, msg *protobuf.FXPMessage) {
+	metrics.Processed(msg)
 	slog.Debug("HandleFXPMessage", "type", fmt.Sprintf("%T", msg.Payload))
 
 	switch payload := msg.Payload.(type) {
@@ -277,6 +279,7 @@ func sendOrderReject(conn any, msg *protobuf.FXPMessage, reason string) {
 }
 
 func writeFXPMessage(conn any, msg *protobuf.FXPMessage) error {
+	metrics.Response(msg)
 	raw, err := proto.Marshal(msg)
 	if err != nil {
 		return err

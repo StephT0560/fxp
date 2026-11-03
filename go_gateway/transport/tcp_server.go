@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"go_gateway/diagnostics"
+	"go_gateway/metrics"
 	"log"
 	"log/slog"
 	"net"
@@ -103,6 +104,7 @@ func handleTCPClient(clientConn net.Conn) {
 }
 
 func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
+	defer metrics.Client()()
 	defer unregisterClientWriter(clientConn)
 	lim := currentLimits()
 	sessionID := ""
@@ -138,6 +140,7 @@ func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 			log.Println("⚠️ FXPMessage has no payload")
 			continue
 		}
+		metrics.Raw(msgBuf, true)
 		diagnostics.Message("gateway_receive", msg)
 		HandleFXPMessageAuthenticated(clientConn, msg, &sessionID)
 		if !authed && sessionID != "" {

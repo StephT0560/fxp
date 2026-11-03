@@ -279,11 +279,12 @@ impl EventLog {
             .next_seq
             .checked_add(1)
             .ok_or_else(|| invalid("event sequence exhausted"))?;
-        if let Err(error) = self
-            .file
-            .write_all(&bytes)
-            .and_then(|()| self.file.sync_data())
-        {
+        if let Err(error) = self.file.write_all(&bytes).and_then(|()| {
+            let start = crate::metrics::fsync_start();
+            let result = self.file.sync_data();
+            crate::metrics::fsync_done(start, result.is_ok());
+            result
+        }) {
             self.failed = true;
             return Err(error);
         }
@@ -467,7 +468,7 @@ impl<R: Clone> Journal<R> {
             &[Output<R>],
         ) -> io::Result<()>,
     ) -> io::Result<Self> {
-        let mut file = File::open(path)?;
+        let mut file = crate::replay_limits::input(path)?;
         let mut magic = [0; 8];
         file.read_exact(&mut magic)?;
         if &magic != MAGIC {
@@ -531,6 +532,7 @@ impl<R: Clone> Journal<R> {
             if record.seq != journal.log.next_seq {
                 return Err(invalid("event log sequence gap"));
             }
+            crate::replay_limits::events(1)?;
             let input = Input::decode(&record)?;
             let outputs = journal.execute(
                 &record.symbol,
@@ -541,6 +543,7 @@ impl<R: Clone> Journal<R> {
                 input,
                 journal.detached.clone(),
             );
+            crate::replay_limits::events(outputs.len())?;
             observe(
                 record.seq,
                 &record.symbol,

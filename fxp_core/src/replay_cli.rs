@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
 mod report;
-const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> [--order ID] [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ] [--force]";
+const USAGE: &str = "fxp-replay verify <bundle>\nfxp-replay timeline <bundle> [--order ID | --client-order-id ID] [--owner OWNER] [--symbol SYMBOL] [--from SEQ] [--to SEQ] [--json]\nfxp-replay explain <bundle> [--order ID] [--owner OWNER] [--symbol SYMBOL] [--json]\nfxp-replay diff <bundleA> <bundleB> [--json]\nfxp-replay export <bundle> --jsonl [timeline filters]\nfxp-replay report <bundle> --html out.html [--json out.json] [--owner NAME] [--anonymize-owners] [--from SEQ --to SEQ] [--force]\nAll commands: [--max-events N] [--max-bytes N] [--max-wall-seconds SECONDS] [--max-memory-mb MiB]";
 #[derive(Default)]
 struct Options {
     command: String,
@@ -655,6 +655,25 @@ pub fn run(
     err: &mut impl Write,
 ) -> i32 {
     let args: Vec<_> = args.into_iter().collect();
+    let (limits, args) = match crate::replay_limits::Limits::extract(args) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            let _ = writeln!(err, "invalid: {error}");
+            return 2;
+        }
+    };
+    let _scope = limits.enter();
+    if let Err(error) = crate::replay_limits::checkpoint() {
+        if let Some(limit) = error
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<crate::replay_limits::Exceeded>())
+        {
+            crate::replay_limits::report(err, limit.0);
+            return crate::replay_limits::EXIT_LIMIT;
+        }
+        let _ = writeln!(err, "invalid: {error}");
+        return 2;
+    }
     if args.len() == 1 && ["--help", "-h"].contains(&args[0].as_str()) {
         return if writeln!(out, "{USAGE}").is_ok() {
             0
@@ -665,14 +684,53 @@ pub fn run(
     let streaming = args
         .first()
         .is_some_and(|s| ["timeline", "explain", "export"].contains(&s.as_str()));
-    match execute(args, out, err) {
-        Ok(code) => code,
+    // Hold warning diagnostics until completion when a budget is active, so a
+    // late watchdog/limit failure still emits exactly one machine-readable line.
+    let mut diagnostics = Vec::new();
+    let result = if limits.active() {
+        execute(args, out, &mut diagnostics)
+    } else {
+        execute(args, out, err)
+    }
+    .and_then(|code| {
+        crate::replay_limits::checkpoint()?;
+        Ok(code)
+    });
+    match result {
+        Ok(code) => {
+            if limits.active() && err.write_all(&diagnostics).is_err() {
+                return 2;
+            }
+            code
+        }
         Err(error) if streaming && error.kind() == io::ErrorKind::BrokenPipe => 0,
+        Err(error)
+            if error
+                .get_ref()
+                .is_some_and(|e| e.is::<crate::replay_limits::Exceeded>()) =>
+        {
+            let limit = error
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<crate::replay_limits::Exceeded>()
+                .unwrap();
+            crate::replay_limits::report(err, limit.0);
+            crate::replay_limits::EXIT_LIMIT
+        }
         Err(error) => {
             let _ = writeln!(err, "invalid: {}", os_text(&error));
             2
         }
     }
+}
+/// Executable adapter with a process-wide watchdog for wall/RSS limits.
+pub fn run_process(args: Vec<String>) -> i32 {
+    crate::replay_limits::process_mode();
+    let _watch = match crate::replay_limits::Limits::extract(args.clone()) {
+        Ok((limits, _)) => Some(limits.watch()),
+        Err(_) => None, // run reports argument validation with its existing exit code.
+    };
+    run(args, &mut std::io::stdout(), &mut std::io::stderr())
 }
 fn execute(
     args: impl IntoIterator<Item = String>,

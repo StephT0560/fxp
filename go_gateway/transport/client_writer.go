@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"go_gateway/diagnostics"
+	"go_gateway/metrics"
 	"io"
 	"log"
 	"log/slog"
@@ -249,7 +250,12 @@ func (w *clientWriter) run() {
 	}
 }
 
-func (w *clientWriter) write(raw []byte) error {
+func (w *clientWriter) write(raw []byte) (result error) {
+	defer func() {
+		if result == nil {
+			metrics.Raw(raw, false)
+		}
+	}()
 	diagnostics.Raw("gateway_client_write", raw)
 	switch conn := w.conn.(type) {
 	case net.Conn:

@@ -147,10 +147,11 @@ jobs:
           E2E_LOG_DIR: ${{ runner.temp }}/e2e-tls
       - name: CI gate regression tests
         run: |
-          python3 -m pip install PyYAML==6.0.3
+          python3 -m pip install PyYAML==6.0.3 -r tests/ops/requirements.txt
           python3 -m unittest discover -s tests/ci -v
           python3 -m unittest discover -s tests/compose -v
           python3 -m unittest discover -s tests/security -v
+          python3 -m unittest discover -s tests/ops -v
           python3 -m unittest discover -s tests -p "test_*.py" -v
       - name: Default secure Compose build and smoke
         run: bash scripts/compose_check.sh

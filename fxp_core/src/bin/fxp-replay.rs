@@ -11,10 +11,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let code = fxp_core::replay_cli::run(
-        args,
-        &mut std::io::stdout().lock(),
-        &mut std::io::stderr().lock(),
-    );
+    let code = fxp_core::replay_cli::run_process(args);
     std::process::exit(code);
 }

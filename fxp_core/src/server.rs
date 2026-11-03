@@ -570,6 +570,7 @@ async fn configured_order_book_task(
                 },
             }
         };
+        crate::metrics::command();
         if let Some(id) = &trace_id {
             crate::diagnostics::event("engine_end", id);
         }
@@ -674,6 +675,7 @@ async fn read_framed_message(read_half: &mut OwnedReadHalf) -> Result<Vec<u8>, s
 fn frame_message(msg: &fxp::FxpMessage) -> Vec<u8> {
     #[cfg(all(test, feature = "phase1"))]
     phase1::ENCODES.fetch_add(1, AtomicOrdering::Relaxed);
+    crate::metrics::response(msg);
     let mut encoded = Vec::new();
     msg.encode(&mut encoded).unwrap();
     let mut framed = (encoded.len() as u32).to_be_bytes().to_vec();
@@ -729,12 +731,14 @@ async fn handle_authenticated_client(
     writers: mpsc::UnboundedSender<tokio::task::JoinHandle<()>>,
     auth: crate::core_auth::CoreAuth,
 ) {
+    let _metrics_client = crate::metrics::client();
     if auth.enabled() {
         let authenticated = tokio::select! {
             _ = shutdown.changed() => false,
             result = tokio::time::timeout(Duration::from_secs(5), auth.authenticate(&mut stream)) => matches!(result, Ok(Ok(()))),
         };
         if !authenticated {
+            crate::metrics::reject("authentication");
             tracing::warn!("core authentication failed; connection closed");
             return;
         }
@@ -765,12 +769,12 @@ async fn handle_tcp_client_with_shutdown(
                 changed = writer_drain.changed() => {
                     if changed.is_err() || *writer_drain.borrow() {
                         while let Ok(frame) = output_rx.try_recv() {
-                            if { crate::diagnostics::frame("core_write", &frame[4..]); w.write_all(&frame).await }.is_err() {
+                            if { crate::diagnostics::frame("core_write", &frame[4..]); w.write_all(&frame).await.inspect(|_| crate::metrics::frame(&frame[4..], false)) }.is_err() {
                                 break;
                             }
                         }
                         while let Ok(frame) = md_rx.try_recv() {
-                            if { crate::diagnostics::frame("core_write", &frame[4..]); w.write_all(&frame).await }.is_err() {
+                            if { crate::diagnostics::frame("core_write", &frame[4..]); w.write_all(&frame).await.inspect(|_| crate::metrics::frame(&frame[4..], false)) }.is_err() {
                                 break;
                             }
                         }
@@ -798,7 +802,9 @@ async fn handle_tcp_client_with_shutdown(
             if let Some(frame) = frame
                 && {
                     crate::diagnostics::frame("core_write", &frame[4..]);
-                    w.write_all(&frame).await
+                    w.write_all(&frame)
+                        .await
+                        .inspect(|_| crate::metrics::frame(&frame[4..], false))
                 }
                 .is_err()
             {
@@ -841,6 +847,7 @@ async fn handle_tcp_client_with_shutdown(
             }
         };
 
+        crate::metrics::frame(body.as_slice(), true);
         match fxp::FxpMessage::decode(body.as_slice()) {
             Ok(msg) => match msg.payload {
                 Some(fxp::fxp_message::Payload::NewOrder(order)) => {
@@ -1302,6 +1309,9 @@ async fn accept_client(listener: &TcpListener) -> std::io::Result<tokio::net::Tc
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub async fn start_server(shutdown: impl Future<Output = ()> + Send) -> Result<(), String> {
+    let _metrics = crate::metrics::start()
+        .await
+        .map_err(|e| format!("metrics: {e}"))?;
     let schedule = match std::env::var("FXP_SESSION_SCHEDULE") {
         Ok(value) => parse_session_schedule(Some(&value)),
         Err(std::env::VarError::NotPresent) => parse_session_schedule(None),
