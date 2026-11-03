@@ -37,6 +37,19 @@ class ComposeTests(unittest.TestCase):
         self.assertNotIn('/etc/fxp', targets)
         self.assertIn('/etc/fxp/config', targets)
 
+    def test_secure_peers_share_a_stable_namespace_owner(self):
+        # Same as dev/demo: restarting core must not strand gateway/bridge in a
+        # stale namespace, and the core port stays unpublished.
+        result = self.config('docker-compose.yml', 'y' * 32)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        services = json.loads(result.stdout)['services']
+        for name in ['core', 'gateway', 'bridge']:
+            self.assertEqual(services[name]['network_mode'], 'service:netns', name)
+            self.assertTrue(services[name]['depends_on']['netns']['restart'], name)
+            self.assertNotIn('ports', services[name])
+        self.assertIn(services['netns'].get('restart', 'no'), ['no', None])
+        self.assertEqual(sorted(p['target'] for p in services['netns']['ports']), [8081, 8082, 8083])
+
     def test_dev_is_explicit_and_needs_no_token(self):
         result = self.config('docker-compose.dev.yml', None)
         self.assertEqual(result.returncode, 0, result.stderr)
