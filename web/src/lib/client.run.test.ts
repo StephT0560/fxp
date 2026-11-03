@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FXPMessageSchema, OrderSide, OrderType, TimeInForce, SelfTradePrevention } from "../gen/fxp_pb";
 import { ConsoleClient } from "./client";
 import { decodeFrame } from "./proto";
-import { parseRunConfig, RUN_ENDED } from "./run-config";
+import { consoleFetch, parseRunConfig, RUN_ENDED } from "./run-config";
 import { useOrders, useSession } from "./stores";
 import type { OrderDraft } from "./validate";
 
@@ -36,7 +36,7 @@ async function connect(readOnly: boolean, callback = vi.fn()) {
   const socket = Socket.all.at(-1)!; socket.onopen?.(); socket.ack();
   return { client, socket, callback, forbiddenFetch, run };
 }
-afterEach(() => { for (const client of clients.splice(0)) client.stop(); Socket.all = []; vi.useRealTimers(); useOrders.getState().reset(); useSession.getState().setConn("idle"); });
+afterEach(() => { for (const client of clients.splice(0)) client.stop(); Socket.all = []; vi.useRealTimers(); vi.unstubAllGlobals(); useOrders.getState().reset(); useSession.getState().setConn("idle"); });
 
 describe("run-scoped transport", () => {
   it("uses only supplied URL/token and blocks every read-only mutation before optimistic state or frames", async () => {
@@ -50,6 +50,30 @@ describe("run-scoped transport", () => {
     expect(socket.sent).toHaveLength(before); expect(useOrders.getState().blotter.rows.size).toBe(0);
     expect(socket.sent.map(f => decodeFrame(f).payload.case)).toEqual(["logon", "marketDataRequest", "orderStatusRequest"]);
     expect(forbiddenFetch).not.toHaveBeenCalled();
+  });
+  it.each(["close", "rejection"])("blocks run HTTP after terminal %s even before JWT expiry", async reason => {
+    const { client, socket, run } = await connect(false);
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    if (reason === "close") socket.onclose?.(new CloseEvent("close", { code: 1000 }));
+    else socket.ack(false);
+    expect(Date.now()).toBeLessThan(run.expiresAt);
+    expect(useSession.getState().conn).toBe("ended");
+    const session = { ...run, apiUrl: "http://127.0.0.1:3000/", expire: () => client.expire() };
+    for (const path of ["/api/sim/start", "/api/scenarios/test/run"]) {
+      await expect(consoleFetch(session, path, { method: "POST" })).rejects.toThrow(RUN_ENDED);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    // Demo HTTP still uses the existing path even when a run has ended.
+    await consoleFetch(undefined, "/api/sim/start", { method: "POST" });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("allows authenticated run HTTP during a transient reconnect", async () => {
+    const { client, socket, run } = await connect(false);
+    socket.onclose?.(new CloseEvent("close", { code: 1006 }));
+    expect(useSession.getState().conn).toBe("reconnecting");
+    const fetch = vi.fn().mockResolvedValue(new Response("{}")); vi.stubGlobal("fetch", fetch);
+    await consoleFetch({ ...run, apiUrl: "http://127.0.0.1:3000/", expire: () => client.expire() }, "/api/sim/start", { method: "POST" });
+    expect(fetch).toHaveBeenCalledOnce();
   });
   it("retains trading for writable runs", async () => {
     const { client, socket } = await connect(false);

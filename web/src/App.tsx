@@ -61,13 +61,14 @@ export function App({ run, onTokenExpired }: { run?: Omit<RunSession, "expire">;
   const { list, selected, setList } = useSymbols();
   const client = useRef<ConsoleClient>(undefined);
   const runSession = useMemo(() => run ? { ...run, expire: () => client.current?.expire() } : undefined, [run]);
-  const demoControls = !run || Boolean(run.features?.demoControls && run.apiUrl && !run.readOnly);
+  const conn = useSession((s) => s.conn);
+  const demoControls = !run || Boolean(run.features?.demoControls && run.apiUrl && !run.readOnly && conn !== "ended");
   const [quickDemo, setQuickDemo] = useState(false);
   const quickStarted = useRef(false);
-  const conn = useSession((s) => s.conn);
   const [pricePick, setPricePick] = useState<{ symbol: string; price: bigint }>();
   useEffect(() => setPricePick(undefined), [selected]);
   const [panel, setPanel] = useState("market");
+  useEffect(() => { if (!demoControls) setPanel("market"); }, [demoControls]);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -141,12 +142,12 @@ export function App({ run, onTokenExpired }: { run?: Omit<RunSession, "expire">;
           </button>
         ))}
       </nav>
-      {panel === "scenarios" && (
+      {demoControls && panel === "scenarios" && (
         <Suspense fallback={<p>Loading scenarios…</p>}>
           <ScenariosPage />
         </Suspense>
       )}
-      {panel === "latency" && (
+      {demoControls && panel === "latency" && (
         <Suspense fallback={<p>Loading latency panel…</p>}>
           <LatencyPanel />
         </Suspense>

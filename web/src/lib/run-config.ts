@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { createContext, useContext } from "react";
 import type { SymbolRules } from "./validate";
+import { useSession } from "./stores";
 
 export interface RunConfig {
   gatewayUrl: string;
@@ -138,7 +139,7 @@ export function createEmbedding(win: Window) {
 export async function consoleFetch(run: RunSession | undefined, path: string, init?: RequestInit): Promise<Response> {
   if (!run) return fetch(path, init);
   if (!run.apiUrl || !path.startsWith("/api/") || /^\/api\/(token|users)(?:[/?]|$)/.test(path) || path.includes("\\")) throw Error("Run HTTP API not configured for this operation");
-  if (Date.now() >= run.expiresAt) { run.expire(); throw Error(RUN_ENDED); }
+  if (useSession.getState().conn === "ended" || Date.now() >= run.expiresAt) { run.expire(); throw Error(RUN_ENDED); }
   const base = new URL(run.apiUrl.endsWith("/") ? run.apiUrl : run.apiUrl + "/");
   const url = new URL(path.slice(1), base);
   if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname) || url.hash) throw Error("Invalid run API path");

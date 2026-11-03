@@ -145,3 +145,39 @@ test("token expiration is terminal and notifies only the allowed host without a 
   expect(JSON.stringify(callbackMessages).includes(token)).toBe(false);
   await expect(frame(page).getByTestId("ticket-submit")).toHaveCount(0);
 });
+
+test("terminal close removes optional mutation panels before the token expires", async ({ page }) => {
+  const token = await host(page);
+  await page.evaluate(() => {
+    const hostWindow = window as unknown as { __FXP_EMBED_SETUP__: (child: Window) => void };
+    const setup = hostWindow.__FXP_EMBED_SETUP__;
+    hostWindow.__FXP_EMBED_SETUP__ = child => {
+      setup(child);
+      const config = child.__FXP_CONSOLE__ as Record<string, unknown>;
+      config.features = { demoControls: true };
+      config.apiUrl = location.origin;
+    };
+  });
+  // Market data still comes from the real stack; only the optional host API is
+  // supplied here. Terminate a live socket while its real JWT remains valid.
+  await page.route("**/api/scenarios", route => route.fulfill({ json: { scenarios: [] } }));
+  let terminate: (() => Promise<void>) | undefined;
+  await page.routeWebSocket("**/ws", socket => {
+    socket.connectToServer();
+    terminate = () => socket.close({ code: 1000 });
+  });
+  await enter(page, token);
+  await expect(frame(page).getByTestId("conn-state")).toContainText("live");
+  await expect(frame(page).getByTestId("sim-start")).toBeVisible();
+  await frame(page).getByRole("button", { name: "Scenarios", exact: true }).click();
+  await expect(frame(page).getByRole("heading", { name: "Seeded scenarios" })).toBeVisible();
+  expect(terminate).toBeDefined();
+  await terminate!();
+  await expect(frame(page).getByTestId("conn-error")).toHaveText("Run ended or token expired");
+  await expect(frame(page).getByTestId("sim-start")).toHaveCount(0);
+  await expect(frame(page).getByRole("button", { name: "Scenarios", exact: true })).toHaveCount(0);
+  await expect(frame(page).getByRole("button", { name: "Latency", exact: true })).toHaveCount(0);
+  await expect(frame(page).getByRole("heading", { name: "Seeded scenarios" })).toHaveCount(0);
+  await expect(frame(page).getByTestId("ticket-submit")).toHaveCount(0);
+  await expect(frame(page).getByRole("button", { name: "Market", exact: true })).toHaveAttribute("aria-pressed", "true");
+});

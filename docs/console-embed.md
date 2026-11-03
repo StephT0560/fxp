@@ -91,7 +91,9 @@ At JWT `exp`, rejected Logon, auth-denied HTTP (401/403), or terminal WS close
 (1000/1008/4401/4403), run mode closes the connection, cancels retries and displays
 **“Run ended or token expired”**. Transient transport loss uses bounded reconnect
 backoff while the supplied token remains valid; it never fetches a demo token.
-Expiry is checked before sends/reconnects as well as by a timer. This is client
+Expiry is checked before sends/reconnects as well as by a timer. A terminal
+session also refuses optional HTTP requests and unmounts demo mutation panels,
+even when its JWT has time remaining; transient reconnects remain nonterminal. This is client
 UX, not a substitute for server-side revocation/permission enforcement.
 
 With `notifyTokenExpired: true`, the console sends exactly once:
