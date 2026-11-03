@@ -21,8 +21,16 @@ const SCHEMA: &[u8] = include_bytes!("../proto/fxp.proto");
 fn invalid(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
+fn digest_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
+}
 pub fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    digest_hex(&Sha256::digest(bytes))
 }
 fn hash_file(path: &Path) -> io::Result<String> {
     let mut f = File::open(path)?;
@@ -35,7 +43,7 @@ fn hash_file(path: &Path) -> io::Result<String> {
         }
         h.update(&buf[..n]);
     }
-    Ok(format!("{:x}", h.finalize()))
+    Ok(digest_hex(&h.finalize()))
 }
 
 /// Engine-generated timestamps are business time. Headers and routing handles
@@ -84,7 +92,7 @@ impl Stream {
     fn result(&self) -> EventDigest {
         EventDigest {
             count: self.count,
-            sha256: format!("{:x}", self.hasher.clone().finalize()),
+            sha256: digest_hex(&self.hasher.clone().finalize()),
         }
     }
 }
@@ -602,5 +610,26 @@ mod additive_gallery_tests {
         assert!(!compatible_trace(std::slice::from_ref(&new), &[tampered]));
         let changed = Json::parse(r#"{"data":{"cause":"other"},"global_seq":1}"#).unwrap();
         assert!(!compatible_trace(&[old], &[changed]));
+    }
+}
+
+#[cfg(test)]
+mod digest_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn digest_bytes_preserve_leading_zeroes_and_lowercase() {
+        assert_eq!(digest_hex(&[0, 1, 15, 16, 128, 255]), "00010f1080ff");
+        assert_eq!(
+            sha256(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let mut stream = Stream::default();
+        stream.push(b"abc");
+        let mut bytes = CANONICAL_VERSION.as_bytes().to_vec();
+        bytes.push(0);
+        bytes.extend_from_slice(b"abc");
+        assert_eq!(stream.result().sha256, sha256(&bytes));
+        assert_eq!(stream.result().count, 1);
     }
 }
