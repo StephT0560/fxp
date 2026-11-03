@@ -13,10 +13,14 @@ DIST = ROOT / 'web/dist'
 
 
 class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass  # Never log request URLs or any caller-supplied query data.
+
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
         fixed = {'/': EXAMPLE / 'index.html', '/index.html': EXAMPLE / 'index.html',
                  '/host.js': EXAMPLE / 'host.js', '/host.css': EXAMPLE / 'host.css',
+                 '/bootstrap.js': EXAMPLE / 'bootstrap.js',
                  '/console.html': DIST / 'index.html', '/favicon.svg': DIST / 'favicon.svg'}
         source = fixed.get(path)
         if source is None and path.startswith('/assets/'):
@@ -27,6 +31,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         content = source.read_bytes()
+        if path == '/console.html':
+            content = content.replace(b'<head>', b'<head><script src="/bootstrap.js"></script>', 1)
         self.send_response(200)
         self.send_header('Content-Type', mimetypes.guess_type(source)[0] or 'application/octet-stream')
         self.send_header('Content-Length', str(len(content)))

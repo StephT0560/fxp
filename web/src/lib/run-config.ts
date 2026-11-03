@@ -162,8 +162,15 @@ export function consoleEvents(run: RunSession | undefined, path: string): EventF
   const abort = new AbortController();
   let retry: ReturnType<typeof setTimeout> | undefined;
   let lastId = "";
+  let expiry: ReturnType<typeof setTimeout> | undefined;
   const feed: EventFeed = { onopen: null, onerror: null, onmessage: null,
-    close: () => { abort.abort(); clearTimeout(retry); } };
+    close: () => { abort.abort(); clearTimeout(retry); clearTimeout(expiry); } };
+  const checkExpiry = () => {
+    const remaining = run.expiresAt - Date.now();
+    if (remaining <= 0) { run.expire(); feed.close(); }
+    else expiry = setTimeout(checkExpiry, Math.min(remaining, 2147483647));
+  };
+  checkExpiry();
   const connect = async () => {
     try {
       const res = await consoleFetch(run, path, { signal: abort.signal, headers: lastId ? { "Last-Event-ID": lastId } : {} });
@@ -193,7 +200,8 @@ export function consoleEvents(run: RunSession | undefined, path: string): EventF
     } catch (error) {
       if (abort.signal.aborted) return;
       feed.onerror?.(new Event("error"));
-      if (!(error instanceof Error && error.message === RUN_ENDED) && Date.now() < run.expiresAt) retry = setTimeout(() => void connect(), 1000);
+      if (error instanceof Error && error.message === RUN_ENDED) { feed.close(); return; }
+      if (Date.now() < run.expiresAt) retry = setTimeout(() => void connect(), 1000);
     }
   };
   void connect();

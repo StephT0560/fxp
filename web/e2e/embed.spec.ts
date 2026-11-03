@@ -24,17 +24,24 @@ async function seed(page: Page) {
   const id = (await auxiliary.getByTestId("ticket-result").innerText()).split(":")[0]!.trim();
   await expect(auxiliary.locator(`[data-order-id="${id}"]`)).toHaveAttribute("data-state", "new");
   await auxiliary.close();
+  const simulator = await page.request.post("/api/sim/start", { data: { seed: 42, duration: 120, symbols: 2, participants: 6, opening_auction_sec: 0 } });
+  expect([200, 202, 409].includes(simulator.status())).toBe(true);
   return id;
 }
 async function host(page: Page) {
   // Only static file hosting is adapted to the existing stack's origin. There
   // are no mocked market/token APIs or protocol responses: WS goes to the BFF.
-  const consoleHtml = await (await page.request.get("/")).text();
+  const rootResponse = await page.request.get("/");
+  // Chromium requires explicit local-network permission for WS from the
+  // intercepted static-host iframe. This grants only the local test origin.
+  await page.context().grantPermissions(["local-network-access"], { origin: new URL(rootResponse.url()).origin });
+  const consoleHtml = (await rootResponse.text()).replace("<head>", '<head><script src="/bootstrap.js"></script>');
   await page.route("**/__fxp_embed__/**", async route => {
     const filename = new URL(route.request().url()).pathname.split("/").at(-1)!;
     if (!["index.html", "host.js", "host.css"].includes(filename)) { await route.abort(); return; }
     await route.fulfill({ body: readFileSync(new URL(filename, example)), contentType: filename.endsWith("html") ? "text/html" : filename.endsWith("js") ? "text/javascript" : "text/css" });
   });
+  await page.route("**/bootstrap.js", route => route.fulfill({ body: readFileSync(new URL("bootstrap.js", example)), contentType: "text/javascript" }));
   await page.route("**/console.html", route => route.fulfill({ body: consoleHtml, contentType: "text/html" }));
   await page.goto("/__fxp_embed__/index.html");
   const response = await page.request.post("/api/token", { data: { user: "alice" } });
@@ -86,8 +93,7 @@ test("read-only embed shows own orders but has no mutation controls or order fra
 });
 
 test("ignores foreign-source/origin init, then accepts the allowed parent nonce handshake", async ({ page }) => {
-  const token = await host(page);
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     window.addEventListener("message", event => {
       if (event.data?.type === "fxp-console:ready") {
         event.stopImmediatePropagation();
@@ -95,9 +101,13 @@ test("ignores foreign-source/origin init, then accepts the allowed parent nonce 
       }
     }, { capture: true });
   });
+  const token = await host(page);
   await enter(page, token, "message");
   await expect(frame(page).getByRole("status")).toContainText("Waiting for run configuration");
   await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { readyNonce?: string }).readyNonce))).toBe(true);
+  await frame(page).locator("body").evaluate(() => window.addEventListener("message", event => {
+    if (event.origin === "null" && event.source !== parent && event.data?.type === "fxp-console:init") (window as unknown as { foreignSeen: boolean }).foreignSeen = true;
+  }));
   await page.evaluate(({ token, origin }) => {
     const nonce = (window as unknown as { readyNonce: string }).readyNonce;
     const config = { gatewayUrl: origin.replace(/^http/, "ws") + "/ws", token, runId: "embed-run", readOnly: true };
@@ -106,10 +116,10 @@ test("ignores foreign-source/origin init, then accepts the allowed parent nonce 
     hostile.sandbox.add("allow-scripts");
     // A foreign opaque-origin sibling has the valid nonce/config, but not the
     // allowed parent's source or origin. Only test-controlled JSON is embedded.
-    hostile.srcdoc = `<script>parent.frames[0].postMessage(${JSON.stringify(payload).replace(/</g, "\\u003c")}, ${JSON.stringify(origin)})<\/script>`;
+    hostile.srcdoc = `<script>parent.frames[0].postMessage(${JSON.stringify(payload).replace(/</g, "\\u003c")}, ${JSON.stringify(origin)})</script>`;
     document.body.append(hostile);
   }, { token, origin: new URL(page.url()).origin });
-  await page.waitForTimeout(100);
+  await expect.poll(() => frame(page).locator("body").evaluate(() => (window as unknown as { foreignSeen?: boolean }).foreignSeen)).toBe(true);
   await expect(frame(page).getByRole("status")).toContainText("Waiting for run configuration");
   await page.evaluate(({ token, origin }) => {
     const child = (document.querySelector("#console") as HTMLIFrameElement).contentWindow!;
