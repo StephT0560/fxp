@@ -73,3 +73,10 @@ repro-blind:
 	@PYTHONPATH="$(CURDIR)/examples/bot_repro$${PYTHONPATH:+:$$PYTHONPATH}" $${FXP_REPRO_PYTHON:-python3} -m gallery.blind blind
 repro-reveal:
 	@PYTHONPATH="$(CURDIR)/examples/bot_repro$${PYTHONPATH:+:$$PYTHONPATH}" $${FXP_REPRO_PYTHON:-python3} -m gallery.blind reveal
+
+.PHONY: release-images release-smoke
+release-images:
+	bash scripts/build_release_images.sh
+
+release-smoke:
+	python3 scripts/release_smoke.py

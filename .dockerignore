@@ -11,3 +11,9 @@ go_gateway/protobuf/*.pb.go
 !.env.example
 certs
 work
+
+# Local dependency caches are not release build inputs.
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.egg-info

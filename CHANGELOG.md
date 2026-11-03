@@ -7,6 +7,19 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Pinned release containers (prepared for v0.1.0)
+- Five multi-stage, non-root distroless images for core, gateway, simday, FIX bridge
+  and replay, with pinned multiarch bases and version/source-revision OCI labels.
+- Tag-triggered native amd64/arm64 GHCR builds, immutable index/platform digests
+  in release notes and `images.json`, plus an images-only local Compose example.
+- Required PR image smoke: SDK order/fill, simulator, SIGTERM bundle finalization,
+  IDENTICAL replay, and image-digest metadata in bundle and HTML/JSON report.
+- Existing `FXP_RUN_META_JSON` supplies provenance without a manifest schema change;
+  integer metadata keeps the report's existing decimal-string representation.
+- Maintainer tag/publication commands documented; these changes do not create a
+  v0.1.0 tag. Existing static-artifact release automation remains in place.
+
+
 ### Seeded console scenarios v0.2
 - Six narrated, self-checking real-gateway scenarios on fresh SCN-* books,
   with SSE replay, deterministic same-seed outcomes, single-flight execution,

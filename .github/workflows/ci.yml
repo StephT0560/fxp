@@ -419,10 +419,41 @@ jobs:
           path: target/bot-repro.*
           retention-days: 7
 
+  release-images:
+    name: release-images (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Prepare SDK (no external calls during smoke)
+        run: python -m pip install -e sdk/python
+      - name: Release metadata unit tests
+        run: python -m unittest discover -s tests/release -v
+      - name: Build all five native release images, no push
+        env:
+          FXP_IMAGE_TAG: ci
+        run: make release-images
+      - name: Images-only SDK, SIGTERM, verify and digest-meta report smoke
+        env:
+          FXP_IMAGE_TAG: ci
+        run: make release-smoke
+
   # Keep this name stable: the main ruleset requires only ci-success.
   ci-success:
     name: ci-success
-    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto, demo-api, console-e2e, repro-smoke]
+    needs: [rust, cargo-deny, go, e2e, quickfix-acceptance, proto, demo-api, console-e2e, repro-smoke, release-images]
     if: always()
     runs-on: ubuntu-latest
     steps:

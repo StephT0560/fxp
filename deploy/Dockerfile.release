@@ -1,0 +1,98 @@
+# syntax=docker/dockerfile:1
+# SPDX-License-Identifier: MIT
+# Five targets share native builders; every external FROM pins a multiarch index.
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS protoc
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=secret,id=proxy_ca \
+    set -eu; \
+    if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+    case "$TARGETARCH" in \
+      amd64) arch=x86_64; checksum=f853e691868d0557425ea290bf7ba6384eef2fa9b04c323afab49a770ba9da80 ;; \
+      arm64) arch=aarch_64; checksum=9eae1f20f70cccc912d1c318c3929b86aebf5afd4b0f32c196ef682c222ed5ae ;; \
+      *) echo 'unsupported architecture' >&2; exit 1 ;; \
+    esac; \
+    curl -fsSLo /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-${arch}.zip"; \
+    printf '%s  /tmp/protoc.zip\n' "$checksum" | sha256sum -c -; \
+    unzip -q /tmp/protoc.zip -d /opt/protoc
+
+FROM rust:1.99.1-slim-bookworm@sha256:24707e70a4f1e23d9a7b25202ec43126d28a52294b96aad5c670df1fd1f1d400 AS rust-build
+ARG GIT_SHA=unknown
+ENV PATH=/opt/protoc/bin:$PATH FXP_BUILD_GIT_SHA=$GIT_SHA CARGO_BUILD_JOBS=4
+COPY --from=protoc /opt/protoc /opt/protoc
+WORKDIR /src/fxp_core
+COPY fxp_core/ ./
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export CARGO_HTTP_CAINFO=/run/secrets/proxy_ca; fi; \
+    cargo build --release --locked --bin fxp_core --bin fxp-replay
+
+FROM golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS go-build
+ENV PATH=/opt/protoc/bin:/go/bin:$PATH CGO_ENABLED=0 GOMAXPROCS=4 GOFLAGS=-p=4
+COPY --from=protoc /opt/protoc /opt/protoc
+WORKDIR /src
+COPY go.work go.work.sum ./
+COPY go_gateway/ go_gateway/
+COPY fix_bridge/ fix_bridge/
+COPY demo_api/go.mod demo_api/go.sum demo_api/
+COPY fxp_core/proto/ fxp_core/proto/
+COPY scripts/gen_proto.sh scripts/
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
+    bash scripts/gen_proto.sh \
+    && mkdir -m 700 -p /out/data \
+    && (cd go_gateway && go build -trimpath -o /out/go_gateway . \
+        && go build -trimpath -o /out/simday ./simulation \
+        && go build -trimpath -o /out/healthcheck ./cmd/healthcheck) \
+    && (cd fix_bridge && go build -trimpath -o /out/fix_bridge .)
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS go-runtime
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.revision=$GIT_SHA \
+      org.opencontainers.image.source=https://github.com/StephT0560/fxp \
+      org.opencontainers.image.licenses=MIT
+COPY --from=go-build --chown=65532:65532 /out/data /data
+COPY --chmod=444 LICENSE /LICENSE
+USER 65532:65532
+WORKDIR /data
+STOPSIGNAL SIGTERM
+
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f AS rust-runtime
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.revision=$GIT_SHA \
+      org.opencontainers.image.source=https://github.com/StephT0560/fxp \
+      org.opencontainers.image.licenses=MIT
+COPY --from=go-build --chown=65532:65532 /out/data /data
+COPY --chmod=444 LICENSE /LICENSE
+USER 65532:65532
+WORKDIR /data
+STOPSIGNAL SIGTERM
+
+FROM rust-runtime AS fxp_core
+COPY --from=rust-build /src/fxp_core/target/release/fxp_core /fxp_core
+COPY --from=go-build /out/healthcheck /healthcheck
+ENTRYPOINT ["/fxp_core"]
+
+FROM go-runtime AS go_gateway
+COPY --from=go-build /out/go_gateway /go_gateway
+COPY --from=go-build /out/healthcheck /healthcheck
+ENTRYPOINT ["/go_gateway"]
+
+FROM go-runtime AS simday
+COPY --from=go-build /out/simday /simday
+ENTRYPOINT ["/simday"]
+
+FROM go-runtime AS fix_bridge
+COPY --from=go-build /out/fix_bridge /fix_bridge
+ENTRYPOINT ["/fix_bridge"]
+
+FROM rust-runtime AS fxp-replay
+COPY --from=rust-build /src/fxp_core/target/release/fxp-replay /fxp-replay
+ENTRYPOINT ["/fxp-replay"]
