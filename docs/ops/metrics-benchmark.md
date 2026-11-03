@@ -2,8 +2,10 @@
 
 Measured November 3, 2026 on one shared Linux VM. Baseline main is
 `314bdd5fa7222e61368ebecf3c2c3db50f50a0a8`; instrumented code is
-`09bfe856f211dd3742335a3a14efee618bf116bf`. Subsequent commits add only this
-measurement documentation unless explicitly noted. The branch changes no engine
+`09bfe856f211dd3742335a3a14efee618bf116bf`. The later review fix adds a 32-connection admission cap to the gateway metrics
+listener; the trading-message instrumentation measured here is unchanged.
+The table records the original instrumentation benchmark, before that listener
+admission fix. The branch changes no engine
 or order-book logic.
 
 The existing `scripts/bench.sh` harness ran all three states sequentially:

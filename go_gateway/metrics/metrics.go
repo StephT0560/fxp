@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -198,6 +199,42 @@ func address(value string) (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
+const maxScrapeConnections = 32
+
+// Admission happens in Accept, before net/http starts a connection goroutine.
+// Excess connections are closed immediately, never queued behind the limit.
+type scrapeListener struct {
+	net.Listener
+	slots chan struct{}
+}
+
+func (l *scrapeListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case l.slots <- struct{}{}:
+			return &scrapeConn{Conn: conn, release: func() { <-l.slots }}, nil
+		default:
+			_ = conn.Close()
+		}
+	}
+}
+
+type scrapeConn struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *scrapeConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
+}
+
 // Start binds synchronously so configuration/bind failures fail startup. Empty disables.
 func Start(ctx context.Context, value string) (func(), error) {
 	if value == "" {
@@ -228,7 +265,8 @@ func Start(ctx context.Context, value string) (func(), error) {
 	})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second, IdleTimeout: 2 * time.Second, MaxHeaderBytes: 8192}
 	stopped := make(chan struct{})
-	go func() { _ = server.Serve(listener); close(stopped) }()
+	bounded := &scrapeListener{Listener: listener, slots: make(chan struct{}, maxScrapeConnections)}
+	go func() { _ = server.Serve(bounded); close(stopped) }()
 	go func() {
 		select {
 		case <-ctx.Done():

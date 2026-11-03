@@ -20,8 +20,11 @@ curl --fail http://127.0.0.1:9101/metrics
 Only `GET /metrics` is served, in Prometheus text exposition format 0.0.4.
 Configuration and bind failures fail process startup. Metrics readiness is **not**
 trading readiness: scrape serving may start before journal recovery/pool setup.
-Connections have two-second header/write deadlines and bounded headers; the core
-admits at most 32 concurrent scrape handlers. Counters are relaxed atomics,
+Connections have two-second header/write deadlines and bounded headers. The core
+admits at most 32 concurrent scrape handlers. The gateway admits at most 32
+metrics connections, including clients still sending headers and idle keepalive
+connections, before HTTP goroutines are created; excess sockets close immediately
+without a queue. Closing a connection releases its slot. Counters are relaxed atomics,
 scrapes are approximate snapshots during concurrent updates, and no disk writes
 are added by scraping. All counters reset at process restart. No matching rules,
 command ordering, journal format, or fsync policy change.
