@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
+import { consoleFetch, useRun } from "../lib/run-config";
 import { buttonFocus, neutralButton } from "../lib/styles";
 import { confirmSimulatorStart } from "../lib/auction-clock";
 import { SIMULATOR_DEFAULTS } from "../lib/simulator";
 import { useState } from "react";
 
 export function SimControls() {
+  const run = useRun();
   const [seed, setSeed] = useState(SIMULATOR_DEFAULTS.seed);
   const [duration, setDuration] = useState(SIMULATOR_DEFAULTS.duration);
   const [auction, setAuction] = useState(true);
@@ -12,7 +14,7 @@ export function SimControls() {
   const [msg, setMsg] = useState<string>();
   const call = async (path: string, body?: unknown) => {
     setMsg(undefined);
-    const res = await fetch(path, {
+    const res = await consoleFetch(run, path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),

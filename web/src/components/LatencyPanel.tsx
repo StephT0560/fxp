@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { consoleFetch, useRun } from "../lib/run-config";
 import { useEffect, useState } from "react";
 import {
   Bar,
@@ -14,12 +15,13 @@ import {
 import { chartRows, parseBench, type BenchDocument } from "../lib/bench";
 
 export default function LatencyPanel() {
+  const run = useRun();
   const [data, setData] = useState<BenchDocument>();
   const [error, setError] = useState("");
   const [selected, setSelected] = useState("");
   useEffect(() => {
     const c = new AbortController();
-    fetch("/api/bench", { signal: c.signal })
+    consoleFetch(run, "/api/bench", { signal: c.signal })
       .then((r) => {
         if (!r.ok) throw Error("Benchmark data unavailable");
         return r.json();
@@ -53,14 +55,14 @@ export default function LatencyPanel() {
         Capacity is a tested knee for the measured workload, never an SLO. No
         cross-protocol ranking is supported.
       </p>
-      <a
+      {!run && <a
         className="underline"
         href="/api/bench/profile-r4"
         target="_blank"
         rel="noreferrer"
       >
         Read profile-r4.md
-      </a>
+      </a>}
       {error ? (
         <p role="status">{error}</p>
       ) : !s ? (

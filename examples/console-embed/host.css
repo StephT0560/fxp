@@ -1,0 +1,7 @@
+/* SPDX-License-Identifier: MIT */
+body { margin: 1rem; background: #0a0a0a; color: #eee; font: 14px system-ui, sans-serif; }
+h1 { font-size: 1.2rem; }
+form { display: flex; align-items: end; flex-wrap: wrap; gap: 1rem; }
+label { display: grid; gap: .25rem; }
+input, select, button { background: #222; color: #eee; border: 1px solid #666; padding: .4rem; }
+iframe { width: 100%; height: 80vh; border: 1px solid #444; }

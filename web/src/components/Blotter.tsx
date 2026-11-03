@@ -96,7 +96,7 @@ function ReplaceModal({ row, rules, onClose }: { row: OrderRow; rules: SymbolRul
   );
 }
 
-function OrderRows({ rows, working }: { rows: OrderRow[]; working: boolean }) {
+function OrderRows({ rows, working, readOnly }: { rows: OrderRow[]; working: boolean; readOnly?: boolean }) {
   const rules = useRules();
   const [replacing, setReplacing] = useState<OrderRow>();
   return (
@@ -149,7 +149,7 @@ function OrderRows({ rows, working }: { rows: OrderRow[]; working: boolean }) {
                   )}
                 </td>
                 <td className="whitespace-nowrap text-right">
-                  {working && !isTerminal(r.state) && (
+                  {working && !readOnly && !isTerminal(r.state) && (
                     <>
                       <button
                         data-testid="order-replace"
@@ -175,7 +175,7 @@ function OrderRows({ rows, working }: { rows: OrderRow[]; working: boolean }) {
           })}
         </tbody>
       </table>
-      {replacing && <ReplaceModal row={replacing} rules={rules(replacing.symbol)} onClose={() => setReplacing(undefined)} />}
+      {replacing && !readOnly && <ReplaceModal row={replacing} rules={rules(replacing.symbol)} onClose={() => setReplacing(undefined)} />}
     </>
   );
 }
@@ -214,7 +214,7 @@ function ExecLog() {
   );
 }
 
-export function Blotter({ symbol }: { symbol: string }) {
+export function Blotter({ symbol, readOnly }: { symbol: string; readOnly?: boolean }) {
   useOrders((s) => s.version);
   const notice = useOrders((s) => s.notice);
   const { blotter } = useOrders.getState();
@@ -250,6 +250,7 @@ export function Blotter({ symbol }: { symbol: string }) {
         <span className="ml-auto truncate text-neutral-400" data-testid="blotter-notice">
           {notice}
         </span>
+        {!readOnly && <>
         <select data-testid="cancel-all-scope" value={scope} onChange={(e) => setScope(e.target.value as "all" | "symbol")} className="rounded bg-neutral-800 px-1">
           <option value="all">all symbols</option>
           <option value="symbol">{symbol} only</option>
@@ -261,10 +262,11 @@ export function Blotter({ symbol }: { symbol: string }) {
         >
           Cancel all
         </button>
+        </>}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        {tab === "working" && <OrderRows rows={working} working />}
-        {tab === "completed" && <OrderRows rows={completed} working={false} />}
+        {tab === "working" && <OrderRows rows={working} working readOnly={readOnly} />}
+        {tab === "completed" && <OrderRows rows={completed} working={false} readOnly={readOnly} />}
         {tab === "fills" && <OwnFills />}
         {tab === "log" && <ExecLog />}
       </div>
