@@ -59,6 +59,20 @@ The journal latency histogram is validated by the recorded-stack integration
 test, not this persistence-disabled throughput comparison. These measurements
 do not claim recording/fsync throughput or large-fanout capacity.
 
+## Encoding fixture cross-check
+
+The full existing Criterion suite completed in all three states. Selected
+median point estimates, in ns (these exclude metric collection, networking and
+matching):
+
+| Fixture | Baseline | Changed, disabled | Changed, enabled |
+| --- | --- | --- | --- |
+| new order FXP preallocated encode | 116.127 | 112.198 | 113.198 |
+| new order FXP protobuf decode | 326.946 | 326.129 | 309.642 |
+
+These implementation-fixture numbers do not measure metrics overhead; the live
+comparison above does. The encoding code was not changed.
+
 ## Reproduce
 
 After installing normal build prerequisites, with ports 8080–8082 free:

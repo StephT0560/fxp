@@ -241,6 +241,24 @@ class ReplayLimitsTests(unittest.TestCase):
         self.limit(self.run_cli('verify', self.bundle, '--max-wall-seconds', '.000000001'), 'max-wall-seconds')
         self.limit(self.run_cli('verify', self.bundle, '--max-memory-mb', 1), 'max-memory-mb')
 
+    def test_wall_watchdog_exits_even_when_stdout_is_not_drained(self):
+        trace = self.bundle / 'events.jsonl'
+        row = trace.read_bytes().splitlines(keepends=True)[0]
+        trace.write_bytes(row * 10000)
+        self.manifest(lambda m: m.update(trace_sha256=hashlib.sha256(trace.read_bytes()).hexdigest()))
+        process = subprocess.Popen([str(REPLAY), 'timeline', str(self.bundle), '--json', '--max-wall-seconds', '.2'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            process.wait(timeout=3)  # Deliberately do not drain the bounded pipe.
+        finally:
+            if process.poll() is None:
+                process.kill()
+            stdout, stderr = process.communicate(timeout=2)
+        self.limit(subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr), 'max-wall-seconds')
+
+    def test_memory_budget_detects_growth_after_startup(self):
+        self.manifest(lambda m: m.update(meta={'huge': 'x' * (32 * 1024 * 1024)}))
+        self.limit(self.run_cli('verify', self.bundle, '--max-memory-mb', 16, '--max-bytes', 64 * 1024 * 1024, '--max-wall-seconds', 2), 'max-memory-mb')
+
     def test_bad_limit_arguments_never_panic(self):
         for args in [('--max-events', '-1'), ('--max-bytes', 'x'), ('--max-wall-seconds', 'NaN'), ('--max-wall-seconds', 'inf'), ('--max-wall-seconds', '1e300'), ('--max-memory-mb', '18446744073709551615'), ('--max-events', '1', '--max-events=2')]:
             with self.subTest(args=args):
