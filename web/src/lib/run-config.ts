@@ -12,6 +12,7 @@ export interface RunConfig {
   apiUrl?: string;
   features?: { demoControls?: boolean };
   notifyTokenExpired?: boolean;
+  notifySessionLost?: boolean;
   parentOrigin?: string;
 }
 export interface RunSession extends RunConfig {
@@ -55,6 +56,16 @@ export function tokenExpiry(token: string): number {
     return exp * 1000;
   } catch { return invalid(); }
 }
+// This is presentation only; signature/permission checks belong to the gateway.
+// A host cannot clear a token's read-only UI, and a host flag cannot restrict a
+// trading token server-side. Real viewers must receive an attenuated token.
+function tokenReadOnly(token:string):boolean {
+ try {
+  const claims:unknown=JSON.parse(atob(token.split('.')[1]!.replace(/-/g,'+').replace(/_/g,'/')));
+  if(!object(claims) || claims.fxp_read_only!==undefined && typeof claims.fxp_read_only!=='boolean')return invalid();
+  return claims.fxp_read_only===true;
+ }catch{return invalid();}
+}
 export function parseRunConfig(value: unknown): Omit<RunSession, "expire"> {
   if (!object(value) || typeof value.token !== "string" || typeof value.runId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.runId) || typeof value.readOnly !== "boolean") return invalid();
   const expiresAt = tokenExpiry(value.token);
@@ -76,13 +87,14 @@ export function parseRunConfig(value: unknown): Omit<RunSession, "expire"> {
     if (new Set(symbols.map(s => s.symbol)).size !== symbols.length) return invalid();
   }
   if (value.features !== undefined && (!object(value.features) || (value.features.demoControls !== undefined && typeof value.features.demoControls !== "boolean"))) return invalid();
+  if (value.notifySessionLost !== undefined && typeof value.notifySessionLost !== "boolean") return invalid();
   if (value.notifyTokenExpired !== undefined && typeof value.notifyTokenExpired !== "boolean") return invalid();
   return {
     gatewayUrl: endpoint(value.gatewayUrl, true, value.token), token: value.token,
-    runId: value.runId, readOnly: value.readOnly, expiresAt, symbols,
+    runId: value.runId, readOnly: value.readOnly || tokenReadOnly(value.token), expiresAt, symbols,
     apiUrl: value.apiUrl === undefined ? undefined : endpoint(value.apiUrl, false, value.token),
     features: { demoControls: object(value.features) && value.features.demoControls === true },
-    notifyTokenExpired: value.notifyTokenExpired === true,
+    notifyTokenExpired: value.notifyTokenExpired === true, notifySessionLost: value.notifySessionLost === true,
     parentOrigin: value.parentOrigin === undefined ? undefined : exactOrigin(value.parentOrigin),
   };
 }
@@ -104,7 +116,7 @@ export function createEmbedding(win: Window) {
     }
     if (win.__FXP_CONSOLE__ !== undefined) {
       const run = parseRunConfig(win.__FXP_CONSOLE__);
-      if (run.notifyTokenExpired && (!run.parentOrigin || !origins.includes(run.parentOrigin))) return invalid();
+      if ((run.notifyTokenExpired || run.notifySessionLost) && (!run.parentOrigin || !origins.includes(run.parentOrigin))) return invalid();
       state = { mode: "run", run };
       parentOrigin = run.parentOrigin;
       delete win.__FXP_CONSOLE__;
@@ -127,6 +139,14 @@ export function createEmbedding(win: Window) {
     getSnapshot: () => state,
     subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
     dispose: () => { win.removeEventListener("message", message); listeners.clear(); },
+    notifySessionLost: (reason: 'token_expired'|'auth_failed'|'disconnected') => {
+      if(notified || state.mode!=='run' || !state.run.notifySessionLost) return;
+      notified=true;
+      if(parentOrigin && win.parent!==win)win.parent.postMessage({type:'fxp-console:session-lost',version:1,runId:state.run.runId,reason},parentOrigin);
+    },
+    notifyConnected: () => {
+      if(state.mode==='run' && state.run.notifySessionLost && parentOrigin && win.parent!==win)win.parent.postMessage({type:'fxp-console:connected',version:1,runId:state.run.runId},parentOrigin);
+    },
     notifyExpired: () => {
       if (notified || state.mode !== "run") return;
       notified = true;
@@ -138,6 +158,7 @@ export function createEmbedding(win: Window) {
 /** Fixed API paths only; never redirect credentials or fall back to demo HTTP. */
 export async function consoleFetch(run: RunSession | undefined, path: string, init?: RequestInit): Promise<Response> {
   if (!run) return fetch(path, init);
+  if(run.readOnly && !["GET","HEAD"].includes((init?.method||"GET").toUpperCase()))throw Error("Read-only session");
   if (!run.apiUrl || !path.startsWith("/api/") || /^\/api\/(token|users)(?:[/?]|$)/.test(path) || path.includes("\\")) throw Error("Run HTTP API not configured for this operation");
   if (useSession.getState().conn === "ended" || Date.now() >= run.expiresAt) { run.expire(); throw Error(RUN_ENDED); }
   const base = new URL(run.apiUrl.endsWith("/") ? run.apiUrl : run.apiUrl + "/");

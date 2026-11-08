@@ -62,6 +62,8 @@ func GetTraderID(sessionID string) string {
 }
 
 // sessionOperator holds the sessions whose token carried fxp_role=operator.
+var sessionReadOnly sync.Map
+
 var sessionOperator sync.Map // session_id (string) → struct{}
 
 // IsOperator reports whether the session may send SessionControl.
@@ -126,6 +128,7 @@ var cancelOnDisconnect = func(traderID string) {
 func invalidateSession(sessionID string) {
 	sessionStore.Delete(sessionID)
 	sessionOperator.Delete(sessionID)
+	sessionReadOnly.Delete(sessionID)
 	log.Printf("🔒 Session invalidated: %s", sessionID)
 }
 
@@ -153,7 +156,8 @@ type jwtClaims struct {
 	Aud jwtAudience `json:"aud"`
 	Jti string      `json:"jti"` // token ID (required when the replay cache is on)
 	// Role "operator" may send SessionControl; demo users carry no role.
-	Role string `json:"fxp_role"`
+	Role     string `json:"fxp_role"`
+	ReadOnly bool   `json:"fxp_read_only"`
 }
 
 // jwtAudience accepts both forms RFC 7519 allows: a string or an array.
@@ -313,7 +317,11 @@ func validateJWT(token string) (*jwtClaims, error) {
 	if claims.Iss != cfg.issuer {
 		return nil, fmt.Errorf("JWT iss %q does not match the configured issuer", claims.Iss)
 	}
-	if !claims.Aud.contains(cfg.audience) {
+	audience := cfg.audience
+	if claims.ReadOnly {
+		audience += ":viewer-v1"
+	}
+	if !claims.Aud.contains(audience) || claims.ReadOnly && claims.Aud.contains(cfg.audience) || !claims.ReadOnly && claims.Aud.contains(cfg.audience+":viewer-v1") {
 		return nil, fmt.Errorf("JWT aud %q does not include the configured audience", []string(claims.Aud))
 	}
 	now := time.Now().Unix()
@@ -407,10 +415,13 @@ func HandleLogon(logon *protobuf.Logon) (traderID, sessionID string, err error) 
 
 	sessionID = newSessionID()
 	sessionStore.Store(sessionID, claims.Sub)
-	if claims.Role == "operator" {
+	if claims.ReadOnly {
+		sessionReadOnly.Store(sessionID, struct{}{})
+	}
+	if claims.Role == "operator" && !claims.ReadOnly {
 		sessionOperator.Store(sessionID, struct{}{})
 	}
-	if logon.CancelOnDisconnect {
+	if logon.CancelOnDisconnect && !claims.ReadOnly {
 		sessionCOD.Store(sessionID, struct{}{})
 	}
 	log.Printf("✅ Logon accepted: session=%s trader=%s", sessionID, claims.Sub)
@@ -510,6 +521,16 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 			return
 		}
 
+		if _, viewer := sessionReadOnly.Load(*sessionID); viewer {
+			// Explicit read allowlist: newly introduced message types never
+			// acquire mutation permission by omission.
+			switch msg.Payload.(type) {
+			case *protobuf.FXPMessage_Heartbeat, *protobuf.FXPMessage_MarketDataRequest, *protobuf.FXPMessage_OrderStatusRequest, *protobuf.FXPMessage_GapFill:
+			default:
+				sendSessionError(conn, protobuf.ErrorType_AUTH_FAILED, "read_only_session")
+				return
+			}
+		}
 		if control := msg.GetSessionControl(); control != nil {
 			control.Sender = GetTraderID(*sessionID)
 			if !IsOperator(*sessionID) {

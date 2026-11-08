@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import socket
 import struct
+import time
 import unittest
 from unittest.mock import patch
 
@@ -106,3 +107,31 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(a.fileno(), -1)
         finally:
             a.close(); b.close()
+
+class ReceiveDeadlineTests(unittest.TestCase):
+    def test_explicit_deadline_restores_socket_timeout(self):
+        a,b=socket.socketpair()
+        try:
+            a.settimeout(.01)
+            b.sendall(encode_frame(pb.FXPMessage(heartbeat=pb.Heartbeat())))
+            self.assertEqual(Client(a).recv(deadline=time.monotonic()+1).kind,'heartbeat')
+            self.assertEqual(a.gettimeout(),.01)
+        finally:a.close();b.close()
+    def test_expired_deadline_closes_instead_of_retrying_partial_frames(self):
+        a,b=socket.socketpair()
+        try:
+            b.sendall(b'\0\0')
+            with self.assertRaises(TimeoutError):Client(a).recv(deadline=time.monotonic()+.02)
+            self.assertEqual(a.fileno(),-1)
+        finally:a.close();b.close()
+
+class PollTests(unittest.TestCase):
+    def test_empty_poll_keeps_the_stream_and_later_reads_a_frame(self):
+        a,b=socket.socketpair()
+        try:
+            client=Client(a)
+            self.assertIsNone(client.poll(timeout=.001))
+            self.assertGreaterEqual(a.fileno(),0)
+            b.sendall(encode_frame(pb.FXPMessage(heartbeat=pb.Heartbeat())))
+            self.assertEqual(client.poll(timeout=.01).kind,'heartbeat')
+        finally:a.close();b.close()

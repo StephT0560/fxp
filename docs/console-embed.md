@@ -131,9 +131,13 @@ in run mode, even with demo controls enabled, because it would fetch demo tokens
   scripts and suitable `frame-ancestors`/`connect-src`. A compromised host or
   same-origin script is outside this frontend trust boundary.
 - `readOnly` is an enforced **console behavior**, not server authorization.
-  Existing gateway tokens do not gain a new read-only role here. A hostile user
-  with a trading-capable token could use another client; the Sandbox/backend
-  must issue/enforce appropriately restricted credentials for real viewers.
+  A real viewer token must carry signed `fxp_read_only:true` and audience
+  `<configured gateway audience>:viewer-v1` (without the writable audience).
+  The gateway enforces a read-message allowlist and ignores viewer
+  cancel-on-disconnect/operator requests. An older gateway rejects that audience
+  rather than treating a viewer as a trader. A UI flag alone does not attenuate
+  a writable token. The console honors a read-only claim even when its host flag
+  is false; cryptographic verification remains server-side.
 - Run identity, tenant isolation, token issuance, quotas and backend permission
   enforcement belong to the host/Runner. Message origin checks do not establish
   those backend guarantees. Config/data are parsed as bounded values, not code.
@@ -184,3 +188,23 @@ Chromium local-network permission; credential-bearing traces/video are disabled
 for these tests. Unit tests additionally isolate each origin/source/nonce check,
 client mutation guard, expiry, authenticated HTTP and bounded SSE. The existing
 demo suite remains required and runs alongside these tests.
+
+## Host-managed session renewal
+
+Opt in with `notifySessionLost:true`. Message-delivered configuration uses the
+existing exact-origin/source/nonce handshake. Injected configuration must also
+supply parentOrigin and a matching child-owned allowlist. The child reports
+`fxp-console:session-lost` (version 1, runId, reason `token_expired`, `auth_failed`
+or `disconnected`) once, without credentials. `fxp-console:connected` reports an
+accepted Logon. Disposed documents do not report a loss. The host must check its
+run authorization/status, acquire a fresh server-authorized capability with
+bounded backoff, and replace the iframe. Never reuse an expired token, fall back
+to demo credentials, or assume a disconnect proves the run ended. Old hosts
+without this opt-in keep the existing token-expired notification behavior.
+
+The SDK's `Client.poll(timeout=..., deadline=...)` returns None only when no frame
+bytes have been consumed, allowing bounded initial snapshot re-requests for
+symbols that do not exist yet. `recv(deadline=...)` uses one monotonic deadline
+across all frame fragments. Framing/receive errors still close the connection;
+orders are never automatically retried. See the Sandbox companion PR for its
+executable first-fill example; the SDK does not promise a fill without liquidity.

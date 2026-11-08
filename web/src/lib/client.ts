@@ -21,6 +21,8 @@ export interface ClientOptions {
   user: string;
   run?: Omit<RunSession, "expire">;
   onTokenExpired?: () => void;
+  onSessionLost?: (reason:'token_expired'|'auth_failed'|'disconnected')=>void;
+  onConnected?: ()=>void;
   symbols: () => string[];
   wsUrl?: string;
   fetchToken?: (user: string) => Promise<string>;
@@ -96,7 +98,7 @@ export class ConsoleClient {
   private stopped = false;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private resubTimer?: ReturnType<typeof setInterval>;
-  private readonly opts: Required<Omit<ClientOptions, "run" | "onTokenExpired">> & Pick<ClientOptions, "run" | "onTokenExpired">;
+  private readonly opts: Required<Omit<ClientOptions, "run" | "onTokenExpired" | "onSessionLost" | "onConnected">> & Pick<ClientOptions, "run" | "onTokenExpired" | "onSessionLost" | "onConnected">;
   private expiryTimer?: ReturnType<typeof setTimeout>;
   private expired = false;
   private loggedOn = false;
@@ -134,14 +136,15 @@ export class ConsoleClient {
   }
 
   /** A terminal state: never fetch a demo token or reconnect with expired credentials. */
-  expire(): void {
+  expire(reason:'token_expired'|'auth_failed'|'disconnected'='token_expired'): void {
     if (this.expired || !this.opts.run) return;
     this.expired = true;
     this.stop();
     useBook.getState().unsync();
     useOrders.getState().markStale();
-    useSession.getState().setConn("ended", RUN_ENDED);
-    this.opts.onTokenExpired?.();
+    useSession.getState().setConn("ended", this.opts.run.notifySessionLost ? ({token_expired:'Console token expired',auth_failed:'Console authentication failed',disconnected:'Console disconnected'}[reason]) : RUN_ENDED);
+    if(this.opts.run.notifySessionLost)this.opts.onSessionLost?.(reason);
+    else this.opts.onTokenExpired?.();
   }
 
   private armExpiry(): void {
@@ -189,7 +192,7 @@ export class ConsoleClient {
       }
       if (msg.payload.case === "logonAck") {
         if (!msg.payload.value.accepted) {
-          if (this.opts.run) { this.expire(); return; }
+          if (this.opts.run) { this.expire("auth_failed"); return; }
           this.stopped = true;
           useSession.getState().setConn("rejected", msg.payload.value.rejectReason || "logon rejected");
           ws.close();
@@ -198,6 +201,7 @@ export class ConsoleClient {
         loggedOn = true;
         this.loggedOn = true;
         this.attempt = 0;
+        this.opts.onConnected?.();
         useSession.getState().setConn("live");
         this.subscribe(ws, this.opts.symbols());
         // Rebuild the blotter from the core rather than trusting local state.
@@ -216,6 +220,7 @@ export class ConsoleClient {
       this.loggedOn = false;
       useBook.getState().unsync();
       useOrders.getState().markStale();
+      if(this.opts.run?.notifySessionLost){this.expire([1008,4401,4403].includes(ev.code)?"auth_failed":"disconnected");return;}
       if (this.opts.run && [1000, 1008, 4401, 4403].includes(ev.code)) { this.expire(); return; }
       this.retry(this.opts.run ? "Run connection interrupted" : (ev.reason || `connection closed (${ev.code})`));
     };

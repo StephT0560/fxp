@@ -53,7 +53,7 @@ function Stats({ symbol, scale }: { symbol: string; scale: number }) {
   );
 }
 
-export function App({ run, onTokenExpired }: { run?: Omit<RunSession, "expire">; onTokenExpired?: () => void }) {
+export function App({ run, onTokenExpired, onSessionLost, onConnected }: { run?: Omit<RunSession, 'expire'>; onTokenExpired?: () => void; onSessionLost?:(reason:'token_expired'|'auth_failed'|'disconnected')=>void; onConnected?:()=>void }) {
   const demoUser = useSession((s) => s.user);
   const user = run?.runId ?? demoUser;
   useAuctionTimers(Boolean(user) && !run);
@@ -90,7 +90,7 @@ export function App({ run, onTokenExpired }: { run?: Omit<RunSession, "expire">;
     const c = new ConsoleClient({
       user,
       run,
-      onTokenExpired,
+      onTokenExpired,onSessionLost,onConnected,
       symbols: () => useSymbols.getState().list.map((s) => s.symbol),
     });
     client.current = c;
@@ -101,7 +101,7 @@ export function App({ run, onTokenExpired }: { run?: Omit<RunSession, "expire">;
       useInspector.getState().clear();
       if (activeClient.current === c) activeClient.current = undefined;
     };
-  }, [user, run, onTokenExpired]);
+  }, [user, run, onTokenExpired,onSessionLost,onConnected]);
 
   useEffect(() => {
     if (!quickDemo || user !== "alice" || conn !== "live" || quickStarted.current) return;

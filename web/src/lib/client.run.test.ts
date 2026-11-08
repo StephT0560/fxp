@@ -94,3 +94,11 @@ describe("run-scoped transport", () => {
     const second = await connect(false); second.client.stop(); expect(second.callback).not.toHaveBeenCalled();
   });
 });
+it('notifies a run host of disconnects so it can acquire a fresh credential',async()=>{
+ const onSessionLost=vi.fn();
+ const run=parseRunConfig({gatewayUrl:'ws://127.0.0.1:8081/ws',runId:'run-test',token:token(),readOnly:false,notifySessionLost:true});
+ const client=new ConsoleClient({user:'run',run,onSessionLost,symbols:()=>['AAPL'],WebSocketImpl:Socket as unknown as typeof WebSocket});
+ clients.push(client);client.start();await Promise.resolve();await Promise.resolve();
+ const socket=Socket.all.at(-1)!;socket.onopen?.();socket.ack();socket.onclose?.(new CloseEvent('close',{code:1006}));
+ expect(onSessionLost).toHaveBeenCalledWith('disconnected');expect(client.ready).toBe(false);
+});

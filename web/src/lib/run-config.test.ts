@@ -86,3 +86,8 @@ describe("authenticated run HTTP", () => {
     feed.close();
   });
 });
+it('honors the signed read-only claim even if host configuration requests writes',()=>{
+ const body=btoa(JSON.stringify({exp:Math.floor(Date.now()/1000)+60,fxp_read_only:true})).replace(/=/g,'');
+ const token=`header.${body}.signature`;
+ expect(parseRunConfig({...config(),token,readOnly:false}).readOnly).toBe(true);
+});
