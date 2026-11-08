@@ -30,3 +30,15 @@ python3 ../scripts/profile-replay.py target/release/fxp-replay /tmp/replay-profi
 ```
 
 Every measured command uses `--max-events 1000000 --max-bytes 134217728 --max-wall-seconds 25 --max-memory-mb 768`, matching the sandbox verify/report flags. Explicit `max-bytes`, memory, wall and event checks remain active. Unchanged golden report JSON and divergence tests protect semantics.
+
+Three original stored normal-load reports independently reproduced the sandbox
+output-size failure: offline verify/report both succeed at 256 MiB, but HTML is
+6,816,545 / 8,213,845 / 8,014,312 bytes. The sandbox's original isolated wrapper
+rejects each at its 4 MiB artifact cap with exit 2. The new HTML is 416,894 /
+499,942 / 484,702 bytes, respectively, and the same bundles verify and publish
+reports successfully through the worker. The output cap remains unchanged.
+
+The image release smoke decodes the versioned HTML payload and compares the whole
+document with the separate JSON export before checking image provenance. It does
+not search compressed bytes for plaintext image references. Duplicate fields,
+trailing streams, nested encodings and decoded size mismatches fail validation.

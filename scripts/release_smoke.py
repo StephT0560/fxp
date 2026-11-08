@@ -6,6 +6,7 @@ Build/pull images and install sdk/python BEFORE running this test. This runner
 never builds, pulls, contacts a registry, or prints credentials.
 """
 import argparse
+import base64
 import json
 import os
 import re
@@ -14,6 +15,48 @@ import secrets
 import subprocess
 import tempfile
 import time
+import zlib
+
+def report_payload(html):
+    """Decode the producer's versioned payload before checking provenance.
+
+    Keep byte limits, reject duplicate keys/trailing streams/nested codecs, and
+    compare the complete decoded document with the separately exported JSON.
+    """
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate report field')
+            result[key] = value
+        return result
+
+    marker = '<script id="report-data" type="application/json">'
+    if len(html) > 100 * 1024 * 1024 or html.count(marker) != 1:
+        raise ValueError('report HTML limit or duplicate payload')
+    matches = re.findall(re.escape(marker) + r'([^<]*)</script>', html)
+    if len(matches) != 1:
+        raise ValueError('invalid report payload')
+    payload = json.loads(matches[0], object_pairs_hook=unique)
+    if isinstance(payload, dict) and 'encoding' in payload:
+        if set(payload) != {'encoding', 'decoded_bytes', 'data'} or payload['encoding'] != 'zlib-base64-v1':
+            raise ValueError('unknown report encoding')
+        size = payload['decoded_bytes']
+        if not isinstance(size, str) or not size.isascii() or not size.isdecimal() or len(size) > 9:
+            raise ValueError('invalid report byte count')
+        count = int(size)
+        if str(count) != size or count > 96 * 1024 * 1024:
+            raise ValueError('report data limit')
+        compressed = base64.b64decode(payload['data'], validate=True)
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(compressed, count + 1)
+        if len(raw) != count or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+            raise ValueError('truncated, trailing or oversized report data')
+        payload = json.loads(raw.decode('utf-8'), object_pairs_hook=unique)
+    if not isinstance(payload, dict) or 'encoding' in payload:
+        raise ValueError('invalid or nested report payload')
+    return payload
+
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENTS = ('fxp_core', 'go_gateway', 'simday', 'fix_bridge', 'fxp-replay')
@@ -175,8 +218,10 @@ def main():
         report = json.loads((work / 'report.json').read_text())
         check_provenance(manifest, report, meta, revision)
         html = (work / 'report.html').read_text()
-        if not all(ref in html for ref in meta['images'].values()):
-            raise AssertionError('HTML report omitted image references')
+        html_report = report_payload(html)
+        if html_report != report:
+            raise AssertionError('HTML and JSON reports differ')
+        check_provenance(manifest, html_report, meta, revision)
         print('PASS exact FXP_RUN_META_JSON image references in complete bundle and verified report', flush=True)
     except subprocess.CalledProcessError as error:
         # Subprocess arguments contain no secrets. Do not dump expanded Compose
