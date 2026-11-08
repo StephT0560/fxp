@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Measure each real CLI process with wait4 (Linux RSS KiB).
 
 Generate fixtures first:

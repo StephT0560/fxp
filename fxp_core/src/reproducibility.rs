@@ -357,6 +357,9 @@ pub(crate) fn inspect_bundle_capped(
     };
     let mut rows = Vec::new();
     let mut trace_diverged = false;
+    let mut actual_count = 0usize;
+    let mut differences = BTreeMap::new();
+    let mut first_divergence: Option<(Vec<Json>, Vec<Json>)> = None;
     let journal = missing_as_incomplete(
         "commands.log",
         crate::event_log::Journal::replay_observed_rows(
@@ -369,23 +372,42 @@ pub(crate) fn inspect_bundle_capped(
             recorded || retain,
             |_, _, _, _| Ok(()),
             |actual| {
+                let capture = !retain && first_divergence.is_none();
+                let mut expected_command = Vec::new();
+                let mut actual_command = Vec::new();
+                let mut command_differs = false;
                 for row in actual.drain(..) {
                     if let Some(lines) = &mut trace {
                         let expected = match lines.next() {
                             Some(line) => Some(parse_trace_row(&line?)?),
                             None => None,
                         };
-                        trace_diverged |= expected.as_ref().is_none_or(|e| {
-                            !compatible_trace(std::slice::from_ref(e), std::slice::from_ref(&row))
+                        let matches = expected.as_ref().is_some_and(|e| {
+                            compatible_trace(std::slice::from_ref(e), std::slice::from_ref(&row))
                         });
-                        if retain && let Some(expected) = expected {
-                            if max_rows.is_some_and(|n| rows.len() >= n) {
-                                return Err(invalid(
-                                    "report exceeds 100000 timeline rows; narrow --from/--to",
-                                ));
+                        trace_diverged |= !matches;
+                        command_differs |= !matches;
+                        if retain {
+                            // Equal rows share the retained historical copy. Only
+                            // differences need an additional replayed representation.
+                            if expected.as_ref() != Some(&row) {
+                                differences.insert(actual_count, row);
                             }
-                            rows.push(expected);
+                            if let Some(expected) = expected {
+                                if max_rows.is_some_and(|n| rows.len() >= n) {
+                                    return Err(invalid(
+                                        "report exceeds 100000 timeline rows; narrow --from/--to",
+                                    ));
+                                }
+                                rows.push(expected);
+                            }
+                        } else if capture {
+                            if let Some(expected) = expected {
+                                expected_command.push(expected);
+                            }
+                            actual_command.push(row);
                         }
+                        actual_count += 1;
                     } else if retain {
                         if max_rows.is_some_and(|n| rows.len() >= n) {
                             return Err(invalid(
@@ -394,6 +416,9 @@ pub(crate) fn inspect_bundle_capped(
                         }
                         rows.push(row);
                     }
+                }
+                if capture && command_differs {
+                    first_divergence = Some((expected_command, actual_command));
                 }
                 Ok(())
             },
@@ -404,34 +429,38 @@ pub(crate) fn inspect_bundle_capped(
             let row = parse_trace_row(&line?)?;
             trace_diverged = true;
             if retain {
+                if max_rows.is_some_and(|n| rows.len() >= n) {
+                    return Err(invalid(
+                        "report exceeds 100000 timeline rows; narrow --from/--to",
+                    ));
+                }
                 rows.push(row);
+            } else if first_divergence.is_none() {
+                first_divergence = Some((vec![row], Vec::new()));
             }
         }
     }
     let final_state = journal.canonical_state();
     let summary = journal.summary();
-    // A divergent bundle needs both timelines for forensic output. Re-run only
-    // that exceptional path; valid verification has constant trace retention.
     let diverged = trace_diverged || expected.as_ref().is_some_and(|j| j != &summary.json());
     let expected_rows = if diverged && recorded {
-        if !retain {
-            let file = crate::replay_limits::input(&dir.join("events.jsonl"))?;
-            rows = std::io::BufRead::lines(std::io::BufReader::new(file))
-                .map(|line| parse_trace_row(&line?))
-                .collect::<io::Result<Vec<_>>>()?;
+        if retain {
+            let expected_rows = std::mem::take(&mut rows);
+            rows = (0..actual_count)
+                .map(|index| {
+                    differences
+                        .remove(&index)
+                        .unwrap_or_else(|| expected_rows[index].clone())
+                })
+                .collect();
+            Some(expected_rows)
+        } else {
+            // Verification only needs the first differing command for exact
+            // forensic output. Never execute or charge the input a second time.
+            let (expected, actual) = first_divergence.unwrap_or_default();
+            rows = actual;
+            Some(expected)
         }
-        let expected_rows = std::mem::take(&mut rows);
-        let mut actual = crate::event_log::Journal::replay_inspected(
-            &log,
-            schedule,
-            stp,
-            (),
-            config.clone(),
-            complete,
-            true,
-        )?;
-        rows = actual.inspection.take().expect("inspection enabled").rows;
-        Some(expected_rows)
     } else {
         None
     };

@@ -2,7 +2,7 @@
 
 Measured on Linux with separate release CLI processes and `wait4.ru_maxrss` (KiB). Fixtures are deterministic engine recordings with alternating, traded one-unit orders, no growing resting book. Event counts are business events; trace rows also include received commands. This is one workload, not a universal upper bound.
 
-The old verifier retained both the complete recorded and replayed JSON traces. Verification now compares each command’s rows against a buffered trace reader, discards successful rows, and replays only divergent cases to retain forensic timelines. Reports retain one historical trace, trim canonical/protobuf encodings before copying display rows, and release replay state before serialization. Full-window report row limits are checked during inspection before allocating the report document.
+The old verifier retained both the complete recorded and replayed JSON traces. Verification now compares each command’s rows against a buffered trace reader, discards successful rows, and keeps the first differing command for verification diagnostics. Reports retain sparse differing rows so forensic timelines can be reconstructed without replaying the engine or charging the event budget again. Reports retain one historical trace, trim canonical/protobuf encodings before copying display rows, and release replay state before serialization. Full-window report row limits are checked during inspection before allocating the report document.
 
 Large HTML payloads use versioned zlib/base64 JSON with an offline, bounded `DecompressionStream` decoder. The report schema, anonymization, CSP hashes, and decoded data limit remain enforced. The private worker’s 4 MiB artifact cap need not increase. JSON exports remain unchanged.
 
