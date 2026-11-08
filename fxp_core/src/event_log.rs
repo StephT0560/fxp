@@ -428,29 +428,6 @@ impl<R: Clone> Journal<R> {
         Ok(())
     }
 
-    /// Offline verification never opens the log for writing and never repairs it.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn replay_inspected(
-        path: &Path,
-        schedule: Option<SessionSchedule>,
-        stp_default: StpMode,
-        detached: R,
-        symbol_config: crate::symbol_config::SymbolConfig,
-        complete: bool,
-        inspect: bool,
-    ) -> io::Result<Self> {
-        Self::replay_observed(
-            path,
-            schedule,
-            stp_default,
-            detached,
-            symbol_config,
-            complete,
-            inspect,
-            |_, _, _, _| Ok(()),
-        )
-    }
-
     /// Read-only replay hook, used only by offline report generation.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn replay_observed(
