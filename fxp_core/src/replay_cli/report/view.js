@@ -1,6 +1,22 @@
 'use strict';
-(() => {
-  const d = JSON.parse(document.getElementById('report-data').textContent);
+(async () => {
+  let d = JSON.parse(document.getElementById('report-data').textContent);
+  if (d.encoding === 'zlib-base64-v1') {
+    const size = Number(d.decoded_bytes);
+    if (!Number.isSafeInteger(size) || size < 0 || size > 96 * 1024 * 1024) throw Error('Report data limit');
+    const bytes = Uint8Array.from(atob(d.data), c => c.charCodeAt(0));
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')).getReader();
+    const output = new Uint8Array(size);
+    let offset = 0;
+    for (;;) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      if (offset + value.length > size) { await reader.cancel(); throw Error('Report data limit'); }
+      output.set(value, offset); offset += value.length;
+    }
+    if (offset !== size) throw Error('Truncated report data');
+    d = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(output));
+  }
   const el = id => document.getElementById(id);
   const put = (id, text) => { el(id).textContent = text; };
   const stringify = x => JSON.stringify(x, null, 2);
@@ -47,4 +63,4 @@
     el('tape').replaceChildren(table(['Seq', 'Price', 'Quantity', 'Auction'], tape.slice(Math.max(0, count - 100), count).reverse().map(r => [r.global_seq, r.data.price, r.data.quantity, r.data.auction ? 'yes' : 'no'])));
   };
   el('sequence').addEventListener('input', book); el('book-symbol').addEventListener('change', book); book();
-})();
+})().catch(() => { document.getElementById('notice').textContent = 'Report data could not be decoded. Regenerate this report.'; });

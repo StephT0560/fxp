@@ -378,6 +378,7 @@ dependencies = [
  "constant_time_eq",
  "criterion",
  "dhat",
+ "miniz_oxide",
  "prost",
  "prost-build",
  "prost-types",

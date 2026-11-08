@@ -187,7 +187,7 @@ pub struct ReplayResult {
 }
 /// Replays read-only; does not truncate a torn tail or append catch-up ticks.
 pub fn replay_bundle(dir: impl AsRef<Path>) -> io::Result<ReplayResult> {
-    let run = inspect_bundle(dir.as_ref())?;
+    let run = inspect_bundle_rows(dir.as_ref(), false)?;
     if run.diverged {
         return Err(invalid(
             "bundle verification failed: business events or final state differ",
@@ -210,13 +210,14 @@ pub(crate) struct Inspection {
     pub expected_rows: Option<Vec<Json>>,
     /// Symbol rules from the bundle's own symbols.csv (price scale for display).
     pub config: SymbolConfig,
+    pub(crate) recorded: bool,
 }
 impl Inspection {
     pub fn source_rows(&self) -> &[Json] {
         self.expected_rows.as_deref().unwrap_or(&self.rows)
     }
     pub fn source(&self) -> &str {
-        if self.expected_rows.is_some() {
+        if self.recorded {
             "recorded"
         } else {
             "replayed"
@@ -266,6 +267,19 @@ pub(crate) fn read_bundle_file(dir: &Path, name: &str) -> io::Result<String> {
     missing_as_incomplete(name, crate::replay_limits::read_text(&dir.join(name)))
 }
 pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
+    inspect_bundle_rows(dir, true)
+}
+
+/// Verification compares trace rows while replaying and retains no successful
+/// timeline. Reports retain one historical trace, never two expanded copies.
+pub(crate) fn inspect_bundle_rows(dir: &Path, retain: bool) -> io::Result<Inspection> {
+    inspect_bundle_capped(dir, retain, None)
+}
+pub(crate) fn inspect_bundle_capped(
+    dir: &Path,
+    retain: bool,
+    max_rows: Option<usize>,
+) -> io::Result<Inspection> {
     if !dir.is_dir() {
         return Err(invalid(format!(
             "bundle directory not found: {}",
@@ -320,7 +334,8 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
             "incomplete trace metadata: version and hash must be declared together",
         ));
     }
-    let expected_rows = if let Ok(version) = manifest.get("trace_version") {
+    let recorded = manifest.get("trace_version").is_ok() && complete;
+    let mut trace = if let Ok(version) = manifest.get("trace_version") {
         if version.text()? != trace::VERSION {
             return Err(invalid("unknown trace version"));
         }
@@ -331,37 +346,82 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
                 "trace_sha256",
                 &missing_as_incomplete("events.jsonl", hash_file(&path))?,
             )?;
-            // Stream rows so --max-events does not first allocate an entire trace.
-            let file = missing_as_incomplete("events.jsonl", crate::replay_limits::input(&path))?;
-            let rows = std::io::BufRead::lines(std::io::BufReader::new(file))
-                .map(|line| {
-                    crate::replay_limits::events(1)?;
-                    Json::parse(&line?)
-                })
-                .collect::<io::Result<Vec<_>>>()?;
-            for row in &rows {
-                for key in ["symbol", "kind", "order_id", "owner", "client_order_id"] {
-                    row.get(key)?.text()?;
-                }
-                for key in ["global_seq", "event_index"] {
-                    match row.get(key)? {
-                        Json::Number(n) if n.parse::<u64>().is_ok() => (),
-                        _ => return Err(invalid("invalid trace position")),
-                    }
-                }
-                row.get("data")?;
-                row.get("canonical_hex")?;
-            }
-            Some(rows)
+            Some(std::io::BufRead::lines(std::io::BufReader::new(
+                missing_as_incomplete("events.jsonl", crate::replay_limits::input(&path))?,
+            )))
         } else {
             None
         }
     } else {
         None
     };
-    let mut journal = missing_as_incomplete(
+    let mut rows = Vec::new();
+    let mut trace_diverged = false;
+    let journal = missing_as_incomplete(
         "commands.log",
-        crate::event_log::Journal::replay_inspected(
+        crate::event_log::Journal::replay_observed_rows(
+            &log,
+            schedule,
+            stp,
+            (),
+            config.clone(),
+            complete,
+            recorded || retain,
+            |_, _, _, _| Ok(()),
+            |actual| {
+                for row in actual.drain(..) {
+                    if let Some(lines) = &mut trace {
+                        let expected = match lines.next() {
+                            Some(line) => Some(parse_trace_row(&line?)?),
+                            None => None,
+                        };
+                        trace_diverged |= expected.as_ref().is_none_or(|e| {
+                            !compatible_trace(std::slice::from_ref(e), std::slice::from_ref(&row))
+                        });
+                        if retain && let Some(expected) = expected {
+                            if max_rows.is_some_and(|n| rows.len() >= n) {
+                                return Err(invalid(
+                                    "report exceeds 100000 timeline rows; narrow --from/--to",
+                                ));
+                            }
+                            rows.push(expected);
+                        }
+                    } else if retain {
+                        if max_rows.is_some_and(|n| rows.len() >= n) {
+                            return Err(invalid(
+                                "report exceeds 100000 timeline rows; narrow --from/--to",
+                            ));
+                        }
+                        rows.push(row);
+                    }
+                }
+                Ok(())
+            },
+        ),
+    )?;
+    if let Some(lines) = &mut trace {
+        for line in lines {
+            let row = parse_trace_row(&line?)?;
+            trace_diverged = true;
+            if retain {
+                rows.push(row);
+            }
+        }
+    }
+    let final_state = journal.canonical_state();
+    let summary = journal.summary();
+    // A divergent bundle needs both timelines for forensic output. Re-run only
+    // that exceptional path; valid verification has constant trace retention.
+    let diverged = trace_diverged || expected.as_ref().is_some_and(|j| j != &summary.json());
+    let expected_rows = if diverged && recorded {
+        if !retain {
+            let file = crate::replay_limits::input(&dir.join("events.jsonl"))?;
+            rows = std::io::BufRead::lines(std::io::BufReader::new(file))
+                .map(|line| parse_trace_row(&line?))
+                .collect::<io::Result<Vec<_>>>()?;
+        }
+        let expected_rows = std::mem::take(&mut rows);
+        let mut actual = crate::event_log::Journal::replay_inspected(
             &log,
             schedule,
             stp,
@@ -369,15 +429,12 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
             config.clone(),
             complete,
             true,
-        ),
-    )?;
-    let final_state = journal.canonical_state();
-    let summary = journal.summary();
-    let rows = journal.inspection.take().expect("inspection enabled").rows;
-    let diverged = expected.as_ref().is_some_and(|j| j != &summary.json())
-        || expected_rows
-            .as_ref()
-            .is_some_and(|r| !compatible_trace(r, &rows));
+        )?;
+        rows = actual.inspection.take().expect("inspection enabled").rows;
+        Some(expected_rows)
+    } else {
+        None
+    };
     Ok(Inspection {
         config,
         complete,
@@ -387,7 +444,25 @@ pub(crate) fn inspect_bundle(dir: &Path) -> io::Result<Inspection> {
         final_state,
         rows,
         expected_rows,
+        recorded,
     })
+}
+
+fn parse_trace_row(line: &str) -> io::Result<Json> {
+    crate::replay_limits::events(1)?;
+    let row = Json::parse(line)?;
+    for key in ["symbol", "kind", "order_id", "owner", "client_order_id"] {
+        row.get(key)?.text()?;
+    }
+    for key in ["global_seq", "event_index"] {
+        match row.get(key)? {
+            Json::Number(n) if n.parse::<u64>().is_ok() => (),
+            _ => return Err(invalid("invalid trace position")),
+        }
+    }
+    row.get("data")?;
+    row.get("canonical_hex")?;
+    Ok(row)
 }
 
 // Only explicitly additive diagnostic keys may be absent in older recordings.
