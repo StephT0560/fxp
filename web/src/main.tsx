@@ -10,7 +10,7 @@ function ConsoleRoot() {
   const state = useSyncExternalStore(embedding.subscribe, embedding.getSnapshot);
   if (state.mode === "waiting") return <p role="status">Waiting for run configuration…</p>;
   if (state.mode === "invalid") return <p role="alert">Invalid run configuration</p>;
-  return <App run={state.mode === "run" ? state.run : undefined} onTokenExpired={embedding.notifyExpired} />;
+  return <App run={state.mode === "run" ? state.run : undefined} onTokenExpired={embedding.notifyExpired} onSessionLost={embedding.notifySessionLost} onConnected={embedding.notifyConnected} />;
 }
 
 createRoot(document.getElementById("root")!).render(

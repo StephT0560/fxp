@@ -12,8 +12,10 @@ from dataclasses import dataclass
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
+import select
 import socket
 import ssl
 import struct
@@ -92,6 +94,17 @@ class Event:
         return self.message.WhichOneof('payload')
 
 
+class _DeadlineReader:
+    def __init__(self, sock, deadline):
+        self.sock, self.deadline = sock, deadline
+    def recv(self, n):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('receive deadline exceeded')
+        self.sock.settimeout(remaining)
+        return self.sock.recv(n)
+
+
 class Client:
     """One connection, one reader; no concurrent method calls/thread safety."""
     def __init__(self, sock: socket.socket, *, max_frame: int = MAX_FRAME):
@@ -140,9 +153,19 @@ class Client:
             self.close()
             raise
 
-    def recv(self) -> Event:
+    def recv(self, *, deadline: float | None = None) -> Event:
+        """Receive one frame, optionally bounded by an absolute monotonic deadline.
+
+        A caller can wait through a known quiet market phase without changing
+        the connect timeout. Timeout still closes the connection; never retry a
+        partially consumed frame. Each fragment shares the same deadline.
+        """
+        if deadline is not None and not math.isfinite(deadline):
+            raise ValueError('deadline must be finite')
+        previous = self._socket.gettimeout() if deadline is not None else None
         try:
-            raw = read_frame(self._socket, self.max_frame)
+            reader = self._socket if deadline is None else _DeadlineReader(self._socket, deadline)
+            raw = read_frame(reader, self.max_frame)
             message = pb.FXPMessage.FromString(raw)
             if message.WhichOneof('payload') is None:
                 raise ProtocolError('FXPMessage has no known payload; check schema version')
@@ -157,6 +180,32 @@ class Client:
         except (OSError, EOFError, ProtocolError):
             self.close()
             raise
+        finally:
+            if deadline is not None and self._socket.fileno() >= 0:
+                self._socket.settimeout(previous)
+
+    def poll(self, *, timeout: float = 0, deadline: float | None = None) -> Event | None:
+        """Wait for a frame boundary without treating an idle market as failure.
+
+        None means no bytes were consumed. Once readable, framing errors and
+        deadlines still close the stream; a partial frame is never retried.
+        TLS may already hold decrypted bytes even when its socket is not readable.
+        """
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError('poll timeout must be finite and non-negative')
+        if deadline is not None:
+            if not math.isfinite(deadline):
+                raise ValueError('deadline must be finite')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.close()
+                raise TimeoutError('receive deadline exceeded')
+            timeout = min(timeout, remaining)
+        if not getattr(self._socket, 'pending', lambda: 0)():
+            readable, _, _ = select.select([self._socket], [], [], timeout)
+            if not readable:
+                return None
+        return self.recv(deadline=deadline)
 
     def events(self) -> Iterator[Event]:
         """Yield every message, including error reports; clean EOF ends iteration."""
