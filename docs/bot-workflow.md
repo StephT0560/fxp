@@ -185,7 +185,7 @@ context = ssl.create_default_context(cafile="certs/ca.crt")
 # Retry only connection/logon, never order submission. Keep TLS verification.
 for attempt in range(3):
     try:
-        client = Client.connect("127.0.0.1", 8082, token, timeout=5,
+        client = Client.connect("127.0.0.1", 8082, token,
                                 tls=context, server_hostname="localhost")
         break
     except ssl.SSLCertVerificationError:
@@ -197,6 +197,13 @@ for attempt in range(3):
 # Consume events using a context manager or close it explicitly.
 client.close()
 ```
+
+The example preserves the SDK's default ten-second socket timeout after logon.
+For intentionally quiet streams, use the SDK's bounded `poll`/`recv(deadline=...)`
+interfaces as appropriate for your application. A retry never disables JWT replay
+protection: if a gateway accepted logon but its acknowledgement was lost, the
+same token may already be consumed. Request a fresh short-lived token from your
+issuer before a new recovery cycle; the example stops after three attempts.
 
 For your own stack, set `FXP_RUN_RECORD` to a **new** directory on the core, and
 optionally set `FXP_RUN_META_JSON` to JSON seeds/configuration identifiers. Use
