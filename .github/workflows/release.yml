@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install checksum-verified protoc
         run: |
-          sh scripts/install-protoc.sh "$RUNNER_TEMP/fxp-protoc"
+          sh "$GITHUB_WORKSPACE/scripts/install-protoc.sh" "$RUNNER_TEMP/fxp-protoc"
           echo "$RUNNER_TEMP/fxp-protoc/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:

@@ -22,7 +22,7 @@ class ProtocDownload(unittest.TestCase):
         for name in ('ci.yml','release.yml','bench.yml'):
             workflow=(ROOT/'.github/workflows'/name).read_text()
             self.assertTrue('arduino/setup-protoc@' not in workflow,'CI must use the verified shared installer')
-            self.assertIn('scripts/install-protoc.sh',workflow)
+            self.assertIn('sh "$GITHUB_WORKSPACE/scripts/install-protoc.sh"',workflow,'Installer must work when a job defaults to web/')
         self.assertIn('scripts/install-protoc.sh',(ROOT/'deploy/Dockerfile.release').read_text())
 
     def test_corrupt_download_is_refused_before_extraction(self):
