@@ -522,3 +522,18 @@ fn recorded_recycled_order_ids_verify_and_report_distinct_generations() {
     .unwrap();
     assert!(!masked.encode().contains("anon:private"));
 }
+
+#[test]
+fn large_repetitive_reports_fit_without_raising_artifact_limit() {
+    let data = Json::object([(
+        "events",
+        Json::Array(
+            (0..20000)
+                .map(|_| Json::string("synthetic report row with repeated field names and values"))
+                .collect(),
+        ),
+    )]);
+    let page =
+        bounded_html(&data, 100_000).expect("large reports must compress before publication");
+    assert!(page.contains("zlib-base64-v1"));
+}

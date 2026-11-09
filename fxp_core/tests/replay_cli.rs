@@ -240,6 +240,32 @@ e=json.loads((p/'expected.json').read_text()); all_bytes=b'fxp-business-v1\0'+b'
     assert!(output.contains("\"input\""));
     assert!(output.contains("\"quantity\":5"));
     assert!(output.contains("\"quantity\":4"));
+    // An event budget sufficient for the identical control must still classify
+    // a mismatch as divergence; forensic output must not replay the engine.
+    let control = golden("partial-fill");
+    let mut low = 0u64;
+    let mut high = 1024u64;
+    while low + 1 < high {
+        let middle = (low + high) / 2;
+        let output = cli(&[
+            "verify",
+            control.to_str().unwrap(),
+            "--max-events",
+            &middle.to_string(),
+        ]);
+        if output.status.code() == Some(0) {
+            high = middle;
+        } else {
+            assert_eq!(output.status.code(), Some(3));
+            low = middle;
+        }
+    }
+    let bounded = cli(&["verify", dir.path(), "--max-events", &high.to_string()]);
+    assert_eq!(
+        bounded.status.code(),
+        Some(1),
+        "divergence consumed extra event budget"
+    );
 }
 
 #[cfg(unix)]

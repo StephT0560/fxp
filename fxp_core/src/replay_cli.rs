@@ -742,7 +742,8 @@ fn execute(
         return report::execute(&args[1..], out);
     }
     let o = parse(args)?;
-    let run = inspect_bundle(Path::new(&o.paths[0]))?;
+    let run =
+        crate::reproducibility::inspect_bundle_rows(Path::new(&o.paths[0]), o.command != "verify")?;
     if o.command == "verify" {
         if !run.complete {
             return Err(invalid("incomplete bundle: replay ran but cannot verify"));
@@ -994,6 +995,7 @@ mod tests {
             diverged: false,
             expected: None,
             expected_rows: None,
+            recorded: false,
             rows,
             final_state: Vec::new(),
             summary: crate::reproducibility::RunSummary {

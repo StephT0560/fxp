@@ -394,3 +394,63 @@ fn live_recording_identity_cache_releases_terminal_orders() {
         );
     }
 }
+
+/// Opt-in reproducible, traded workload for external-process RSS measurements.
+#[test]
+#[ignore = "writes profiling bundles to FXP_PROFILE_DIR"]
+fn generate_replay_profile_bundles() {
+    let root = std::path::PathBuf::from(std::env::var("FXP_PROFILE_DIR").expect("FXP_PROFILE_DIR"));
+    std::fs::create_dir_all(&root).unwrap();
+    for target in [1_000, 10_000, 25_000, 100_000] {
+        let dir = root.join(target.to_string());
+        let mut journal = Journal::record(
+            &dir,
+            None,
+            StpMode::None,
+            (),
+            SymbolConfig::default(),
+            r#"{"seed":42,"fixture":"rss"}"#,
+        )
+        .unwrap();
+        // Each sell/buy pair produces exactly five business events. Avoid
+        // hashing the complete engine state once per command in the generator.
+        for n in 0..(target / 5 * 2) as i64 {
+            let mut input = order(
+                &format!("synthetic-{n}"),
+                "TEST",
+                if n % 2 == 0 { 2 } else { 1 },
+            );
+            input.quantity = 1;
+            journal
+                .apply(
+                    "TEST",
+                    Time {
+                        seconds: n + 1,
+                        nanos: 0,
+                    },
+                    Input::New(input),
+                    (),
+                )
+                .unwrap();
+        }
+        assert_eq!(journal.summary().global.count, target);
+        journal.finish().unwrap();
+        println!(
+            "profile target={target} events={}",
+            journal.summary().global.count
+        );
+    }
+}
+
+#[test]
+fn successful_verification_retains_no_trace_rows() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/bundles/partial-fill");
+    let verified = inspect_bundle_rows(&dir, false).unwrap();
+    assert!(verified.complete && !verified.diverged);
+    assert!(verified.rows.is_empty());
+    assert!(verified.expected_rows.is_none());
+    let report = inspect_bundle(&dir).unwrap();
+    assert!(!report.source_rows().is_empty());
+    assert_eq!(verified.summary, report.summary);
+    assert_eq!(report.source(), "recorded");
+}

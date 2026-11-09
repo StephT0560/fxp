@@ -428,9 +428,9 @@ impl<R: Clone> Journal<R> {
         Ok(())
     }
 
-    /// Offline verification never opens the log for writing and never repairs it.
+    /// Read-only replay hook, used only by offline report generation.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn replay_inspected(
+    pub(crate) fn replay_observed(
         path: &Path,
         schedule: Option<SessionSchedule>,
         stp_default: StpMode,
@@ -438,8 +438,14 @@ impl<R: Clone> Journal<R> {
         symbol_config: crate::symbol_config::SymbolConfig,
         complete: bool,
         inspect: bool,
+        observe: impl FnMut(
+            u64,
+            &str,
+            &Engine<R, RecordedClock, ReplayIds>,
+            &[Output<R>],
+        ) -> io::Result<()>,
     ) -> io::Result<Self> {
-        Self::replay_observed(
+        Self::replay_observed_rows(
             path,
             schedule,
             stp_default,
@@ -447,13 +453,14 @@ impl<R: Clone> Journal<R> {
             symbol_config,
             complete,
             inspect,
-            |_, _, _, _| Ok(()),
+            observe,
+            |_| Ok(()),
         )
     }
 
     /// Read-only replay hook, used only by offline report generation.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn replay_observed(
+    pub(crate) fn replay_observed_rows(
         path: &Path,
         schedule: Option<SessionSchedule>,
         stp_default: StpMode,
@@ -467,6 +474,7 @@ impl<R: Clone> Journal<R> {
             &Engine<R, RecordedClock, ReplayIds>,
             &[Output<R>],
         ) -> io::Result<()>,
+        mut observe_rows: impl FnMut(&mut Vec<crate::reproducibility::json::Json>) -> io::Result<()>,
     ) -> io::Result<Self> {
         let mut file = crate::replay_limits::input(path)?;
         let mut magic = [0; 8];
@@ -550,6 +558,9 @@ impl<R: Clone> Journal<R> {
                 &journal.engines[&record.symbol],
                 &outputs,
             )?;
+            if let Some(inspection) = &mut journal.inspection {
+                observe_rows(&mut inspection.rows)?;
+            }
             journal.log.next_seq = journal
                 .log
                 .next_seq

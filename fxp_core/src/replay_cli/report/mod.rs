@@ -482,7 +482,8 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
     if bytes > MAX_INPUT {
         return Err(invalid("report input exceeds 256 MiB limit"));
     }
-    let run = inspect_bundle(&c.bundle)?;
+    let row_limit = (c.from == 0 && c.to == u64::MAX).then_some(MAX_ROWS);
+    let run = crate::reproducibility::inspect_bundle_capped(&c.bundle, true, row_limit)?;
     let manifest = Json::parse(&crate::reproducibility::read_bundle_file(
         &c.bundle,
         "manifest.json",
@@ -498,7 +499,12 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
     let retained: Vec<Json> = rows
         .iter()
         .filter(|r| (c.from..=c.to).contains(&number(r, "global_seq")))
-        .map(|r| redact(r, c.owner.as_deref()))
+        .map(|r| {
+            let mut row = redact(r, c.owner.as_deref());
+            trim(&mut row);
+            row
+        })
+        .take(MAX_ROWS + 1)
         .collect();
     if retained.len() > MAX_ROWS {
         return Err(invalid(
@@ -557,6 +563,9 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
             "bundle changed between verification and book replay",
         ));
     }
+    // The second pass only supplies book frames; release its engine state
+    // before constructing/serializing the report document.
+    drop(journal);
     let mut initial: Vec<Json> = prefix
         .into_iter()
         .map(|(symbol, view)| {
@@ -699,18 +708,17 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
             Privacy::new(rows, c.owner.as_deref()).apply(&mut data, "");
         }
     }
+    let exit = if !run.complete {
+        2
+    } else {
+        i32::from(run.diverged)
+    };
+    drop(run);
     exact(&mut data);
     if data.encode().len() > MAX_DATA {
         return Err(invalid("report JSON exceeds 96 MiB; narrow --from/--to"));
     }
-    Ok((
-        data,
-        if !run.complete {
-            2
-        } else {
-            i32::from(run.diverged)
-        },
-    ))
+    Ok((data, exit))
 }
 fn save(path: &Path, bundle: &Path, bytes: &[u8], force: bool) -> io::Result<()> {
     let parent = path
@@ -843,8 +851,24 @@ fn html(data: &Json) -> String {
     let js = include_str!("view.js")
         .replace("\r\n", "\n")
         .replace('\r', "\n");
-    let json = data
+    let encoded = data.encode();
+    let payload = if encoded.len() > 256 * 1024 {
+        Json::object([
+            ("encoding", Json::string("zlib-base64-v1")),
+            ("decoded_bytes", Json::string(encoded.len().to_string())),
+            (
+                "data",
+                Json::string(base64(&miniz_oxide::deflate::compress_to_vec_zlib(
+                    encoded.as_bytes(),
+                    6,
+                ))),
+            ),
+        ])
         .encode()
+    } else {
+        encoded
+    };
+    let json = payload
         .replace('&', "\\u0026")
         .replace('<', "\\u003c")
         .replace('>', "\\u003e")
