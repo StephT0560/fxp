@@ -179,10 +179,21 @@ For a TLS gateway use the stdlib context rather than disabling verification:
 
 ```python
 import ssl
+import time
 context = ssl.create_default_context(cafile="certs/ca.crt")
 # For mTLS: context.load_cert_chain("certs/client.crt", "certs/client.key")
-client = Client.connect("127.0.0.1", 8082, token,
-                        tls=context, server_hostname="localhost")
+# Retry only connection/logon, never order submission. Keep TLS verification.
+for attempt in range(3):
+    try:
+        client = Client.connect("127.0.0.1", 8082, token, timeout=5,
+                                tls=context, server_hostname="localhost")
+        break
+    except ssl.SSLCertVerificationError:
+        raise
+    except (PermissionError, ConnectionError, TimeoutError, EOFError, ssl.SSLEOFError):
+        if attempt == 2:
+            raise
+        time.sleep(1)
 # Consume events using a context manager or close it explicitly.
 client.close()
 ```
