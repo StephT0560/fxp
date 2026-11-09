@@ -13,7 +13,8 @@ RUN --mount=type=secret,id=proxy_ca \
       arm64) arch=aarch_64; checksum=9eae1f20f70cccc912d1c318c3929b86aebf5afd4b0f32c196ef682c222ed5ae ;; \
       *) echo 'unsupported architecture' >&2; exit 1 ;; \
     esac; \
-    curl -fsSLo /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-${arch}.zip"; \
+    curl -fsSL --connect-timeout 10 --max-time 60 --retry 3 --retry-delay 1 --retry-max-time 120 \
+      -o /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-${arch}.zip?download=1"; \
     printf '%s  /tmp/protoc.zip\n' "$checksum" | sha256sum -c -; \
     unzip -q /tmp/protoc.zip -d /opt/protoc
 
