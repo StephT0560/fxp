@@ -15,10 +15,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: '25.3'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install checksum-verified protoc
+        run: |
+          sh scripts/install-protoc.sh "$RUNNER_TEMP/fxp-protoc"
+          echo "$RUNNER_TEMP/fxp-protoc/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

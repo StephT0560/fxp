@@ -24,10 +24,10 @@ jobs:
             target: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v7
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: '25.3'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install checksum-verified protoc
+        run: |
+          sh scripts/install-protoc.sh "$RUNNER_TEMP/fxp-protoc"
+          echo "$RUNNER_TEMP/fxp-protoc/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
