@@ -48,6 +48,13 @@ jobs:
           cargo test --locked --manifest-path fxp_core/Cargo.toml --lib -- --ignored --exact replay_cli::report::tests::fifty_thousand_business_events_fit_size_and_generation_budget
           python3 scripts/check_run_report.py --goldens "$RUNNER_TEMP/run-reports"
           cp target/report-smoke/hostile.html "$RUNNER_TEMP/run-reports/hostile.html"
+      - name: Replay worker memory and artifact regression
+        env:
+          FXP_PROFILE_DIR: ${{ runner.temp }}/replay-profile
+        run: |
+          cargo test --release --locked --manifest-path fxp_core/Cargo.toml --lib generate_replay_profile_bundles -- --ignored --nocapture
+          cargo build --release --locked --manifest-path fxp_core/Cargo.toml --bin fxp-replay
+          python3 scripts/profile-replay.py fxp_core/target/release/fxp-replay "$FXP_PROFILE_DIR" --memory-mib 768 --check
       - uses: actions/upload-artifact@v7
         with:
           name: offline-run-reports
@@ -281,12 +288,13 @@ jobs:
       - name: Real core, gateway and BFF integration
         run: bash scripts/demo_api_smoke.sh
       - name: Compose demo build, private ports and health
+        id: demo-start
         run: |
           make demo
           curl --fail http://127.0.0.1:3000/healthz
           python3 scripts/demo_compose_check.py
       - name: Stop demo
-        if: always()
+        if: always() && steps.demo-start.outcome != 'skipped'
         run: make demo-down
 
   console-e2e:

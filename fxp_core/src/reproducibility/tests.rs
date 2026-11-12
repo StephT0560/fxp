@@ -401,7 +401,7 @@ fn live_recording_identity_cache_releases_terminal_orders() {
 fn generate_replay_profile_bundles() {
     let root = std::path::PathBuf::from(std::env::var("FXP_PROFILE_DIR").expect("FXP_PROFILE_DIR"));
     std::fs::create_dir_all(&root).unwrap();
-    for target in [1_000, 10_000, 25_000, 100_000] {
+    for target in [1_000, 10_000, 25_000, 45_000, 100_000] {
         let dir = root.join(target.to_string());
         let mut journal = Journal::record(
             &dir,

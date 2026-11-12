@@ -32,7 +32,8 @@ def measure(binary, bundle, command, memory):
                 'exit_code': child.returncode, 'peak_rss_kib': usage.ru_maxrss,
                 'seconds': round(time.monotonic() - started, 3),
                 'input_bytes': sum(p.stat().st_size for p in bundle.iterdir() if p.is_file()),
-                'html_bytes': html.stat().st_size if html.exists() else 0}
+                'html_bytes': html.stat().st_size if html.exists() else 0,
+                'stderr': (Path(temp) / 'stderr').read_text()[-2048:]}
 
 
 def main():
@@ -40,10 +41,25 @@ def main():
     parser.add_argument('binary', type=Path)
     parser.add_argument('fixtures', type=Path)
     parser.add_argument('--memory-mib', type=int, default=256)
+    parser.add_argument('--check', action='store_true',
+                        help='fail unless supported reports fit the worker artifact cap and 100k fails at the row limit')
     args = parser.parse_args()
-    for size in (1000, 10000, 25000, 100000):
+    failures = []
+    for size in (1000, 10000, 25000, 45000, 100000):
         for command in ('verify', 'report'):
-            print(json.dumps(measure(args.binary.resolve(), args.fixtures / str(size), command, args.memory_mib)), flush=True)
+            result = measure(args.binary.resolve(), args.fixtures / str(size), command, args.memory_mib)
+            print(json.dumps(result), flush=True)
+            if args.check:
+                if command == 'report' and size == 100000:
+                    passed = result['exit_code'] == 2 and '100000 timeline rows' in result['stderr']
+                else:
+                    passed = result['exit_code'] == 0
+                    if command == 'report':
+                        passed = passed and 0 < result['html_bytes'] <= (4 << 20)
+                if not passed:
+                    failures.append(f'{size}/{command}')
+    if failures:
+        raise SystemExit('Replay resource regression: ' + ', '.join(failures))
 
 
 if __name__ == '__main__':

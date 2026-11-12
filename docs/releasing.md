@@ -8,7 +8,7 @@ or move a tag until a reviewed main commit has passed CI. Commands below are
 
 `deploy/Dockerfile.release` has five independently runnable multi-stage targets.
 Every external base pins a multi-platform index digest; builders use Rust 1.99.1,
-Go 1.26.10 and SHA-256-checked protoc 25.3 archives for both supported CPUs.
+Go 1.26.11 and SHA-256-checked protoc 25.3 archives for both supported CPUs.
 Runtime images are distroless (C/C++ runtime for Rust, static runtime for Go),
 with CA roots, UID/GID **65532:65532**, exec entrypoints and SIGTERM. All images
 carry OCI `.version`, `.revision` (full source SHA), `.source` and `.licenses`
