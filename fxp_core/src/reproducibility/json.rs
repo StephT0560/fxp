@@ -36,34 +36,56 @@ impl Json {
         }
     }
     pub(crate) fn encode(&self) -> String {
-        match self {
-            Self::Null => "null".into(),
-            Self::Bool(b) => b.to_string(),
-            Self::Number(n) => n.clone(),
-            Self::String(s) => {
-                let mut out = String::from("\"");
-                for c in s.chars() {
-                    match c {
-                        '"' => out.push_str("\\\""),
-                        '\\' => out.push_str("\\\\"),
-                        c if c < ' ' => out.push_str(&format!("\\u{:04x}", c as u32)),
-                        c => out.push(c),
-                    }
+        let mut out = String::new();
+        self.encode_into(&mut out);
+        out
+    }
+    fn encode_string(s: &str, out: &mut String) {
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                c if c < ' ' => {
+                    use std::fmt::Write;
+                    write!(out, "\\u{:04x}", c as u32).unwrap();
                 }
-                out.push('"');
-                out
+                c => out.push(c),
             }
-            Self::Array(a) => format!(
-                "[{}]",
-                a.iter().map(Self::encode).collect::<Vec<_>>().join(",")
-            ),
-            Self::Object(m) => format!(
-                "{{{}}}",
-                m.iter()
-                    .map(|(k, v)| format!("{}:{}", Self::string(k).encode(), v.encode()))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+        }
+        out.push('"');
+    }
+    // Append recursively to one buffer; large timelines must not allocate
+    // encoded copies for every row, then join and copy the whole array again.
+    fn encode_into(&self, out: &mut String) {
+        match self {
+            Self::Null => out.push_str("null"),
+            Self::Bool(true) => out.push_str("true"),
+            Self::Bool(false) => out.push_str("false"),
+            Self::Number(n) => out.push_str(n),
+            Self::String(s) => Self::encode_string(s, out),
+            Self::Array(a) => {
+                out.push('[');
+                for (i, value) in a.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    value.encode_into(out);
+                }
+                out.push(']');
+            }
+            Self::Object(m) => {
+                out.push('{');
+                for (i, (key, value)) in m.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    Self::encode_string(key, out);
+                    out.push(':');
+                    value.encode_into(out);
+                }
+                out.push('}');
+            }
         }
     }
     pub(crate) fn parse(s: &str) -> io::Result<Self> {

@@ -141,7 +141,9 @@ fn parse(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
     Ok(o)
 }
 fn redact(row: &Json, owner: Option<&str>) -> Json {
-    let mut row = row.clone();
+    redact_owned(row.clone(), owner)
+}
+fn redact_owned(mut row: Json, owner: Option<&str>) -> Json {
     let scoped = owner.is_some_and(|owner| text(&row, "owner") == owner);
     for field in ["counterparty", "opposing_order"] {
         if let Json::Object(m) = &mut row

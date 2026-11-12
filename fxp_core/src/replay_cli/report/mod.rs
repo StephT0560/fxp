@@ -483,7 +483,7 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
         return Err(invalid("report input exceeds 256 MiB limit"));
     }
     let row_limit = (c.from == 0 && c.to == u64::MAX).then_some(MAX_ROWS);
-    let run = crate::reproducibility::inspect_bundle_capped(&c.bundle, true, row_limit)?;
+    let mut run = crate::reproducibility::inspect_bundle_capped(&c.bundle, true, row_limit)?;
     let manifest = Json::parse(&crate::reproducibility::read_bundle_file(
         &c.bundle,
         "manifest.json",
@@ -496,16 +496,50 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
     if c.from > rows.last().map_or(0, |r| number(r, "global_seq")) {
         return Err(invalid("--from exceeds the last journal sequence"));
     }
-    let retained: Vec<Json> = rows
-        .iter()
+    // Derive metadata while the verified source is borrowed, then move its
+    // rows into the display timeline instead of retaining a second full trace.
+    let total_summary = summary(rows);
+    let order_rows = orders(rows, c.from, c.to, c.owner.as_deref());
+    let last_seq = rows.last().map_or(0, |r| number(r, "global_seq"));
+    let symbols: BTreeSet<String> = rows.iter().map(|r| text(r, "symbol").to_owned()).collect();
+    let privacy = if c.anonymize {
+        if run.diverged {
+            let mut identities = run.rows.clone();
+            if let Some(expected) = &run.expected_rows {
+                identities.extend(expected.iter().cloned());
+            }
+            Some(Privacy::new(&identities, c.owner.as_deref()))
+        } else {
+            Some(Privacy::new(rows, c.owner.as_deref()))
+        }
+    } else {
+        None
+    };
+    let first = if run.diverged {
+        run.expected_rows
+            .as_ref()
+            .map(|r| divergence(r, &run.rows))
+            .unwrap_or_else(|| {
+                Json::object([(
+                    "detail",
+                    Json::string(
+                        "legacy bundle has aggregate expectations only; first event unavailable",
+                    ),
+                )])
+            })
+    } else {
+        Json::Null
+    };
+    let retained: Vec<Json> = std::mem::take(&mut run.rows)
+        .into_iter()
         .filter(|r| (c.from..=c.to).contains(&number(r, "global_seq")))
-        .map(|r| {
-            let mut row = redact(r, c.owner.as_deref());
+        .map(|mut row| {
             trim(&mut row);
-            row
+            super::redact_owned(row, c.owner.as_deref())
         })
         .take(MAX_ROWS + 1)
         .collect();
+    run.expected_rows = None;
     if retained.len() > MAX_ROWS {
         return Err(invalid(
             "report exceeds 100000 timeline rows; narrow --from/--to",
@@ -582,7 +616,6 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
         .filter(|r| text(r, "kind") == "trade")
         .cloned()
         .collect();
-    let total_summary = summary(rows);
     let status = if !run.complete {
         "incomplete"
     } else if run.diverged {
@@ -590,22 +623,6 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
     } else {
         "identical"
     };
-    let first = if run.diverged {
-        run.expected_rows
-            .as_ref()
-            .map(|r| divergence(r, &run.rows))
-            .unwrap_or_else(|| {
-                Json::object([(
-                    "detail",
-                    Json::string(
-                        "legacy bundle has aggregate expectations only; first event unavailable",
-                    ),
-                )])
-            })
-    } else {
-        Json::Null
-    };
-    let symbols: BTreeSet<_> = rows.iter().map(|r| text(r, "symbol")).collect();
     let mut manifest = manifest;
     if c.anonymize
         && let Json::Object(m) = &mut manifest
@@ -669,10 +686,7 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
             "window",
             Json::object([
                 ("from", Json::number(c.from)),
-                (
-                    "to",
-                    Json::number(c.to.min(rows.last().map_or(0, |r| number(r, "global_seq")))),
-                ),
+                ("to", Json::number(c.to.min(last_seq))),
                 ("max_rows", Json::number(MAX_ROWS as u64)),
                 ("max_data_bytes", Json::number(MAX_DATA as u64)),
                 (
@@ -684,10 +698,7 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
             ]),
         ),
         ("summary", total_summary),
-        (
-            "orders",
-            Json::Array(orders(rows, c.from, c.to, c.owner.as_deref())),
-        ),
+        ("orders", Json::Array(order_rows)),
         (
             "symbols",
             Json::Array(symbols.into_iter().map(Json::string).collect()),
@@ -697,16 +708,8 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
         ("tape", Json::Array(tape)),
     ]);
     trim(&mut data);
-    if c.anonymize {
-        if run.diverged {
-            let mut identities = run.rows.clone();
-            if let Some(expected) = &run.expected_rows {
-                identities.extend(expected.iter().cloned());
-            }
-            Privacy::new(&identities, c.owner.as_deref()).apply(&mut data, "");
-        } else {
-            Privacy::new(rows, c.owner.as_deref()).apply(&mut data, "");
-        }
+    if let Some(privacy) = privacy {
+        privacy.apply(&mut data, "");
     }
     let exit = if !run.complete {
         2
