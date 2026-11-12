@@ -288,12 +288,13 @@ jobs:
       - name: Real core, gateway and BFF integration
         run: bash scripts/demo_api_smoke.sh
       - name: Compose demo build, private ports and health
+        id: demo-start
         run: |
           make demo
           curl --fail http://127.0.0.1:3000/healthz
           python3 scripts/demo_compose_check.py
       - name: Stop demo
-        if: always()
+        if: always() && steps.demo-start.outcome != 'skipped'
         run: make demo-down
 
   console-e2e:

@@ -17,7 +17,7 @@ Core and gateway **must share a loopback network namespace**. Separate container
 
 ## Start a recorded stack by hand
 
-Prerequisites: Rust stable supporting edition 2024 (audit used 1.99.1), Go 1.26.10 as selected by `go.work`, protoc **25.3**, Python >=3.10 with venv, Bash, Make, OpenSSL, and optionally Node >=22 for the console. Install dependencies before testing; the runtime checks below need only localhost. From the repository root:
+Prerequisites: Rust stable supporting edition 2024 (audit used 1.99.1), Go 1.26.11 as selected by `go.work`, protoc **25.3**, Python >=3.10 with venv, Bash, Make, OpenSSL, and optionally Node >=22 for the console. Install dependencies before testing; the runtime checks below need only localhost. From the repository root:
 
 ```bash
 bash scripts/gen_proto.sh
