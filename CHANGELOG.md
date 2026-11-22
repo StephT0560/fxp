@@ -7,6 +7,13 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### FXP Sandbox bot onboarding
+- Python SDK: `fxp_client.sandbox.connect()` waits for a sandbox run and logs on
+  with a freshly minted run token per attempt, using `FXP_API_KEY` only against
+  the control plane.
+- Gateway: opt-in `GET /sessions` presence endpoint (`FXP_GW_PRESENCE=1`) on the
+  metrics listener, listing authenticated trading sessions per trader.
+
 ### Pinned release containers (prepared for v0.1.0)
 - Five multi-stage, non-root distroless images for core, gateway, simday, FIX bridge
   and replay, with pinned multiarch bases and version/source-revision OCI labels.

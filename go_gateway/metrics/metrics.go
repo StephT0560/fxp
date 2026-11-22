@@ -4,6 +4,7 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -25,6 +26,49 @@ var commands atomic.Uint64
 var processed atomic.Uint64
 var rejects [8]atomic.Uint64
 var started = time.Now()
+
+// TraderSessions is one trader's count of authenticated trading sessions.
+type TraderSessions struct {
+	Trader   string `json:"trader"`
+	Sessions int    `json:"sessions"`
+}
+
+const maxPresenceTraders = 64
+
+var presence atomic.Pointer[func() []TraderSessions]
+
+// SetPresence enables GET /sessions on the metrics listener. It lists trader
+// IDs (JWT subjects) with authenticated trading sessions, so it is a separate
+// opt-in: enable it only where the metrics address is private to the operator.
+func SetPresence(f func() []TraderSessions) {
+	if f == nil {
+		presence.Store(nil)
+		return
+	}
+	presence.Store(&f)
+}
+
+func sessionsHandler(w http.ResponseWriter, r *http.Request) {
+	f := presence.Load()
+	if f == nil || r.URL.Path != "/sessions" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != "GET" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	traders := (*f)()
+	if len(traders) > maxPresenceTraders {
+		traders = traders[:maxPresenceTraders]
+	}
+	if traders == nil {
+		traders = []TraderSessions{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{"traders": traders})
+}
 
 // Release builds override these with -ldflags; ordinary Git builds use build info.
 var Version = "0.1.0"
@@ -263,6 +307,7 @@ func Start(ctx context.Context, value string) (func(), error) {
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(render()))
 	})
+	mux.HandleFunc("/sessions", sessionsHandler)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second, IdleTimeout: 2 * time.Second, MaxHeaderBytes: 8192}
 	stopped := make(chan struct{})
 	bounded := &scrapeListener{Listener: listener, slots: make(chan struct{}, maxScrapeConnections)}

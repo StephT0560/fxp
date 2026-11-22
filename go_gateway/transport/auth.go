@@ -30,9 +30,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
+	"go_gateway/metrics"
 	"go_gateway/protobuf"
 
 	"google.golang.org/protobuf/proto"
@@ -46,6 +48,24 @@ import (
 import "sync"
 
 var sessionStore sync.Map // session_id (string) → traderID (string)
+
+// TraderSessions counts authenticated trading (not read-only) sessions per
+// trader, sorted by trader ID, for the opt-in presence endpoint.
+func TraderSessions() []metrics.TraderSessions {
+	counts := map[string]int{}
+	sessionStore.Range(func(key, value any) bool {
+		if _, viewer := sessionReadOnly.Load(key); !viewer {
+			counts[value.(string)]++
+		}
+		return true
+	})
+	out := make([]metrics.TraderSessions, 0, len(counts))
+	for trader, n := range counts {
+		out = append(out, metrics.TraderSessions{Trader: trader, Sessions: n})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Trader < out[j].Trader })
+	return out
+}
 
 // IsAuthenticated returns true if the given session_id is active.
 func IsAuthenticated(sessionID string) bool {

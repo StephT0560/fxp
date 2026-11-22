@@ -129,6 +129,30 @@ there is no group commit.
 
 ## Attach a real bot
 
+### FXP Sandbox runs
+
+`fxp_client.sandbox` connects a bot to an FXP Sandbox run with a workspace API
+key. The key only goes to the sandbox control plane over verified TLS; the
+gateway only receives a short-lived run token minted just before each logon
+attempt, so a long-lived script never holds a stale token.
+
+```python
+from fxp_client import pb, sandbox
+
+# FXP_API_KEY (required), FXP_URL (default https://localhost:8443),
+# FXP_RUN_ID, FXP_BOT and FXP_CA_FILE come from the environment.
+client = sandbox.connect()          # waits until the run is running
+client.subscribe("AAPL")
+```
+
+`sandbox.Sandbox` also offers `create_run`, `run`, `wait_until_running`,
+`token` and `stop`. Only connection/logon is retried (three attempts, a fresh
+token each); certificate failures are never retried and orders are never
+resent. After a disconnect, call `connect` again. Errors carry the HTTP status
+and API error code, never the key.
+
+### Local stack
+
 The local SDK lives in `sdk/python/fxp_client` and uses only the `protobuf` runtime.
 This small version chooses TCP (four-byte **big-endian** payload length followed
 by an `FXPMessage`); it does not add a WebSocket dependency. Integer prices are
