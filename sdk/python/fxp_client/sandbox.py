@@ -17,7 +17,19 @@ import urllib.request
 from .client import Client
 
 LIVE_STATES = ('requested', 'starting', 'ready', 'running')
-_RETRYABLE = (PermissionError, ConnectionError, TimeoutError, EOFError, ssl.SSLEOFError)
+# OSError covers refused/reset/unreachable/timeouts and TLS EOF; certificate
+# failures are re-raised before this tuple is consulted.
+_RETRYABLE = (OSError, EOFError)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow redirects, so the API key is never sent anywhere else."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _opener(tls: ssl.SSLContext) -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=tls))
 
 
 class SandboxError(RuntimeError):
@@ -39,6 +51,7 @@ class Sandbox:
         self.__key = key
         ca_file = ca_file or os.environ.get('FXP_CA_FILE') or ('fxp-local-ca.crt' if os.path.exists('fxp-local-ca.crt') else None)
         self.tls = ssl.create_default_context(cafile=ca_file)
+        self._open = _opener(self.tls).open
         self.timeout = timeout
 
     def __repr__(self) -> str:
@@ -49,7 +62,7 @@ class Sandbox:
         request = urllib.request.Request(self.url + path, data=data, method=method, headers={
             'Authorization': 'Bearer ' + self.__key, 'Content-Type': 'application/json'})
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout, context=self.tls) as response:
+            with self._open(request, timeout=self.timeout) as response:
                 raw = response.read(1 << 20)
         except urllib.error.HTTPError as error:
             code = 'request_failed'

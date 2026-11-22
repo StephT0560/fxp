@@ -4,6 +4,8 @@ import json
 import ssl
 import unittest
 import urllib.error
+import urllib.request
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fxp_client import sandbox
@@ -16,7 +18,7 @@ class FakePlane:
     def __init__(self, states, fail_token=None):
         self.states, self.calls, self.fail_token = list(states), [], fail_token
 
-    def __call__(self, request, timeout, context):
+    def __call__(self, request, timeout):
         self.calls.append((request.get_method(), request.full_url, request.headers.get('Authorization'), request.data))
         if request.full_url.endswith('/token'):
             if self.fail_token:
@@ -39,7 +41,7 @@ class SandboxConnect(unittest.TestCase):
 
     def connect(self, plane, effects, **env):
         client = Mock()
-        with patch('urllib.request.urlopen', plane), patch.object(sandbox.Client, 'connect', side_effect=[*effects, client]) as connect, \
+        with patch.object(sandbox, '_opener', return_value=SimpleNamespace(open=plane)), patch.object(sandbox.Client, 'connect', side_effect=[*effects, client]) as connect, \
                 patch.dict('os.environ', {'FXP_API_KEY': KEY, 'FXP_RUN_ID': RUN, **env}, clear=True):
             result = sandbox.connect(bot='alpha')
         return result, client, connect
@@ -70,6 +72,21 @@ class SandboxConnect(unittest.TestCase):
         with patch.dict('os.environ', {'FXP_API_KEY': KEY}, clear=True):
             self.assertNotIn(KEY, repr(sandbox.Sandbox()))
 
+    def test_redirects_are_refused_so_the_key_never_leaves(self):
+        handler = sandbox._NoRedirect()
+        request = urllib.request.Request('https://localhost:8443/v1/runs', headers={'Authorization': 'Bearer ' + KEY})
+        self.assertIsNone(handler.redirect_request(request, None, 302, 'Found', {}, 'http://elsewhere.example/'))
+        with patch.dict('os.environ', {'FXP_API_KEY': KEY}, clear=True):
+            handlers = sandbox.Sandbox()._open.__self__.handlers
+        self.assertTrue(any(isinstance(h, sandbox._NoRedirect) for h in handlers))
+        self.assertFalse(any(type(h) is urllib.request.HTTPRedirectHandler for h in handlers))
+
+    def test_unreachable_networks_are_retried_with_a_fresh_token(self):
+        import errno
+        plane = FakePlane(['running'])
+        self.connect(plane, [OSError(errno.ENETUNREACH, 'unreachable')])
+        self.assertEqual([c[0] for c in plane.calls], ['GET', 'POST', 'POST'])
+
     def test_requires_https_and_a_key(self):
         with patch.dict('os.environ', {}, clear=True):
             with self.assertRaises(ValueError):
@@ -80,10 +97,10 @@ class SandboxConnect(unittest.TestCase):
     def test_create_run_and_stop_use_the_documented_endpoints(self):
         calls = []
 
-        def urlopen(request, timeout, context):
+        def urlopen(request, timeout):
             calls.append((request.get_method(), request.full_url, json.loads(request.data) if request.data else None))
             return io.BytesIO(b'{"id":"' + RUN.encode() + b'","state":"requested"}')
-        with patch('urllib.request.urlopen', urlopen):
+        with patch.object(sandbox, '_opener', return_value=SimpleNamespace(open=urlopen)):
             s = sandbox.Sandbox('https://sandbox.example/', KEY)
             self.assertEqual(s.create_run(seed=9, duration_seconds=120)['id'], RUN)
             s.stop(RUN)
