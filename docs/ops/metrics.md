@@ -95,3 +95,12 @@ The before/after measurements and their limits are recorded in
 [benchmark methodology](../benchmark-methodology.md). Metrics-disabled and
 metrics-enabled builds must be compared separately. Do not infer a capacity/SLO
 from these shared-host loopback measurements.
+
+## Gateway session presence
+
+With `FXP_GW_PRESENCE=1`, the gateway metrics listener also serves
+`GET /sessions`: `{"traders":[{"trader":"<jwt sub>","sessions":1}]}`, sorted by
+trader and capped at 64. It counts authenticated trading sessions only
+(read-only console sessions are excluded). Unlike `/metrics` it lists trader
+IDs, so enable it only where the metrics address is private to the operator.
+FXP Sandbox uses it to show which bots are logged on to a run.

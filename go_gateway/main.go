@@ -30,6 +30,9 @@ func main() {
 	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
 
+	if os.Getenv("FXP_GW_PRESENCE") == "1" {
+		metrics.SetPresence(transport.TraderSessions)
+	}
 	stopMetrics, metricsErr := metrics.Start(ctx, os.Getenv("FXP_GW_METRICS_ADDR"))
 	if metricsErr != nil {
 		log.Fatalf("metrics: %v", metricsErr)
