@@ -441,7 +441,7 @@ fn generate_replay_profile_bundles() {
         );
     }
     // A bot crossing a two-sided book: resting quotes, fills, trades, cancels
-    // and a changing ladder after nearly every command (~96k events).
+    // and a changing ladder after nearly every command (~72k trace rows).
     let dir = root.join("busy");
     let mut journal = Journal::record(
         &dir,
