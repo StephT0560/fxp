@@ -4,9 +4,9 @@ package transport
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
@@ -141,22 +141,51 @@ func TestRejectedRenewalPreservesSessionAndReconnectToken(t *testing.T) {
 	}
 }
 
+func blockCoreOrders(t *testing.T) net.Conn {
+	t.Helper()
+	oldPool := corePool
+	t.Cleanup(func() { corePool = oldPool })
+	server, core := pipes(t)
+	otherServer, _ := pipes(t)
+	corePool = make(chan *pooledConn, 2)
+	corePool <- newPooledConnWith(0, server)
+	corePool <- newPooledConnWith(1, otherServer)
+	return core
+}
+
+func sendBlockedOrder(t *testing.T, wire sessionWire, owner, id string) *clientWriter {
+	t.Helper()
+	wire.send(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_NewOrder{NewOrder: &protobuf.NewOrderSingle{
+		OrderId: id, Symbol: "EXPIRY", Side: protobuf.OrderSide_BUY, OrderType: protobuf.OrderType_LIMIT,
+		TimeInForce: protobuf.TimeInForce_GTC, Price: 100, Quantity: 1,
+	}}})
+	key := namespacedOrderID(owner, id)
+	t.Cleanup(func() { orderClientMap.Delete(key) })
+	var writer *clientWriter
+	waitUntil(t, func() bool {
+		if route, ok := orderClientMap.Load(key); ok {
+			if value, live := clientWriters.Load(route.(orderRoute).conn); live {
+				writer = value.(*clientWriter)
+			}
+		}
+		return writer != nil
+	})
+	return writer
+}
+
 func TestSessionExpiryClosesOutputDuringCoreBackpressure(t *testing.T) {
 	for _, transport := range []string{"tcp", "ws"} {
 		t.Run(transport, func(t *testing.T) {
 			t.Setenv("FXP_JWT_SECRET", "session-test")
 			t.Setenv("FXP_JWT_ENFORCE_SESSION_EXPIRY", "true")
-			oldMD, oldCancel := mdConn, cancelOnDisconnect
-			server, core := pipes(t)
-			mdConn = newPooledConnWith(0, server)
+			oldCancel := cancelOnDisconnect
+			core := blockCoreOrders(t)
 			canceled := make(chan string, 2)
 			cancelOnDisconnect = func(owner string) { canceled <- owner }
 			wire := newSessionWire(t, transport)
-			defer func() { _ = core.Close(); wire.close(); mdConn, cancelOnDisconnect = oldMD, oldCancel }()
-			symbol := "EXPIRY-" + transport
+			defer func() { _ = core.Close(); wire.close(); cancelOnDisconnect = oldCancel }()
 			wireLogon(t, wire, sessionToken(t, "expiring", time.Now().Unix()+2, "expiry"), true, true)
-			wire.send(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: &protobuf.MarketDataRequest{Symbols: []string{symbol}}}})
-			waitUntil(t, func() bool { _, ok := clientSubs.Load(symbol); return ok })
+			writer := sendBlockedOrder(t, wire, "expiring", "EXPIRY-"+transport)
 			if _, err := wire.read(); err == nil || isTimeout(err) {
 				t.Fatal("expired connection still open")
 			}
@@ -174,12 +203,8 @@ func TestSessionExpiryClosesOutputDuringCoreBackpressure(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("expiry did not trigger cancel-on-disconnect")
 			}
-			if clients, ok := clientSubs.Load(symbol); ok {
-				waitUntil(t, func() bool {
-					empty := true
-					clients.(*sync.Map).Range(func(_, _ any) bool { empty = false; return false })
-					return empty
-				})
+			if err := writer.enqueue([]byte("expired output"), true); err == nil {
+				t.Fatal("expired writer still accepts market data")
 			}
 		})
 	}
@@ -207,29 +232,15 @@ func TestRenewalReplacesIdleExpiryTimer(t *testing.T) {
 func TestExpiryPreservesCoreLossCauseWhileForwardingIsBlocked(t *testing.T) {
 	t.Setenv("FXP_JWT_SECRET", "session-test")
 	t.Setenv("FXP_JWT_ENFORCE_SESSION_EXPIRY", "true")
-	oldMD, oldCancel := mdConn, cancelOnDisconnect
-	server, core := pipes(t)
-	mdConn = newPooledConnWith(0, server)
+	oldCancel := cancelOnDisconnect
+	core := blockCoreOrders(t)
 	canceled := make(chan string, 2)
 	cancelOnDisconnect = func(owner string) { canceled <- owner }
 	wire := newSessionWire(t, "tcp")
-	defer func() { _ = core.Close(); wire.close(); mdConn, cancelOnDisconnect = oldMD, oldCancel }()
+	defer func() { _ = core.Close(); wire.close(); cancelOnDisconnect = oldCancel }()
 	wireLogon(t, wire, sessionToken(t, "resync", time.Now().Unix()+2, "resync"), true, true)
-	wire.send(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: &protobuf.MarketDataRequest{Symbols: []string{"RESYNC-EXPIRY"}}}})
-	var writer *clientWriter
-	waitUntil(t, func() bool {
-		if clients, ok := clientSubs.Load("RESYNC-EXPIRY"); ok {
-			clients.(*sync.Map).Range(func(conn, _ any) bool {
-				value, ok := clientWriters.Load(conn)
-				if ok {
-					writer = value.(*clientWriter)
-					writer.closeForCoreLoss()
-				}
-				return false
-			})
-		}
-		return writer != nil
-	})
+	writer := sendBlockedOrder(t, wire, "resync", "RESYNC-EXPIRY")
+	writer.closeForCoreLoss()
 	select {
 	case <-writer.stopped:
 	case <-time.After(3 * time.Second):
