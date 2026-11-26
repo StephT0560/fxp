@@ -150,7 +150,7 @@ Auction price selection maximizes volume, minimizes imbalance, prefers the refer
 
 ---
 
-## Proto Schema (v2.6)
+## Proto Schema (v2.7)
 
 Full institutional-grade message coverage:
 
@@ -167,6 +167,10 @@ AuctionInfo             — indicative auction price, volume and imbalance
 ErrorMessage            — structured error responses
 OrderMassCancelRequest / OrderMassCancelReport — owner-scoped mass cancel
 ```
+
+Version 2.7 adds correlated market-data admission and explicit gateway
+unsubscribe. The core and gateway must be upgraded together. See the
+[subscription lifecycle](docs/market-data.md#gateway-subscription-limits).
 
 Version 2.6 adds optional `SessionControl.symbol` (field 4), letting a local scenario open a call on just its own book; an empty value retains all-symbol behavior. Version 2.5 adds `TradeCaptureReport.aggressor_side`, `seq` and `is_auction` for the anonymous public trade feed, which the core now emits once per fill to every market-data subscriber of the symbol; see [market data](docs/market-data.md). Version 2.4 adds optional iceberg display quantities on entry/replacement and execution reports; see [iceberg behavior](docs/iceberg-orders.md). Version 2.3 adds owner-scoped order-status request/response messages and `EXEC_ORDER_STATUS` (10). Version 2.2 adds self-trade prevention (`NewOrderSingle.stp_mode`/`stp_group`, `EXEC_RESTATED`), `Logon.cancel_on_disconnect` and the mass-cancel messages, all additively. Version 2.1 adds auction/session messages and an ExecutionReport auction flag without changing existing wire identifiers. Version 2.0 shifted all existing enum numbers by one and is wire-breaking against 1.x. All enums use a per-enum `*_UNSPECIFIED = 0` sentinel; existing named values start at 1. Unknown and unspecified order-entry enums are rejected. In an `OrderCancelReplaceRequest`, `new_time_in_force = TIME_IN_FORCE_UNSPECIFIED (0)` means keep the current value.
 
@@ -513,7 +517,7 @@ bursts and loopback figures are not production capacity or WAN SLO claims.
 ```text
 fxp/
 ├── .github/                    CI, benchmark/release workflows and Dependabot
-├── fxp_core/                   Rust matching engine, protobuf v2.6, Criterion
+├── fxp_core/                   Rust matching engine, protobuf v2.7, Criterion
 │   └── src/                    server/core auth, engine, order_book, event log,
 │                               schedule, symbol configuration and regressions
 ├── go_gateway/                 Native TCP/WebSocket gateway

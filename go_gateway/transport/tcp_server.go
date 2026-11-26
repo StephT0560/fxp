@@ -128,7 +128,7 @@ func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 			return
 		}
 		if !bucket.allow(time.Now()) {
-			sendSessionError(clientConn, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "message rate limit exceeded")
+			rejectRateLimitedFrame(clientConn, msgBuf, sessionID)
 			continue
 		}
 		msg := &protobuf.FXPMessage{}
@@ -201,6 +201,7 @@ var mdAwaiting sync.Map
 // still has a WebSocket subscriber (only those still awaiting a snapshot when
 // pendingOnly) and returns how many it requested.
 func replaySubscriptions(pc *pooledConn, pendingOnly bool) (int, error) {
+	subscriptionsMu.Lock()
 	var symbols []string
 	clientSubs.Range(func(k, v any) bool {
 		s, ok := k.(string)
@@ -219,15 +220,16 @@ func replaySubscriptions(pc *pooledConn, pendingOnly bool) (int, error) {
 		symbols = append(symbols, s)
 		return true
 	})
-	if len(symbols) == 0 {
-		return 0, nil
-	}
-	sort.Strings(symbols)
 	if !pendingOnly {
 		for _, s := range symbols {
 			mdAwaiting.Store(s, struct{}{})
 		}
 	}
+	subscriptionsMu.Unlock()
+	if len(symbols) == 0 {
+		return 0, nil
+	}
+	sort.Strings(symbols)
 	raw, err := proto.Marshal(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{
 		MarketDataRequest: &protobuf.MarketDataRequest{Symbols: symbols},
 	}})
@@ -238,7 +240,7 @@ func replaySubscriptions(pc *pooledConn, pendingOnly bool) (int, error) {
 }
 
 func forwardSubscriptionToCore(request *protobuf.MarketDataRequest) {
-	// Filter out empty symbol strings — Rust would spawn a ghost order book task for them
+	// Empty symbols are not meaningful subscription requests.
 	filtered := make([]string, 0, len(request.Symbols))
 	for _, s := range request.Symbols {
 		if s != "" {

@@ -59,13 +59,10 @@ func registerClientWriter(conn any) *clientWriter {
 
 func unregisterClientWriter(conn any) {
 	pendingRequests.clear(conn)
-	clientSubs.Range(func(_, clients any) bool {
-		clients.(*sync.Map).Delete(conn)
-		return true
-	})
 	if value, ok := clientWriters.LoadAndDelete(conn); ok {
 		value.(*clientWriter).stop()
 	}
+	removeSubscriptions(conn)
 	coreLossClosed.Delete(conn)
 }
 

@@ -987,6 +987,23 @@ async fn handle_tcp_client_with_shutdown(
 
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     tracing::debug!("MarketDataRequest for {:?}", request.symbols);
+                    if request.validate_only {
+                        let mut validated_symbols = Vec::with_capacity(request.symbols.len());
+                        for symbol in request.symbols {
+                            if router.get_existing(&symbol).await.is_some() {
+                                validated_symbols.push(symbol);
+                            }
+                        }
+                        output_tx.try_send_frame(frame_message(&fxp::FxpMessage {
+                            payload: Some(fxp::fxp_message::Payload::MarketDataRequestAck(
+                                fxp::MarketDataRequestAck {
+                                    request_id: request.request_id,
+                                    validated_symbols,
+                                },
+                            )),
+                        }));
+                        continue;
+                    }
                     for symbol in &request.symbols {
                         let Some(sym_tx) = router.get_existing(symbol).await else {
                             tracing::warn!(
@@ -1636,6 +1653,27 @@ mod symbol_admission_tests {
             .unwrap()
             .payload
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn market_data_validation_rejects_unknown_without_creating_a_book() {
+        let router = SymbolRouter::new(None);
+        let reply = round_trip(
+            &router,
+            fxp::fxp_message::Payload::MarketDataRequest(fxp::MarketDataRequest {
+                symbols: vec!["UNKNOWN".into()],
+                request_id: "md-check".into(),
+                validate_only: true,
+                ..Default::default()
+            }),
+        )
+        .await;
+        let fxp::fxp_message::Payload::MarketDataRequestAck(ack) = reply else {
+            panic!("expected validation ack")
+        };
+        assert_eq!(ack.request_id, "md-check");
+        assert!(ack.validated_symbols.is_empty());
+        assert!(router.symbols().await.is_empty());
     }
 
     #[tokio::test]

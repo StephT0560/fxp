@@ -8,6 +8,41 @@ symbol (TCP `MarketDataRequest`, WebSocket subscription, or FIX `35=V` with
 market-data queue in the core; private `ExecutionReport`s use a separate
 critical queue and are never dropped in favor of market data.
 
+## Gateway subscription limits
+
+The gateway allows up to 256 distinct symbols per connection and 4,096
+distinct subscribed symbols across the process. A symbol can occupy up to
+128 bytes. Repeating a symbol consumes no additional membership slot.
+A request exceeding a limit is rejected in full with
+`RATE_LIMIT_EXCEEDED`. Disconnecting frees the connection's memberships,
+including unused symbol entries. The gateway checks existing core books before
+allocating membership slots. Requests with an ID reject the whole batch with
+`SYMBOL_NOT_SUPPORTED` when a book is missing. Requests without an ID subscribe
+to the books that already exist, so console and SDK clients can batch symbols
+before every book opens. Missing books consume no quota. Outstanding
+validations share the gateway's bounded pending-request tracker and time out
+after 30 seconds.
+
+Protocol v2.7 adds optional `MarketDataRequest.request_id` correlation and
+`unsubscribe` to release the listed symbols on a connection. An empty release
+list has no effect. Local releases still apply when the connection's message rate
+budget is exhausted. An admission request with a nonempty ID receives
+`MarketDataRequestAck` before its snapshots, or an
+`ErrorMessage` carrying that request ID on rejection. The gateway uses
+`validate_only` internally to ask the core to check symbols without subscribing.
+Deploy the v2.7 core and gateway together.
+
+The FIX bridge translates admission errors to `MarketDataRequestReject` (`35=Y`)
+with the original `MDReqID`. Rejected requests leave existing FIX routing intact.
+FIX unsubscribe and completed snapshot-only requests release gateway memberships
+once no other active or pending FIX request needs the symbol.
+
+Core loss closes client connections. Clients must reconnect and resubscribe.
+The dedicated core connection also replays any memberships still active during
+recovery.
+The core may still send updates for previously subscribed books on that shared
+connection. The gateway discards them once the last client membership is removed.
+
 ## Public trade feed (protocol v2.5)
 
 The core emits exactly one `TradeCaptureReport` per fill, in matching order,

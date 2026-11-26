@@ -513,6 +513,9 @@ func routeFromCore(msg *protobuf.FXPMessage) {
 		slog.Debug("MarketDataIncrementalUpdate received", "symbol", payload.MarketDataIncremental.Symbol)
 		ForwardMarketData(payload.MarketDataIncremental)
 
+	case *protobuf.FXPMessage_MarketDataRequestAck:
+		routeMarketDataValidation(payload.MarketDataRequestAck)
+
 	case *protobuf.FXPMessage_MarketDataSnapshot:
 		slog.Debug("MarketDataSnapshot received", "symbol", payload.MarketDataSnapshot.Symbol)
 		mdAwaiting.Delete(payload.MarketDataSnapshot.Symbol)

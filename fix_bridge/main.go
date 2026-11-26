@@ -603,8 +603,8 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 	}
 
 	if msg.MsgType() == codec.MsgTypeMarketDataRequest && msg.Get(codec.TagSubscriptionRequestType) == "2" {
-		h.md.unsubscribe(msg.Get(codec.TagMDReqID), mdSymbols(msg))
-		return // nothing to forward upstream
+		h.releaseMarketData(h.md.unsubscribe(msg.Get(codec.TagMDReqID), mdSymbols(msg)))
+		return
 	}
 
 	fxpMsg, err := translator.TranslateFIXtoFXP(msg)
@@ -623,11 +623,16 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		return
 	}
 
-	// Recorded before sending so the snapshot cannot outrun it; undone on failure.
-	var undoMD func()
+	// Gateway admission arrives before its snapshot and commits local routing.
+	var mdKey string
 	if mdReq := fxpMsg.GetMarketDataRequest(); mdReq != nil {
 		stream := msg.Get(codec.TagSubscriptionRequestType) == "1"
-		undoMD = h.md.subscribe(msg.Get(codec.TagMDReqID), stream, mdReq.Symbols)
+		mdKey, err = h.md.prepare(msg.Get(codec.TagMDReqID), stream, mdReq.Symbols)
+		if err != nil {
+			h.sendMDReject(msg.Get(codec.TagMDReqID), protobuf.ErrorType_RATE_LIMIT_EXCEEDED, err.Error())
+			return
+		}
+		mdReq.RequestId = mdKey
 	}
 
 	if q := fxpMsg.GetOrderStatusRequest(); q != nil {
@@ -645,8 +650,8 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		if tracked {
 			h.pending.take(req.Get(codec.TagClOrdID))
 		}
-		if undoMD != nil {
-			undoMD()
+		if mdKey != "" {
+			h.md.reject(mdKey)
 		}
 		slog.Warn("gateway send error", "session", sess.TargetCompID, "err", err)
 		h.sendBusinessReject(msg, sess, "gateway unavailable: "+err.Error())
@@ -656,6 +661,17 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 // onFXPMessage is called by the gateway client for every inbound FXP frame.
 // Translates the FXP message to FIX and delivers to the FIX client.
 func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
+	if ack := msg.GetMarketDataRequestAck(); ack != nil {
+		h.md.admit(ack.RequestId)
+		return
+	}
+	if failure := msg.GetErrorMessage(); failure != nil && failure.RequestId != "" {
+		if req, ok := h.md.reject(failure.RequestId); ok {
+			h.sendMDReject(req.id, failure.ErrorType, failure.ErrorMessage)
+			h.releaseMarketData(req.symbols)
+		}
+		return
+	}
 	if rep := msg.GetOrderStatusResponse(); rep != nil {
 		h.onStatus(rep)
 		return
@@ -683,12 +699,48 @@ func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
 					func(string) string { return id })
 			})
 		}
+		if snapshot {
+			h.releaseMarketData([]string{symbol})
+		}
 		return
 	}
 	// Sequence numbers come from the session; untranslated types (nil) consume none.
 	h.sess.SendWithSeq(func(seq int) []byte {
 		return translator.TranslateFXPtoFIX(msg, h.bridgeCompID, h.sess.TargetCompID, seq, nil)
 	})
+}
+
+func (h *bridgeHandler) sendMDReject(id string, kind protobuf.ErrorType, reason string) {
+	h.sess.SendWithSeq(func(seq int) []byte {
+		b := codec.NewBuilder("Y", h.bridgeCompID, h.sess.TargetCompID, seq)
+		b.Set(codec.TagMDReqID, id)
+		switch kind {
+		case protobuf.ErrorType_SYMBOL_NOT_SUPPORTED:
+			b.Set(281, "0") // MDReqRejReason: Unknown symbol.
+		case protobuf.ErrorType_RATE_LIMIT_EXCEEDED:
+			b.Set(281, "2") // MDReqRejReason: Insufficient bandwidth.
+		}
+		b.Set(codec.TagText, reason)
+		return b.Build()
+	})
+}
+
+func (h *bridgeHandler) releaseMarketData(symbols []string) {
+	h.md.mu.Lock()
+	unused := h.md.unusedLocked(symbols)
+	if len(unused) == 0 || h.gwClient == nil {
+		h.md.mu.Unlock()
+		return
+	}
+	err := h.gwClient.Send(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{
+		MarketDataRequest: &protobuf.MarketDataRequest{Symbols: unused, Unsubscribe: true},
+	}})
+	h.md.mu.Unlock()
+	if err != nil {
+		// A failed release must not leave hidden quota on a surviving connection.
+		h.gwClient.Close()
+		h.sess.Logout("gateway unavailable during market-data unsubscribe")
+	}
 }
 
 func marketDataSymbol(msg *protobuf.FXPMessage) (symbol string, snapshot, ok bool) {
