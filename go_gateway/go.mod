@@ -11,4 +11,4 @@ require (
 
 require github.com/HdrHistogram/hdrhistogram-go v1.4.0
 
-require golang.org/x/net v0.26.0 // indirect
+require golang.org/x/net v0.55.0 // indirect
