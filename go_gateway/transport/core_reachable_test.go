@@ -31,8 +31,8 @@ func TestCoreReachableFollowsMarketDataConnection(t *testing.T) {
 func TestDisconnectClientsClosesEveryClient(t *testing.T) {
 	a, b := net.Pipe()
 	defer b.Close()
-	clientWriters.Store(a, &clientWriter{})
-	t.Cleanup(func() { clientWriters.Delete(a) })
+	registerClientWriter(a)
+	t.Cleanup(func() { unregisterClientWriter(a) })
 	disconnectClients()
 	if _, err := a.Write([]byte("x")); err == nil {
 		t.Fatal("client connection still open after disconnectClients")
@@ -51,8 +51,8 @@ func TestCoreLossDisconnectSkipsCancelOnDisconnect(t *testing.T) {
 	}
 	a, b := net.Pipe()
 	defer b.Close()
-	clientWriters.Store(a, &clientWriter{})
-	t.Cleanup(func() { clientWriters.Delete(a) })
+	registerClientWriter(a)
+	t.Cleanup(func() { unregisterClientWriter(a) })
 
 	start("core-loss")
 	disconnectClients()

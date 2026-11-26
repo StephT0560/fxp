@@ -41,6 +41,7 @@ services:
       FXP_JWT_ISSUER: fxp-release
       FXP_JWT_AUDIENCE: fxp-release-gateway
       FXP_JWT_REPLAY_CACHE: "on"
+      FXP_JWT_ENFORCE_SESSION_EXPIRY: ${FXP_JWT_ENFORCE_SESSION_EXPIRY:-false}
       # The only published ports are bound to host loopback. Never host this
       # disposable plaintext example on an external interface.
       FXP_GW_TCP_ADDR: 0.0.0.0:8082

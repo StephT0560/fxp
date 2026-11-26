@@ -469,6 +469,7 @@ the simulation read the same variables when minting.
 | `FXP_JWT_AUDIENCE` | `fxp-gateway` | Required `aud` (string or array) |
 | `FXP_JWT_LEEWAY_SEC` | `30` | Clock-skew leeway on `nbf` |
 | `FXP_JWT_REPLAY_CACHE` | off | `on`: require `jti` and reject a reused `jti` until its token expires (per gateway process) |
+| `FXP_JWT_ENFORCE_SESSION_EXPIRY` | `false` | Close established TCP and WebSocket connections at JWT expiry, including cancel-on-disconnect cleanup |
 | `FXP_GW_WS_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to open the WebSocket. Same-origin requests and clients sending no `Origin` header are always allowed; any other origin gets 403 |
 | `FXP_GW_CLIENT_QUEUE` | `8192` | Bounded per-client queue for execution reports and other critical output; overflow closes the client |
 | `FXP_GW_MASS_CANCEL_TIMEOUT_SEC` | `30` | Pending mass-cancel confirmation deadline in seconds (1–86400; invalid values fall back to 30); timeout rejects the request but does not roll back core actions. Status uses a fixed 30s deadline; both share a 4096-entry cap and disconnect cleanup |

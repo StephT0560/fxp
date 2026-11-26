@@ -61,3 +61,23 @@ rather than padding passwords. The known development JWT value is forbidden on
 any non-loopback listener, even with TLS. Servers have no built-in secret
 fallback. See [TLS migration and deployment](docs/tls-trust.md#breaking-configuration-migration-round-4-2)
 for this breaking configuration change and secure/dev Compose instructions.
+
+## Gateway session lifetime
+
+JWTs must be unexpired at Logon. Set `FXP_JWT_ENFORCE_SESSION_EXPIRY=true`
+on the gateway to also close established TCP and WebSocket sessions at token
+expiry. Expiry uses ordinary disconnect cleanup, including cancel-on-disconnect
+when requested. In-place Logon can renew a session with the same trader,
+capabilities and cancel-on-disconnect policy. A policy or identity change
+requires a new connection. A rejected policy or identity change preserves the
+current session and leaves the proposed token available for that new connection.
+Expiry closes client output independently of request forwarding, including
+when the core applies backpressure.
+
+Expiry enforcement is opt-in for compatibility with long-lived clients that
+authenticate only once. The FIX bridge authenticates its upstream connection
+with a 24-hour token. Schedule a reconnect before expiry where continuity is
+required. Stop issuing credentials for a revoked principal and close its
+established connections. Previously issued tokens can still be accepted until
+they expire or their signing key is removed from the gateway's accepted keys.
+The optional JWT replay cache is local to each gateway process.
