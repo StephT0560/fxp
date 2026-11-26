@@ -69,7 +69,10 @@ on the gateway to also close established TCP and WebSocket sessions at token
 expiry. Expiry uses ordinary disconnect cleanup, including cancel-on-disconnect
 when requested. In-place Logon can renew a session with the same trader,
 capabilities and cancel-on-disconnect policy. A policy or identity change
-requires a new connection.
+requires a new connection. A rejected policy or identity change preserves the
+current session and leaves the proposed token available for that new connection.
+Expiry closes client output independently of request forwarding, including
+when the core applies backpressure.
 
 Expiry enforcement is opt-in for compatibility with long-lived clients that
 authenticate only once. The FIX bridge authenticates its upstream connection

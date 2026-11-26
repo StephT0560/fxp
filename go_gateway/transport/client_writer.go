@@ -26,16 +26,18 @@ var (
 )
 
 type clientWriter struct {
-	conn      any
-	critical  chan []byte
-	md        chan []byte
-	stopped   chan struct{}
-	draining  chan struct{}
-	finished  chan struct{}
-	stopOnce  sync.Once
-	drainOnce sync.Once
-	enqueueMu sync.RWMutex
-	mdDropped atomic.Uint64
+	conn        any
+	critical    chan []byte
+	md          chan []byte
+	stopped     chan struct{}
+	draining    chan struct{}
+	finished    chan struct{}
+	stopOnce    sync.Once
+	drainOnce   sync.Once
+	enqueueMu   sync.RWMutex
+	mdDropped   atomic.Uint64
+	sessionMu   sync.Mutex
+	expiryTimer *time.Timer
 }
 
 func MarketDataDropped() uint64 { return marketDataDroppedCount.Load() }
@@ -64,7 +66,13 @@ func unregisterClientWriter(conn any) {
 		return true
 	})
 	if value, ok := clientWriters.LoadAndDelete(conn); ok {
-		value.(*clientWriter).stop()
+		writer := value.(*clientWriter)
+		writer.sessionMu.Lock()
+		if writer.expiryTimer != nil {
+			writer.expiryTimer.Stop()
+		}
+		writer.stop()
+		writer.sessionMu.Unlock()
 	}
 	coreLossClosed.Delete(conn)
 }

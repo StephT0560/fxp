@@ -178,8 +178,10 @@ type jwtClaims struct {
 	Aud jwtAudience `json:"aud"`
 	Jti string      `json:"jti"` // token ID (required when the replay cache is on)
 	// Role "operator" may send SessionControl; demo users carry no role.
-	Role     string `json:"fxp_role"`
-	ReadOnly bool   `json:"fxp_read_only"`
+	Role      string `json:"fxp_role"`
+	ReadOnly  bool   `json:"fxp_read_only"`
+	replayKey jtiKey
+	replay    bool
 }
 
 // jwtAudience accepts both forms RFC 7519 allows: a string or an array.
@@ -283,6 +285,18 @@ func jwtSecret() []byte {
 // configured key. The claims must carry sub, exp, iat and the configured
 // iss and aud; nbf is honoured with a small leeway.
 func validateJWT(token string) (*jwtClaims, error) {
+	claims, err := verifyJWT(token)
+	if err != nil {
+		return nil, err
+	}
+	if err := claimJWT(claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+// verifyJWT checks credentials without consuming their replay identifier.
+func verifyJWT(token string) (*jwtClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("malformed JWT: expected 3 parts, got %d", len(parts))
@@ -357,12 +371,18 @@ func validateJWT(token string) (*jwtClaims, error) {
 		if claims.Jti == "" {
 			return nil, fmt.Errorf("JWT missing required claim: jti (replay cache is on)")
 		}
-		if !replayCache.firstUse(jtiKey{claims.Iss, hdr.Kid, claims.Jti}, claims.Exp, now) {
-			return nil, fmt.Errorf("JWT replay: jti %q was already used", claims.Jti)
-		}
+		claims.replay = true
+		claims.replayKey = jtiKey{claims.Iss, hdr.Kid, claims.Jti}
 	}
 
 	return &claims, nil
+}
+
+func claimJWT(claims *jwtClaims) error {
+	if claims.replay && !replayCache.firstUse(claims.replayKey, claims.Exp, time.Now().Unix()) {
+		return fmt.Errorf("JWT replay: jti %q was already used", claims.Jti)
+	}
+	return nil
 }
 
 // jtiCache remembers token IDs until their tokens expire. seen gives O(1)
@@ -526,7 +546,7 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 		// Logon is always allowed — it's how you authenticate
 		logon := payload.Logon
 
-		claims, err := validateJWT(logon.Token)
+		claims, err := verifyJWT(logon.Token)
 		if err != nil {
 			log.Printf("❌ Logon rejected: %v", err)
 			sendLogonAck(conn, false, fmt.Sprintf("token validation failed: %v", err))
@@ -541,13 +561,16 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 				(claims.Role == "operator" && !claims.ReadOnly) != IsOperator(*sessionID) ||
 				(logon.CancelOnDisconnect && !claims.ReadOnly) != cancelOnClose {
 				sendLogonAck(conn, false, "a new connection is required to change session identity or policy")
-				drainTerminalResponse(conn)
 				return
 			}
-			sessionCOD.Delete(*sessionID)
-			invalidateSession(*sessionID)
 		}
-		*sessionID = startSession(logon, claims)
+		newID, err := startConnectionSession(conn, logon, claims, *sessionID)
+		if err != nil {
+			sendLogonAck(conn, false, err.Error())
+			drainTerminalResponse(conn)
+			return
+		}
+		*sessionID = newID
 		sendLogonAck(conn, true, "")
 
 	case *protobuf.FXPMessage_Logout:
