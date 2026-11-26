@@ -9,7 +9,9 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
+	"time"
 
 	"go_gateway/protobuf"
 
@@ -358,24 +360,73 @@ func SubscribeToMarketDataWS(conn *websocket.Conn, request *protobuf.MarketDataR
 }
 
 func subscribeToMarketData(conn any, request *protobuf.MarketDataRequest) {
-	symbols, ok := registerSubscriptions(conn, request.Symbols)
-	if !ok {
-		sendSessionError(conn, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "market data subscription limit exceeded")
+	if request.Unsubscribe {
+		removeSubscriptionSymbols(conn, request.Symbols)
 		return
 	}
-	if len(symbols) != 0 {
-		forwardSubscriptionToCore(&protobuf.MarketDataRequest{Symbols: symbols})
+	symbols, ok := subscriptionSymbols(request.Symbols)
+	if !ok {
+		_ = writeFXPMessage(conn, marketDataReject(request.RequestId, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "market data subscription limit exceeded"))
+		return
 	}
+	if len(symbols) == 0 {
+		return
+	}
+	// Validate against existing Core books before charging the shared budget.
+	// Per-connection handlers serialize admission with subsequent unsubscribe.
+	result := make(chan bool, 1)
+	r := &pendingRequest{conn: conn, original: request.RequestId, kind: "market data", marketDataResult: result,
+		reject: func(reason string) *protobuf.FXPMessage {
+			result <- false
+			return marketDataReject(request.RequestId, protobuf.ErrorType_SYSTEM_ERROR, reason)
+		},
+	}
+	key, err := registerPending(r, 30*time.Second)
+	if err != nil {
+		_ = writeFXPMessage(conn, marketDataReject(request.RequestId, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, err.Error()))
+		return
+	}
+	raw, err := EncodeFXPMessage(&protobuf.MarketDataRequest{Symbols: symbols, RequestId: key, ValidateOnly: true})
+	if err == nil {
+		err = writeSubscription(frameBytes(raw))
+	}
+	if err != nil {
+		if pending := pendingRequests.get(key, "", true, "market data"); pending != nil {
+			_ = writeFXPMessage(conn, pending.reject("core unavailable"))
+		}
+	}
+	select {
+	case accepted := <-result:
+		if !accepted {
+			return
+		}
+	case <-r.writer.stopped:
+		return
+	case <-r.writer.draining:
+		return
+	}
+	if _, ok := registerSubscriptions(conn, symbols); !ok {
+		_ = writeFXPMessage(conn, marketDataReject(request.RequestId, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "market data subscription limit exceeded"))
+		return
+	}
+	// A disconnect racing validation must not resurrect membership state.
+	select {
+	case <-r.writer.stopped:
+		removeSubscriptions(conn)
+		return
+	default:
+	}
+	if request.RequestId != "" {
+		_ = writeFXPMessage(conn, &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequestAck{
+			MarketDataRequestAck: &protobuf.MarketDataRequestAck{RequestId: request.RequestId},
+		}})
+	}
+	forwardSubscriptionToCore(&protobuf.MarketDataRequest{Symbols: symbols})
 }
 
-func registerSubscriptions(conn any, requested []string) ([]string, bool) {
-	subscriptionsMu.Lock()
-	defer subscriptionsMu.Unlock()
-
-	existing := subscriptionsByClient[conn]
+func subscriptionSymbols(requested []string) ([]string, bool) {
 	symbols := make([]string, 0, min(len(requested), maxSubscriptionsPerClient))
 	seen := make(map[string]struct{})
-	newForClient, newGlobal := 0, 0
 	for _, symbol := range requested {
 		if symbol == "" {
 			continue
@@ -388,6 +439,23 @@ func registerSubscriptions(conn any, requested []string) ([]string, bool) {
 		}
 		seen[symbol] = struct{}{}
 		symbols = append(symbols, symbol)
+		if len(symbols) > maxSubscriptionsPerClient {
+			return nil, false
+		}
+	}
+	return symbols, true
+}
+
+func registerSubscriptions(conn any, requested []string) ([]string, bool) {
+	symbols, ok := subscriptionSymbols(requested)
+	if !ok {
+		return nil, false
+	}
+	subscriptionsMu.Lock()
+	defer subscriptionsMu.Unlock()
+	existing := subscriptionsByClient[conn]
+	newForClient, newGlobal := 0, 0
+	for _, symbol := range symbols {
 		if _, subscribed := existing[symbol]; !subscribed {
 			newForClient++
 			if subscriptionRefCount[symbol] == 0 {
@@ -419,10 +487,19 @@ func registerSubscriptions(conn any, requested []string) ([]string, bool) {
 }
 
 func removeSubscriptions(conn any) {
+	removeSubscriptionSymbols(conn, nil)
+}
+
+// A nil symbol list removes every membership on disconnect.
+func removeSubscriptionSymbols(conn any, symbols []string) {
 	subscriptionsMu.Lock()
 	defer subscriptionsMu.Unlock()
 
 	for symbol := range subscriptionsByClient[conn] {
+		if symbols != nil && !slices.Contains(symbols, symbol) {
+			continue
+		}
+		delete(subscriptionsByClient[conn], symbol)
 		subscriptionRefCount[symbol]--
 		clients, _ := clientSubs.Load(symbol)
 		clients.(*sync.Map).Delete(conn)
@@ -432,7 +509,28 @@ func removeSubscriptions(conn any) {
 			mdAwaiting.Delete(symbol)
 		}
 	}
-	delete(subscriptionsByClient, conn)
+	if len(subscriptionsByClient[conn]) == 0 {
+		delete(subscriptionsByClient, conn)
+	}
+}
+
+func marketDataReject(id string, kind protobuf.ErrorType, reason string) *protobuf.FXPMessage {
+	return &protobuf.FXPMessage{Payload: &protobuf.FXPMessage_ErrorMessage{ErrorMessage: &protobuf.ErrorMessage{
+		RequestId: id, ErrorType: kind, ErrorMessage: reason,
+	}}}
+}
+
+func routeMarketDataValidation(ack *protobuf.MarketDataRequestAck) {
+	r := pendingRequests.get(ack.RequestId, "", true, "market data")
+	if r == nil {
+		return
+	}
+	if ack.RejectReason != "" {
+		r.marketDataResult <- false
+		_ = writeFXPMessage(r.conn, marketDataReject(r.original, protobuf.ErrorType_SYMBOL_NOT_SUPPORTED, ack.RejectReason))
+		return
+	}
+	r.marketDataResult <- true
 }
 
 func closeConn(conn interface{}) {

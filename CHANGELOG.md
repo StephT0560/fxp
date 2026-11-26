@@ -7,6 +7,13 @@ date when the reviewed main commit is tagged.
 
 ## [Unreleased]
 
+### Gateway market-data admission
+
+- Protocol v2.7 adds correlated subscription admission and gateway unsubscribe.
+  The gateway checks existing core books before allocating subscription quota.
+- FIX subscription failures return `35=Y` with the original `MDReqID`. Completed
+  snapshot requests and unsubscribes release unused gateway memberships.
+
 ### FXP Sandbox bot onboarding
 - Python SDK: `fxp_client.sandbox.connect()` waits for a sandbox run and logs on
   with a freshly minted run token per attempt, using `FXP_API_KEY` only against

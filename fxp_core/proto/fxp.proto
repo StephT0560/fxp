@@ -9,7 +9,8 @@ option go_package = "go_gateway/protobuf";
 import "google/protobuf/timestamp.proto";
 
 // ============================================================
-// FXP Protocol — v2.6 adds optional symbol-scoped session control.
+// FXP Protocol — v2.7 adds correlated market-data admission and unsubscribe.
+// v2.6 added optional symbol-scoped session control.
 // v2.3 added order-status requests/replies.
 // v2.2 added self-trade prevention, cancel-on-disconnect and mass cancel.
 // v2.1 added auction/session messages.
@@ -347,6 +348,14 @@ message MarketDataIncrementalUpdate {
 message MarketDataRequest {
   FXPHeader       header  = 1;
   repeated string symbols = 2;
+  string request_id = 3; // Optional correlation. Nonempty IDs receive an admission ack.
+  bool unsubscribe = 4; // Gateway-local removal of these symbol memberships.
+  bool validate_only = 5; // Gateway-to-core symbol validation, without subscribing.
+}
+
+message MarketDataRequestAck {
+  string request_id = 1;
+  string reject_reason = 2; // Empty means the entire request was admitted.
 }
 
 message TradeCaptureReport {
@@ -405,6 +414,7 @@ message ErrorMessage {
   string                    error_message    = 3;
   string                    related_order_id = 4;
   google.protobuf.Timestamp timestamp        = 5;
+  string                    request_id       = 6; // Rejected MarketDataRequest correlation.
 }
 
 // ============================================================
@@ -439,6 +449,7 @@ message FXPMessage {
     OrderStatusResponse         order_status_response  = 21;
     SessionControl              session_control        = 22;
     SessionControlReport        session_control_report = 23;
+    MarketDataRequestAck        market_data_request_ack = 24;
   }
 }
 

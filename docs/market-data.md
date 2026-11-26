@@ -15,7 +15,27 @@ distinct subscribed symbols across the process. A symbol can occupy up to
 128 bytes. Repeating a symbol consumes no additional membership slot.
 A request exceeding a limit is rejected in full with
 `RATE_LIMIT_EXCEEDED`. Disconnecting frees the connection's memberships,
-including unused symbol entries. A core reconnect replays active memberships.
+including unused symbol entries. The gateway validates the entire request
+against existing core books before allocating membership slots. Unknown symbols
+receive `SYMBOL_NOT_SUPPORTED` and consume no subscription quota. Outstanding
+validations share the gateway's bounded pending-request tracker and time out
+after 30 seconds.
+
+Protocol v2.7 adds optional `MarketDataRequest.request_id` correlation and
+`unsubscribe` to release the listed symbols on a connection. A nonempty request
+ID receives `MarketDataRequestAck` before snapshots on admission, or an
+`ErrorMessage` carrying that request ID on rejection. The gateway uses
+`validate_only` internally to ask the core to check symbols without subscribing.
+Deploy the v2.7 core and gateway together.
+
+The FIX bridge translates admission errors to `MarketDataRequestReject` (`35=Y`)
+with the original `MDReqID`. Rejected requests leave existing FIX routing intact.
+FIX unsubscribe and completed snapshot-only requests release gateway memberships
+once no other active or pending FIX request needs the symbol.
+
+Core loss closes client connections. Clients must reconnect and resubscribe.
+The dedicated core connection also replays any memberships still active during
+recovery.
 
 ## Public trade feed (protocol v2.5)
 
