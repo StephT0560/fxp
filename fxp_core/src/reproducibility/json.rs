@@ -311,24 +311,26 @@ impl Parser<'_> {
             Some(b'"') => Ok(Json::String(self.string()?)),
             Some(b'{') => {
                 self.i += 1;
-                let mut m = Map::new();
+                let mut fields = Vec::new();
                 if self.take(b'}') {
-                    return Ok(Json::Object(m));
+                    return Ok(Json::Object(Map::new()));
                 }
                 loop {
                     let k = self.string()?;
                     self.expect(b':')?;
-                    let v = self.value(depth + 1)?;
-                    if m.insert(k, v).is_some() {
-                        return Err(super::invalid("duplicate JSON key"));
-                    }
+                    fields.push((k, self.value(depth + 1)?));
                     if self.take(b'}') {
                         break;
                     }
                     self.expect(b',')?;
                 }
-                m.0.shrink_to_fit();
-                Ok(Json::Object(m))
+                // Sort once: inserting unsorted keys one by one is quadratic.
+                fields.sort_by(|a: &(String, Json), b| a.0.cmp(&b.0));
+                if fields.windows(2).any(|w| w[0].0 == w[1].0) {
+                    return Err(super::invalid("duplicate JSON key"));
+                }
+                fields.shrink_to_fit();
+                Ok(Json::Object(Map(fields)))
             }
             Some(b'[') => {
                 self.i += 1;
