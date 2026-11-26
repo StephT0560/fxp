@@ -440,6 +440,66 @@ fn generate_replay_profile_bundles() {
             journal.summary().global.count
         );
     }
+    // A bot crossing a two-sided book: resting quotes, fills, trades, cancels
+    // and a changing ladder after nearly every command (~72k trace rows).
+    let dir = root.join("busy");
+    let mut journal = Journal::record(
+        &dir,
+        None,
+        StpMode::None,
+        (),
+        SymbolConfig::default(),
+        r#"{"seed":42,"fixture":"busy"}"#,
+    )
+    .unwrap();
+    let mut seconds = 0;
+    let mut apply = |journal: &mut Journal<()>, input| {
+        seconds += 1;
+        journal
+            .apply("TEST", Time { seconds, nanos: 0 }, input, ())
+            .unwrap();
+    };
+    for level in 0..20 {
+        for (side, price) in [(1, 80 - level), (2, 120 + level)] {
+            let mut input = order(&format!("depth-{side}-{level}"), "TEST", side);
+            input.price = price;
+            apply(&mut journal, Input::New(input));
+        }
+    }
+    for n in 0..4_000i64 {
+        for (side, price) in [(1, 99 - n % 5), (2, 101 + n % 5)] {
+            let mut quote = order(&format!("quote-{n}-{side}"), "TEST", side);
+            quote.price = price;
+            quote.quantity = 2;
+            apply(&mut journal, Input::New(quote));
+        }
+        for (side, price) in [(1, 110), (2, 90)] {
+            let mut taker = order(&format!("bot-{n}-{side}"), "TEST", side);
+            taker.sender = "bot".into();
+            taker.price = price;
+            taker.quantity = 1;
+            taker.time_in_force = fxp::TimeInForce::Ioc as i32;
+            apply(&mut journal, Input::New(taker));
+        }
+        if n >= 4 {
+            for side in [1, 2] {
+                apply(
+                    &mut journal,
+                    Input::Cancel(fxp::OrderCancelRequest {
+                        symbol: "TEST".into(),
+                        sender: format!("owner-{side}"),
+                        order_id: format!("quote-{}-{side}", n - 4),
+                        ..Default::default()
+                    }),
+                );
+            }
+        }
+    }
+    journal.finish().unwrap();
+    println!(
+        "profile target=busy events={}",
+        journal.summary().global.count
+    );
 }
 
 #[test]

@@ -6,18 +6,47 @@ The old verifier retained both the complete recorded and replayed JSON traces. V
 
 Large HTML payloads use versioned zlib/base64 JSON with an offline, bounded `DecompressionStream` decoder. The report schema, anonymization, CSP hashes, and decoded data limit remain enforced. The private worker’s 4 MiB artifact cap need not increase. JSON exports remain unchanged.
 
+Current figures: one run per command on an 8-vCPU Intel Xeon VM with 31 GiB RAM,
+no CPU affinity, release builds of `main` at `dfb27fe` (before) and this branch
+(after) measured against the same regenerated fixture bundles. Peak RSS varied
+by under 10 MiB across repeated runs of the busy reports. Regenerated bundles
+stamp build provenance and start time, so HTML byte counts can differ slightly
+from earlier tables; before and after outputs on the same bundles are
+byte-identical.
+
 | Business events | Command | RSS MiB / exit (768 MiB flag) | Final HTML bytes |
 |---:|---|---:|---:|
-| 1000 | verify | 10.4 / 0 | 0 |
-| 1000 | report | 12.8 / 0 | 60705 |
-| 10000 | verify | 10.4 / 0 | 0 |
-| 10000 | report | 104.6 / 0 | 459746 |
-| 25000 | verify | 14.7 / 0 | 0 |
-| 25000 | report | 255.9 / 0 | 1115723 |
-| 45000 | verify | 26.0 / 0 | 0 |
-| 45000 | report | 454.1 / 0 | 1964687 |
-| 100000 | verify | 52.8 / 0 | 0 |
-| 100000 | report | 510.0 / 2 | 0 |
+| 1000 | verify | 14 / 0 | 0 |
+| 1000 | report | 14 / 0 | 60705 |
+| 10000 | verify | 14 / 0 | 0 |
+| 10000 | report | 67 / 0 | 459746 |
+| 25000 | verify | 15 / 0 | 0 |
+| 25000 | report | 166 / 0 | 1115719 |
+| 45000 | verify | 26 / 0 | 0 |
+| 45000 | report | 291 / 0 | 1964679 |
+| 100000 | verify | 53 / 0 | 0 |
+| 100000 | report | 318 / 2 | 0 |
+| busy (72k trace rows) | verify | 25 / 0 | 0 |
+| busy (72k trace rows) | report | 474 / 0 | 2720547 |
+
+JSON objects are stored as one key-sorted vector rather than a `BTreeMap`. A
+B-tree node costs ~600 bytes even for a two-field object such as a ladder level
+or `command_time`, so retained trace rows and book frames were mostly empty
+node capacity. Encoding order, duplicate-key rejection and output bytes are
+unchanged. The report size check measures the encoded length without building
+a second copy of the document. Before this change the same fixtures used
+105 / 256 / 455 / 510 MiB for the 10k / 25k / 45k / 100k reports, and the busy
+report exited 3 at 769 MiB.
+
+The `busy` fixture models a bot crossing a two-sided book: resting quotes on
+both sides, IOC takers that fill and trade, cancels, and a ladder that changes
+after nearly every command. A sandbox Quiet Book run with a bot sending 50
+orders/s for 270 seconds (13,501 orders, 96,067 trace rows) needed 807 MiB
+before this change and exited at the 768 MiB watchdog; it now generates the
+same report bytes at 521 MiB (528 MiB anonymized). Its HTML is 4,103,063 bytes,
+just under the sandbox's 4 MiB artifact cap, and its trace is close to the
+100,000-row limit, so those caps, not memory, now bound busier full-run
+reports.
 
 The 45k-event regression exceeds the roughly 43k business events observed in a
 300-second sandbox quiet-book run. Before the row-move/single-buffer fix, this
@@ -37,7 +66,7 @@ Compose worker publication path.
 
 The 100k-event full report exceeds the existing 100,000 timeline-row limit and exits 2 with that explicit diagnostic. It is rejected while reading the trace; it does not exhaust 768 MiB. A narrower report window is supported subject to the same bounded process limit. The 100k fixture also exceeds the sandbox’s separate 64 MiB per-file archive limit.
 
-The sandbox retains 768 MiB, with headroom above the largest observed supported report / early row-limit rejection (~510 MiB). Verification itself no longer needs that budget for these fixtures. Keep the process watchdog and container cgroup limits: event size, distinct owners/orders, book frames and hostile JSON can change the curve. A container reserves another 256 MiB for extraction tmpfs, wrapper and overhead, with another 160 MiB for two-input diff. Admission must reserve the worst supported command against a finite total budget.
+The sandbox retains 768 MiB, with headroom above the largest observed supported report (~530 MiB for the busy sandbox bundle). Verification itself no longer needs that budget for these fixtures. Keep the process watchdog and container cgroup limits: event size, distinct owners/orders, book frames and hostile JSON can change the curve. A container reserves another 256 MiB for extraction tmpfs, wrapper and overhead, with another 160 MiB for two-input diff. Admission must reserve the worst supported command against a finite total budget.
 
 Reproduce (from `fxp_core/`):
 
