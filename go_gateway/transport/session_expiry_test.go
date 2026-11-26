@@ -175,7 +175,11 @@ func TestSessionExpiryClosesOutputDuringCoreBackpressure(t *testing.T) {
 				t.Fatal("expiry did not trigger cancel-on-disconnect")
 			}
 			if clients, ok := clientSubs.Load(symbol); ok {
-				clients.(*sync.Map).Range(func(_, _ any) bool { t.Error("expired subscriber retained"); return true })
+				waitUntil(t, func() bool {
+					empty := true
+					clients.(*sync.Map).Range(func(_, _ any) bool { empty = false; return false })
+					return empty
+				})
 			}
 		})
 	}
@@ -219,8 +223,7 @@ func TestExpiryPreservesCoreLossCauseWhileForwardingIsBlocked(t *testing.T) {
 				value, ok := clientWriters.Load(conn)
 				if ok {
 					writer = value.(*clientWriter)
-					coreLossClosed.Store(conn, struct{}{})
-					closeConn(conn)
+					writer.closeForCoreLoss()
 				}
 				return false
 			})
@@ -265,5 +268,28 @@ func TestWriterExitStopsDetachedExpiryTimer(t *testing.T) {
 				t.Fatal("writer exit retained expiry timer")
 			}
 		})
+	}
+}
+
+func TestExpiryCannotBeReclassifiedAsCoreLoss(t *testing.T) {
+	server, _ := pipes(t)
+	writer := registerClientWriter(server)
+	defer unregisterClientWriter(server)
+	sid := startSession(&protobuf.Logon{CancelOnDisconnect: true}, &jwtClaims{Sub: "expired-before-core-loss", Exp: time.Now().Unix() + 60})
+	defer invalidateSession(sid)
+	oldCancel := cancelOnDisconnect
+	canceled := make(chan string, 1)
+	cancelOnDisconnect = func(owner string) { canceled <- owner }
+	defer func() { cancelOnDisconnect = oldCancel }()
+	writer.forceStop()
+	writer.closeForCoreLoss()
+	endSessionFor(server, sid)
+	select {
+	case owner := <-canceled:
+		if owner != "expired-before-core-loss" {
+			t.Fatal("wrong cancellation owner")
+		}
+	default:
+		t.Fatal("Core loss suppressed an earlier expiry cancellation")
 	}
 }

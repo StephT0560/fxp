@@ -33,6 +33,7 @@ type clientWriter struct {
 	draining    chan struct{}
 	finished    chan struct{}
 	stopOnce    sync.Once
+	closeOnce   sync.Once
 	drainOnce   sync.Once
 	enqueueMu   sync.RWMutex
 	mdDropped   atomic.Uint64
@@ -77,20 +78,24 @@ func unregisterClientWriter(conn any) {
 // loss of core and resynchronises when it reconnects.
 func disconnectClients() {
 	n := 0
-	clientWriters.Range(func(conn, _ any) bool {
-		if c, ok := conn.(interface{ Close() error }); ok {
-			coreLossClosed.Store(conn, struct{}{})
-			if _, live := clientWriters.Load(conn); !live {
-				coreLossClosed.Delete(conn)
-			}
-			_ = c.Close()
-			n++
-		}
+	clientWriters.Range(func(_, value any) bool {
+		value.(*clientWriter).closeForCoreLoss()
+		n++
 		return true
 	})
 	if n > 0 {
 		log.Printf("🔌 Core connection lost — disconnected %d client(s)", n)
 	}
+}
+
+func (w *clientWriter) closeForCoreLoss() {
+	w.closeOnce.Do(func() {
+		coreLossClosed.Store(w.conn, struct{}{})
+		if _, live := clientWriters.Load(w.conn); !live {
+			coreLossClosed.Delete(w.conn)
+		}
+		closeConn(w.conn)
+	})
 }
 
 func shutdownClientWriters(timeout time.Duration) {
@@ -129,7 +134,7 @@ func (w *clientWriter) forceStop() {
 	w.stopOnce.Do(func() {
 		close(w.stopped)
 		pendingRequests.clear(w.conn)
-		closeConn(w.conn)
+		w.closeOnce.Do(func() { closeConn(w.conn) })
 	})
 }
 
@@ -216,7 +221,7 @@ func (w *clientWriter) run() {
 				}
 			default:
 				pendingRequests.clear(w.conn)
-				closeConn(w.conn)
+				w.closeOnce.Do(func() { closeConn(w.conn) })
 				clientWriters.CompareAndDelete(w.conn, w)
 				return
 			}
