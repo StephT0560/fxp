@@ -11,7 +11,7 @@ require (
 	google.golang.org/protobuf v1.36.12
 )
 
-require golang.org/x/net v0.26.0 // indirect
+require golang.org/x/net v0.55.0 // indirect
 
 replace go_gateway => ../go_gateway
 
