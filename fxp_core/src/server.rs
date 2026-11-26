@@ -988,18 +988,17 @@ async fn handle_tcp_client_with_shutdown(
                 Some(fxp::fxp_message::Payload::MarketDataRequest(request)) => {
                     tracing::debug!("MarketDataRequest for {:?}", request.symbols);
                     if request.validate_only {
-                        let mut reject_reason = String::new();
-                        for symbol in &request.symbols {
-                            if router.get_existing(symbol).await.is_none() {
-                                reject_reason = "unknown market-data symbol".into();
-                                break;
+                        let mut validated_symbols = Vec::with_capacity(request.symbols.len());
+                        for symbol in request.symbols {
+                            if router.get_existing(&symbol).await.is_some() {
+                                validated_symbols.push(symbol);
                             }
                         }
                         output_tx.try_send_frame(frame_message(&fxp::FxpMessage {
                             payload: Some(fxp::fxp_message::Payload::MarketDataRequestAck(
                                 fxp::MarketDataRequestAck {
                                     request_id: request.request_id,
-                                    reject_reason,
+                                    validated_symbols,
                                 },
                             )),
                         }));
@@ -1673,7 +1672,7 @@ mod symbol_admission_tests {
             panic!("expected validation ack")
         };
         assert_eq!(ack.request_id, "md-check");
-        assert!(!ack.reject_reason.is_empty());
+        assert!(ack.validated_symbols.is_empty());
         assert!(router.symbols().await.is_empty());
     }
 

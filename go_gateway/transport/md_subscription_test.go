@@ -87,6 +87,12 @@ func TestSubscriptionAggregateAndByteLimits(t *testing.T) {
 func TestMarketDataAdmissionAndRejectionOnBothTransports(t *testing.T) {
 	for _, transport := range []string{"tcp", "ws"} {
 		t.Run(transport, func(t *testing.T) {
+			oldLimits := currentLimits()
+			limits := oldLimits
+			limits.RateBurst = 9
+			limits.RatePerSec = 0.01
+			setLimits(limits)
+			t.Cleanup(func() { setLimits(oldLimits) })
 			oldMD := mdConn
 			gateway, core := pipes(t)
 			mdConn = newPooledConnWith(0, gateway)
@@ -104,11 +110,8 @@ func TestMarketDataAdmissionAndRejectionOnBothTransports(t *testing.T) {
 					}
 					req := msg.GetMarketDataRequest()
 					if req != nil && req.ValidateOnly {
-						reason := ""
-						if slices.Contains(req.Symbols, "UNKNOWN") {
-							reason = "unknown market-data symbol"
-						}
-						routeMarketDataValidation(&protobuf.MarketDataRequestAck{RequestId: req.RequestId, RejectReason: reason})
+						known := slices.DeleteFunc(req.Symbols, func(symbol string) bool { return symbol == "UNKNOWN" })
+						routeMarketDataValidation(&protobuf.MarketDataRequestAck{RequestId: req.RequestId, ValidatedSymbols: known})
 					}
 				}
 			}()
@@ -176,14 +179,21 @@ func TestMarketDataAdmissionAndRejectionOnBothTransports(t *testing.T) {
 			if _, ok := clientSubs.Load("KNOWN"); ok {
 				t.Fatal("mixed rejection partially admitted")
 			}
+			request("", []string{"KNOWN", "UNKNOWN"}, false)
+			waitUntil(t, func() bool { _, ok := clientSubs.Load("KNOWN"); return ok })
+			if _, ok := clientSubs.Load("UNKNOWN"); ok {
+				t.Fatal("uncorrelated request allocated quota for an unopened book")
+			}
 			symbols := make([]string, maxSubscriptionsPerClient)
 			for i := range symbols {
 				symbols[i] = fmt.Sprintf("WIRE-%s-%d", transport, i)
 			}
+			symbols[0] = "KNOWN"
 			request("full", symbols, false)
 			if receive().GetMarketDataRequestAck().GetRequestId() != "full" {
 				t.Fatal("missing admission ack")
 			}
+			request("", nil, true)
 			request("overflow", []string{"WIRE-OVERFLOW"}, false)
 			if receive().GetErrorMessage().GetErrorType() != protobuf.ErrorType_RATE_LIMIT_EXCEEDED {
 				t.Fatal("connection budget not enforced on wire")
@@ -192,6 +202,16 @@ func TestMarketDataAdmissionAndRejectionOnBothTransports(t *testing.T) {
 			request("reused", []string{"WIRE-OVERFLOW"}, false)
 			if receive().GetMarketDataRequestAck().GetRequestId() != "reused" {
 				t.Fatal("unsubscribe did not free quota")
+			}
+			request("throttled", []string{"WIRE-THROTTLED"}, false)
+			if failure := receive().GetErrorMessage(); failure.GetRequestId() != "throttled" ||
+				failure.GetErrorType() != protobuf.ErrorType_RATE_LIMIT_EXCEEDED {
+				t.Fatalf("uncorrelated rate limit response: %v", failure)
+			}
+			request("", []string{"WIRE-OVERFLOW"}, true)
+			waitUntil(t, func() bool { _, ok := clientSubs.Load("WIRE-OVERFLOW"); return !ok })
+			if _, ok := clientSubs.Load("WIRE-THROTTLED"); ok {
+				t.Fatal("throttled request allocated a subscription")
 			}
 		})
 	}

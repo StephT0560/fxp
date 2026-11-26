@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"go_gateway/protobuf"
 	"go_gateway/startup"
 	"go_gateway/tlsconfig"
 
@@ -145,7 +144,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !bucket.allow(time.Now()) {
-			sendSessionError(conn, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "message rate limit exceeded")
+			rejectRateLimitedFrame(conn, message, sessionID)
 			continue
 		}
 

@@ -355,7 +355,7 @@ message MarketDataRequest {
 
 message MarketDataRequestAck {
   string request_id = 1;
-  string reject_reason = 2; // Empty means the entire request was admitted.
+  repeated string validated_symbols = 2; // Internal Core validation result.
 }
 
 message TradeCaptureReport {

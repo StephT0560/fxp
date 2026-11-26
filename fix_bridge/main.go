@@ -629,7 +629,7 @@ func (h *bridgeHandler) Handle(msg *codec.Message, sess *session.Session) {
 		stream := msg.Get(codec.TagSubscriptionRequestType) == "1"
 		mdKey, err = h.md.prepare(msg.Get(codec.TagMDReqID), stream, mdReq.Symbols)
 		if err != nil {
-			h.sendMDReject(msg.Get(codec.TagMDReqID), err.Error())
+			h.sendMDReject(msg.Get(codec.TagMDReqID), protobuf.ErrorType_RATE_LIMIT_EXCEEDED, err.Error())
 			return
 		}
 		mdReq.RequestId = mdKey
@@ -667,7 +667,7 @@ func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
 	}
 	if failure := msg.GetErrorMessage(); failure != nil && failure.RequestId != "" {
 		if req, ok := h.md.reject(failure.RequestId); ok {
-			h.sendMDReject(req.id, failure.ErrorMessage)
+			h.sendMDReject(req.id, failure.ErrorType, failure.ErrorMessage)
 			h.releaseMarketData(req.symbols)
 		}
 		return
@@ -710,11 +710,16 @@ func (h *bridgeHandler) onFXPMessage(msg *protobuf.FXPMessage) {
 	})
 }
 
-func (h *bridgeHandler) sendMDReject(id, reason string) {
+func (h *bridgeHandler) sendMDReject(id string, kind protobuf.ErrorType, reason string) {
 	h.sess.SendWithSeq(func(seq int) []byte {
 		b := codec.NewBuilder("Y", h.bridgeCompID, h.sess.TargetCompID, seq)
 		b.Set(codec.TagMDReqID, id)
-		b.Set(281, "0") // MDReqRejReason, unknown symbol or unsupported request.
+		switch kind {
+		case protobuf.ErrorType_SYMBOL_NOT_SUPPORTED:
+			b.Set(281, "0") // MDReqRejReason: Unknown symbol.
+		case protobuf.ErrorType_RATE_LIMIT_EXCEEDED:
+			b.Set(281, "2") // MDReqRejReason: Insufficient bandwidth.
+		}
 		b.Set(codec.TagText, reason)
 		return b.Build()
 	})

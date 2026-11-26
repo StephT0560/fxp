@@ -22,7 +22,7 @@ type pendingRequest struct {
 	owner, original, kind string
 	reject                func(string) *protobuf.FXPMessage
 	timer                 *time.Timer
-	marketDataResult      chan bool
+	marketDataResult      chan *protobuf.MarketDataRequestAck
 }
 type pendingTracker struct {
 	sync.Mutex

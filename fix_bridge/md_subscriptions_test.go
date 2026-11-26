@@ -83,7 +83,7 @@ func TestGatewayMDRejectionReachesFIXClient(t *testing.T) {
 		RequestId: key, ErrorType: protobuf.ErrorType_RATE_LIMIT_EXCEEDED, ErrorMessage: "subscription limit exceeded",
 	}}})
 	reply := next()
-	if reply.MsgType() != "Y" || reply.Get(262) != "CLIENT-MD-ID" || reply.Get(58) != "subscription limit exceeded" {
+	if reply.MsgType() != "Y" || reply.Get(262) != "CLIENT-MD-ID" || reply.Get(281) != "2" || reply.Get(58) != "subscription limit exceeded" {
 		t.Fatalf("FIX reject = %v", reply)
 	}
 	wantIDs(t, "rejected request routing", h.md.snapshotTargets("AAPL"))

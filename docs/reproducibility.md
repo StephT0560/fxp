@@ -85,6 +85,8 @@ digits; they are provenance metadata, not replay inputs. `end_time` and
 (`unknown` if neither source is available). A git SHA identifies the base commit;
 use a clean committed source tree for attributable builds. The protocol schema
 hash covers the exact checked-in `fxp_core/proto/fxp.proto` source bytes.
+Use the replay build with the recorded schema hash when verifying or reporting
+on older bundles. This applies to additive schema changes such as v2.7.
 
 Finalization syncs `commands.log`, hashes its complete bytes, atomically writes
 `expected.json`, then atomically publishes the completed manifest last. Files

@@ -128,7 +128,7 @@ func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 			return
 		}
 		if !bucket.allow(time.Now()) {
-			sendSessionError(clientConn, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "message rate limit exceeded")
+			rejectRateLimitedFrame(clientConn, msgBuf, sessionID)
 			continue
 		}
 		msg := &protobuf.FXPMessage{}
