@@ -6,6 +6,14 @@ The old verifier retained both the complete recorded and replayed JSON traces. V
 
 Large HTML payloads use versioned zlib/base64 JSON with an offline, bounded `DecompressionStream` decoder. The report schema, anonymization, CSP hashes, and decoded data limit remain enforced. The private worker’s 4 MiB artifact cap need not increase. JSON exports remain unchanged.
 
+Current figures: one run per command on an 8-vCPU Intel Xeon VM with 31 GiB RAM,
+no CPU affinity, release builds of `main` at `dfb27fe` (before) and this branch
+(after) measured against the same regenerated fixture bundles. Peak RSS varied
+by under 10 MiB across repeated runs of the busy reports. Regenerated bundles
+stamp build provenance and start time, so HTML byte counts can differ slightly
+from earlier tables; before and after outputs on the same bundles are
+byte-identical.
+
 | Business events | Command | RSS MiB / exit (768 MiB flag) | Final HTML bytes |
 |---:|---|---:|---:|
 | 1000 | verify | 14 / 0 | 0 |
