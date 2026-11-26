@@ -47,7 +47,8 @@ import (
 // sync.Map used for concurrent access across goroutines.
 import "sync"
 
-var sessionStore sync.Map // session_id (string) → traderID (string)
+var sessionStore sync.Map  // session_id (string) → traderID (string)
+var sessionExpiry sync.Map // session_id (string) → enforced JWT expiry (time.Time)
 
 // TraderSessions counts authenticated trading (not read-only) sessions per
 // trader, sorted by trader ID, for the opt-in presence endpoint.
@@ -147,6 +148,7 @@ var cancelOnDisconnect = func(traderID string) {
 // invalidateSession removes a session (called on Logout or disconnect).
 func invalidateSession(sessionID string) {
 	sessionStore.Delete(sessionID)
+	sessionExpiry.Delete(sessionID)
 	sessionOperator.Delete(sessionID)
 	sessionReadOnly.Delete(sessionID)
 	log.Printf("🔒 Session invalidated: %s", sessionID)
@@ -345,7 +347,7 @@ func validateJWT(token string) (*jwtClaims, error) {
 		return nil, fmt.Errorf("JWT aud %q does not include the configured audience", []string(claims.Aud))
 	}
 	now := time.Now().Unix()
-	if now > claims.Exp {
+	if now >= claims.Exp {
 		return nil, fmt.Errorf("JWT expired at %d", claims.Exp)
 	}
 	if claims.Nbf != 0 && now+cfg.leeway < claims.Nbf {
@@ -433,8 +435,15 @@ func HandleLogon(logon *protobuf.Logon) (traderID, sessionID string, err error) 
 		return "", "", fmt.Errorf("token validation failed: %w", err)
 	}
 
-	sessionID = newSessionID()
+	return claims.Sub, startSession(logon, claims), nil
+}
+
+func startSession(logon *protobuf.Logon, claims *jwtClaims) string {
+	sessionID := newSessionID()
 	sessionStore.Store(sessionID, claims.Sub)
+	if envBool("FXP_JWT_ENFORCE_SESSION_EXPIRY") {
+		sessionExpiry.Store(sessionID, time.Unix(claims.Exp, 0))
+	}
 	if claims.ReadOnly {
 		sessionReadOnly.Store(sessionID, struct{}{})
 	}
@@ -446,7 +455,14 @@ func HandleLogon(logon *protobuf.Logon) (traderID, sessionID string, err error) 
 	}
 	log.Printf("✅ Logon accepted: session=%s trader=%s", sessionID, claims.Sub)
 
-	return claims.Sub, sessionID, nil
+	return sessionID
+}
+
+func sessionDeadline(sessionID string) time.Time {
+	if expiry, ok := sessionExpiry.Load(sessionID); ok {
+		return expiry.(time.Time)
+	}
+	return time.Time{}
 }
 
 // ── Wire helpers (shared with tcp_server / ws_server) ────────────────────────
@@ -499,29 +515,40 @@ func sendSessionError(conn any, errType protobuf.ErrorType, msg string) {
 // sessionID is passed in from the connection handler, which tracks whether
 // Logon has been completed for this specific connection.
 func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID *string) {
+	if deadline := sessionDeadline(*sessionID); !deadline.IsZero() && !time.Now().Before(deadline) {
+		sendSessionError(conn, protobuf.ErrorType_AUTH_FAILED, "session expired")
+		drainTerminalResponse(conn)
+		return
+	}
 	switch payload := msg.Payload.(type) {
 
 	case *protobuf.FXPMessage_Logon:
 		// Logon is always allowed — it's how you authenticate
 		logon := payload.Logon
 
-		traderID, newID, err := HandleLogon(logon)
+		claims, err := validateJWT(logon.Token)
 		if err != nil {
 			log.Printf("❌ Logon rejected: %v", err)
-			sendLogonAck(conn, false, err.Error())
+			sendLogonAck(conn, false, fmt.Sprintf("token validation failed: %v", err))
 			drainTerminalResponse(conn)
 			return
 		}
 
-		// A repeated Logon replaces this connection's previous session; the
-		// connection stays up, so this is not a disconnect.
 		if *sessionID != "" {
+			_, viewer := sessionReadOnly.Load(*sessionID)
+			_, cancelOnClose := sessionCOD.Load(*sessionID)
+			if claims.Sub != GetTraderID(*sessionID) || claims.ReadOnly != viewer ||
+				(claims.Role == "operator" && !claims.ReadOnly) != IsOperator(*sessionID) ||
+				(logon.CancelOnDisconnect && !claims.ReadOnly) != cancelOnClose {
+				sendLogonAck(conn, false, "a new connection is required to change session identity or policy")
+				drainTerminalResponse(conn)
+				return
+			}
 			sessionCOD.Delete(*sessionID)
 			invalidateSession(*sessionID)
 		}
-		*sessionID = newID
+		*sessionID = startSession(logon, claims)
 		sendLogonAck(conn, true, "")
-		log.Printf("🔓 Session %s authenticated as trader %s", newID, traderID)
 
 	case *protobuf.FXPMessage_Logout:
 		// Logout is allowed whether authenticated or not

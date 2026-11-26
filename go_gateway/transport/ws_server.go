@@ -157,11 +157,14 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 		metrics.Raw(message, true)
 		// Auth-aware router: enforces Logon before any other message type.
+		previousSessionID := sessionID
 		HandleFXPMessageAuthenticated(conn, msg, &sessionID)
 		if !authed && sessionID != "" {
 			authed = true
 			conn.SetReadLimit(int64(lim.MaxFrame))
-			_ = conn.SetReadDeadline(time.Time{})
+		}
+		if sessionID != "" && sessionID != previousSessionID {
+			_ = conn.SetReadDeadline(sessionDeadline(sessionID))
 		}
 	}
 }

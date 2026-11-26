@@ -142,10 +142,13 @@ func handleTCPClientWithWriter(clientConn net.Conn, writer *clientWriter) {
 		}
 		metrics.Raw(msgBuf, true)
 		diagnostics.Message("gateway_receive", msg)
+		previousSessionID := sessionID
 		HandleFXPMessageAuthenticated(clientConn, msg, &sessionID)
 		if !authed && sessionID != "" {
 			authed = true
-			_ = clientConn.SetReadDeadline(time.Time{})
+		}
+		if sessionID != "" && sessionID != previousSessionID {
+			_ = clientConn.SetReadDeadline(sessionDeadline(sessionID))
 		}
 	}
 }
