@@ -609,9 +609,32 @@ func HandleFXPMessageAuthenticated(conn any, msg *protobuf.FXPMessage, sessionID
 			}
 		}
 
+		if !isClientMessage(msg) {
+			sendSessionError(conn, protobuf.ErrorType_AUTH_FAILED, "invalid client payload")
+			return
+		}
+		switch msg.Payload.(type) {
+		case *protobuf.FXPMessage_Heartbeat, *protobuf.FXPMessage_GapFill:
+			return
+		}
+
 		// Authenticated: bind order-entry messages to the session's trader, then route
 		bindOwner(msg, GetTraderID(*sessionID))
 		HandleFXPMessage(conn, msg)
+	}
+}
+
+// isClientMessage allows only post-Logon client payloads into the client router.
+func isClientMessage(msg *protobuf.FXPMessage) bool {
+	switch msg.Payload.(type) {
+	case *protobuf.FXPMessage_Heartbeat, *protobuf.FXPMessage_GapFill,
+		*protobuf.FXPMessage_MarketDataRequest, *protobuf.FXPMessage_OrderStatusRequest,
+		*protobuf.FXPMessage_NewOrder, *protobuf.FXPMessage_OrderCancel,
+		*protobuf.FXPMessage_OrderCancelReplace, *protobuf.FXPMessage_OrderMassCancel,
+		*protobuf.FXPMessage_SessionControl:
+		return true
+	default:
+		return false
 	}
 }
 

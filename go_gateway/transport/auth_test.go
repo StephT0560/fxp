@@ -382,3 +382,20 @@ func TestCheckOriginScheme(t *testing.T) {
 		})
 	}
 }
+
+func TestClientMessagePolicy(t *testing.T) {
+	clientPayloads := map[string]bool{
+		"heartbeat": true, "gap_fill": true, "market_data_request": true,
+		"order_status_request": true, "new_order": true, "order_cancel": true,
+		"order_cancel_replace": true, "order_mass_cancel": true, "session_control": true,
+	}
+	msg := &protobuf.FXPMessage{}
+	descriptor := msg.ProtoReflect().Descriptor().Oneofs().ByName("payload")
+	for i := 0; i < descriptor.Fields().Len(); i++ {
+		field := descriptor.Fields().Get(i)
+		msg.ProtoReflect().Mutable(field)
+		if got := isClientMessage(msg); got != clientPayloads[string(field.Name())] {
+			t.Errorf("client message admission for %s = %t", field.Name(), got)
+		}
+	}
+}
