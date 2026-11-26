@@ -45,7 +45,7 @@ def main():
                         help='fail unless supported reports fit the worker artifact cap and 100k fails at the row limit')
     args = parser.parse_args()
     failures = []
-    for size in (1000, 10000, 25000, 45000, 100000):
+    for size in (1000, 10000, 25000, 45000, 100000, 'busy'):
         for command in ('verify', 'report'):
             result = measure(args.binary.resolve(), args.fixtures / str(size), command, args.memory_mib)
             print(json.dumps(result), flush=True)

@@ -4,7 +4,7 @@ use super::*;
 const SCHEMA: &str = "fxp-run-report-v1";
 #[cfg(test)]
 mod tests;
-use crate::reproducibility::json::Json;
+use crate::reproducibility::json::{Json, Map};
 use std::fs;
 use std::path::PathBuf;
 const MAX_INPUT: u64 = 256 * 1024 * 1024;
@@ -273,7 +273,7 @@ fn orders(rows: &[Json], from: u64, to: u64, owner: Option<&str>) -> Vec<Json> {
 // All integer values, including nested timeline values, are decimal strings.
 fn exact(j: &mut Json) {
     match j {
-        Json::Number(n) => *j = Json::String(n.clone()),
+        Json::Number(n) => *j = Json::String(std::mem::take(n)),
         Json::Array(a) => a.iter_mut().for_each(exact),
         Json::Object(m) => m.values_mut().for_each(exact),
         _ => (),
@@ -443,7 +443,8 @@ impl Privacy {
             Json::Object(m) => {
                 m.remove("account");
                 m.remove("stp_group");
-                let old = std::mem::take(m);
+                let n = m.len();
+                let old = std::mem::replace(m, Map::with_capacity(n));
                 for (k, mut v) in old {
                     self.apply(&mut v, &k);
                     let k = if ["rejects_by_reason", "cancels_by_cause"].contains(&field) {
@@ -718,7 +719,7 @@ fn generate(c: &Config) -> io::Result<(Json, i32)> {
     };
     drop(run);
     exact(&mut data);
-    if data.encode().len() > MAX_DATA {
+    if data.encoded_len() > MAX_DATA {
         return Err(invalid("report JSON exceeds 96 MiB; narrow --from/--to"));
     }
     Ok((data, exit))

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 //! Small dependency-free JSON codec for bundle metadata. Numbers retain their exact text.
-use std::collections::BTreeMap;
 use std::io;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Json {
@@ -9,7 +8,92 @@ pub(crate) enum Json {
     Number(String),
     String(String),
     Array(Vec<Json>),
-    Object(BTreeMap<String, Json>),
+    Object(Map),
+}
+/// Object fields as one key-sorted vector. Bundles parse to millions of small
+/// objects; a B-tree node costs ~600 bytes even for two fields.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Map(Vec<(String, Json)>);
+impl Map {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+    pub(crate) fn with_capacity(n: usize) -> Self {
+        Self(Vec::with_capacity(n))
+    }
+    fn find(&self, key: &str) -> Result<usize, usize> {
+        self.0.binary_search_by(|(k, _)| k.as_str().cmp(key))
+    }
+    pub(crate) fn get(&self, key: &str) -> Option<&Json> {
+        self.find(key).ok().map(|i| &self.0[i].1)
+    }
+    pub(crate) fn get_mut(&mut self, key: &str) -> Option<&mut Json> {
+        self.find(key).ok().map(|i| &mut self.0[i].1)
+    }
+    pub(crate) fn contains_key(&self, key: &str) -> bool {
+        self.find(key).is_ok()
+    }
+    pub(crate) fn insert(&mut self, key: String, value: Json) -> Option<Json> {
+        if self.0.last().is_none_or(|(k, _)| *k < key) {
+            self.0.push((key, value));
+            return None;
+        }
+        match self.find(&key) {
+            Ok(i) => Some(std::mem::replace(&mut self.0[i].1, value)),
+            Err(i) => {
+                self.0.insert(i, (key, value));
+                None
+            }
+        }
+    }
+    pub(crate) fn remove(&mut self, key: &str) -> Option<Json> {
+        self.find(key).ok().map(|i| self.0.remove(i).1)
+    }
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&String, &mut Json) -> bool) {
+        self.0.retain_mut(|(k, v)| keep(k, v));
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = (&String, &Json)> {
+        self.0.iter().map(|(k, v)| (k, v))
+    }
+    pub(crate) fn values(&self) -> impl DoubleEndedIterator<Item = &Json> {
+        self.0.iter().map(|(_, v)| v)
+    }
+    pub(crate) fn values_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut Json> {
+        self.0.iter_mut().map(|(_, v)| v)
+    }
+}
+impl FromIterator<(String, Json)> for Map {
+    /// Later duplicates replace earlier ones, as with `BTreeMap`.
+    fn from_iter<I: IntoIterator<Item = (String, Json)>>(fields: I) -> Self {
+        let mut v: Vec<_> = fields.into_iter().collect();
+        if !v.is_sorted_by(|a, b| a.0 < b.0) {
+            v.reverse();
+            v.sort_by(|a, b| a.0.cmp(&b.0));
+            v.dedup_by(|later, earlier| later.0 == earlier.0);
+        }
+        v.shrink_to_fit();
+        Self(v)
+    }
+}
+impl IntoIterator for Map {
+    type Item = (String, Json);
+    type IntoIter = std::vec::IntoIter<(String, Json)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+impl<'a> IntoIterator for &'a Map {
+    type Item = (&'a String, &'a Json);
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (String, Json)>,
+        fn(&'a (String, Json)) -> (&'a String, &'a Json),
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(|(k, v)| (k, v))
+    }
 }
 impl Json {
     pub(crate) fn string(s: impl Into<String>) -> Self {
@@ -39,6 +123,35 @@ impl Json {
         let mut out = String::new();
         self.encode_into(&mut out);
         out
+    }
+    /// Byte length of `encode()` without building the string.
+    pub(crate) fn encoded_len(&self) -> usize {
+        fn text(s: &str) -> usize {
+            2 + s
+                .chars()
+                .map(|c| match c {
+                    '"' | '\\' => 2,
+                    c if c < ' ' => 6,
+                    c => c.len_utf8(),
+                })
+                .sum::<usize>()
+        }
+        match self {
+            Self::Null => 4,
+            Self::Bool(true) => 4,
+            Self::Bool(false) => 5,
+            Self::Number(n) => n.len(),
+            Self::String(s) => text(s),
+            Self::Array(a) => {
+                2 + a.len().saturating_sub(1) + a.iter().map(Self::encoded_len).sum::<usize>()
+            }
+            Self::Object(m) => {
+                2 + m.len().saturating_sub(1)
+                    + m.iter()
+                        .map(|(k, v)| text(k) + 1 + v.encoded_len())
+                        .sum::<usize>()
+            }
+        }
     }
     fn encode_string(s: &str, out: &mut String) {
         out.push('"');
@@ -198,7 +311,7 @@ impl Parser<'_> {
             Some(b'"') => Ok(Json::String(self.string()?)),
             Some(b'{') => {
                 self.i += 1;
-                let mut m = BTreeMap::new();
+                let mut m = Map::new();
                 if self.take(b'}') {
                     return Ok(Json::Object(m));
                 }
@@ -214,6 +327,7 @@ impl Parser<'_> {
                     }
                     self.expect(b',')?;
                 }
+                m.0.shrink_to_fit();
                 Ok(Json::Object(m))
             }
             Some(b'[') => {
@@ -291,6 +405,30 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn object_fields_stay_sorted_and_unique() {
+        let mut m: Map = [("b", 1), ("a", 2), ("b", 3)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), Json::number(v)))
+            .collect();
+        assert_eq!(Json::Object(m.clone()).encode(), r#"{"a":2,"b":3}"#);
+        assert_eq!(m.insert("c".into(), Json::Null), None);
+        assert_eq!(m.insert("0".into(), Json::Null), None);
+        assert_eq!(
+            m.insert("a".into(), Json::Bool(true)),
+            Some(Json::number(2))
+        );
+        assert_eq!(m.remove("c"), Some(Json::Null));
+        assert!(m.contains_key("0") && !m.contains_key("c"));
+        assert_eq!(Json::Object(m).encode(), r#"{"0":null,"a":true,"b":3}"#);
+        let unsorted = Json::parse(r#"{"z":1,"a":{"y":[],"b":"\u0001\"\\é"}}"#).unwrap();
+        assert_eq!(
+            unsorted.encode(),
+            r#"{"a":{"b":"\u0001\"\\é","y":[]},"z":1}"#
+        );
+        assert_eq!(unsorted.encoded_len(), unsorted.encode().len());
+        assert!(Json::parse(r#"{"a":1,"a":2}"#).is_err());
+    }
     #[test]
     fn metadata_json() {
         for s in [

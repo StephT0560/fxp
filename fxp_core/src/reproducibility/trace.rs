@@ -22,7 +22,7 @@ fn integer(n: i64) -> Json {
     Json::Number(n.to_string())
 }
 pub(crate) fn command(input: &Input) -> Json {
-    let mut m = BTreeMap::new();
+    let mut m = super::json::Map::new();
     let mut str_field = |k: &str, v: &str| {
         m.insert(k.into(), Json::string(v));
     };
