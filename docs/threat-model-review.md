@@ -23,12 +23,21 @@ the private vulnerability reporting channel.
 ## Residual risks and operational controls
 
 - The FIX bridge holds the gateway JWT signing key. Treat bridge compromise
-  as issuer compromise for incident response. Rotate the shared signing key
-  and terminate affected sessions. A separate, scope-limited bridge credential
+  as issuer compromise for incident response. Provision a fresh signing key
+  and remove every compromised key from gateway verification, including
+  `FXP_JWT_PREVIOUS_SECRET` and its `FXP_JWT_PREVIOUS_KID` rotation slot.
+  Replace the bridge's key and the gateway's `FXP_JWT_SECRET` and
+  `FXP_JWT_KID` through the deployment's secret configuration, then restart
+  affected processes to apply the environment and terminate existing sessions.
+  Verify that tokens signed with each revoked key fail authentication on
+  every gateway instance. A separate, scope-limited bridge credential
   would reduce the impact of future compromise.
 - Coordinate principal assignment across JWT and FIX issuers. Reserve distinct
-  trader namespaces where identities are independent and exclude `::` from
-  issued trader IDs while the gateway uses delimiter-based order IDs. Any
+  trader namespaces where identities are independent and exclude every colon
+  (`:`) from issued trader IDs while the gateway uses delimiter-based order
+  IDs. Enforce this in JWT subject and FIX SenderCompID provisioning. Excluding
+  only `::` still permits a boundary collision between trader `desk:` with
+  order `1` and trader `desk` with order `:1`, both encoded as `desk:::1`. Any
   encoding change needs a migration plan for resting orders and report routes.
 - Treat FIX resend stores and epoch archives as sensitive order records.
   Define access, retention, and disk budgets for both the active log and
