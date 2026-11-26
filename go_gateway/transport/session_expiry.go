@@ -50,9 +50,18 @@ func startConnectionSession(conn any, logon *protobuf.Logon, claims *jwtClaims, 
 			// Close output before cleanup, which may block on a Core write.
 			writer.forceStop()
 			writer.sessionMu.Unlock()
-			unregisterClientWriter(conn)
-			endSessionFor(conn, sid)
+			// The reader owns session teardown after its in-flight forwarding
+			// completes. It also preserves the Core-loss disconnect cause.
 		})
 	}
 	return sid, nil
+}
+
+func (w *clientWriter) stopSessionExpiry() {
+	w.sessionMu.Lock()
+	defer w.sessionMu.Unlock()
+	if w.expiryTimer != nil {
+		w.expiryTimer.Stop()
+		w.expiryTimer = nil
+	}
 }

@@ -157,9 +157,15 @@ func TestSessionExpiryClosesOutputDuringCoreBackpressure(t *testing.T) {
 			wireLogon(t, wire, sessionToken(t, "expiring", time.Now().Unix()+2, "expiry"), true, true)
 			wire.send(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: &protobuf.MarketDataRequest{Symbols: []string{symbol}}}})
 			waitUntil(t, func() bool { _, ok := clientSubs.Load(symbol); return ok })
-			if _, err := wire.read(); err == nil {
+			if _, err := wire.read(); err == nil || isTimeout(err) {
 				t.Fatal("expired connection still open")
 			}
+			select {
+			case <-canceled:
+				t.Fatal("disconnect cancel overtook in-flight forwarding")
+			default:
+			}
+			_ = core.Close()
 			select {
 			case owner := <-canceled:
 				if owner != "expiring" {
@@ -187,8 +193,76 @@ func TestRenewalReplacesIdleExpiryTimer(t *testing.T) {
 			wireLogon(t, wire, sessionToken(t, "renewed", exp+3, "second"), false, true)
 			time.Sleep(time.Until(time.Unix(exp, 0)) + 50*time.Millisecond)
 			wireLogon(t, wire, sessionToken(t, "renewed", exp+3, fmt.Sprint(exp)), false, true)
-			if _, err := wire.read(); err == nil {
+			if _, err := wire.read(); err == nil || isTimeout(err) {
 				t.Fatal("idle renewed session did not expire")
+			}
+		})
+	}
+}
+
+func TestExpiryPreservesCoreLossCauseWhileForwardingIsBlocked(t *testing.T) {
+	t.Setenv("FXP_JWT_SECRET", "session-test")
+	t.Setenv("FXP_JWT_ENFORCE_SESSION_EXPIRY", "true")
+	oldMD, oldCancel := mdConn, cancelOnDisconnect
+	server, core := pipes(t)
+	mdConn = newPooledConnWith(0, server)
+	canceled := make(chan string, 2)
+	cancelOnDisconnect = func(owner string) { canceled <- owner }
+	wire := newSessionWire(t, "tcp")
+	defer func() { _ = core.Close(); wire.close(); mdConn, cancelOnDisconnect = oldMD, oldCancel }()
+	wireLogon(t, wire, sessionToken(t, "resync", time.Now().Unix()+2, "resync"), true, true)
+	wire.send(&protobuf.FXPMessage{Payload: &protobuf.FXPMessage_MarketDataRequest{MarketDataRequest: &protobuf.MarketDataRequest{Symbols: []string{"RESYNC-EXPIRY"}}}})
+	var writer *clientWriter
+	waitUntil(t, func() bool {
+		if clients, ok := clientSubs.Load("RESYNC-EXPIRY"); ok {
+			clients.(*sync.Map).Range(func(conn, _ any) bool {
+				value, ok := clientWriters.Load(conn)
+				if ok {
+					writer = value.(*clientWriter)
+					coreLossClosed.Store(conn, struct{}{})
+					closeConn(conn)
+				}
+				return false
+			})
+		}
+		return writer != nil
+	})
+	select {
+	case <-writer.stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("expiry did not stop writer")
+	}
+	_ = core.Close()
+	waitUntil(t, func() bool { _, ok := coreLossClosed.Load(writer.conn); return !ok })
+	select {
+	case <-canceled:
+		t.Fatal("Core-loss resync triggered cancel-on-disconnect")
+	default:
+	}
+}
+
+func TestWriterExitStopsDetachedExpiryTimer(t *testing.T) {
+	for _, drain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("drain=%t", drain), func(t *testing.T) {
+			server, _ := pipes(t)
+			writer := registerClientWriter(server)
+			writer.sessionMu.Lock()
+			writer.expiryTimer = time.AfterFunc(time.Hour, func() { t.Error("detached timer fired") })
+			writer.sessionMu.Unlock()
+			if drain {
+				writer.drain()
+			} else {
+				writer.fail(nil)
+			}
+			select {
+			case <-writer.finished:
+			case <-time.After(time.Second):
+				t.Fatal("writer did not exit")
+			}
+			writer.sessionMu.Lock()
+			defer writer.sessionMu.Unlock()
+			if writer.expiryTimer != nil {
+				t.Fatal("writer exit retained expiry timer")
 			}
 		})
 	}

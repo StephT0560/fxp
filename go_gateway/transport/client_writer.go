@@ -67,12 +67,8 @@ func unregisterClientWriter(conn any) {
 	})
 	if value, ok := clientWriters.LoadAndDelete(conn); ok {
 		writer := value.(*clientWriter)
-		writer.sessionMu.Lock()
-		if writer.expiryTimer != nil {
-			writer.expiryTimer.Stop()
-		}
+		writer.stopSessionExpiry()
 		writer.stop()
-		writer.sessionMu.Unlock()
 	}
 	coreLossClosed.Delete(conn)
 }
@@ -203,6 +199,7 @@ func (w *clientWriter) enqueue(raw []byte, marketData bool) error {
 
 func (w *clientWriter) run() {
 	defer close(w.finished)
+	defer w.stopSessionExpiry()
 	draining := false
 	for {
 		if draining {
