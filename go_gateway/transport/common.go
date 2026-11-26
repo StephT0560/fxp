@@ -329,7 +329,6 @@ func ForwardMarketData(update proto.Message) {
 			if sendErr := enqueueClientData(key, data, true); sendErr != nil {
 				log.Printf("❌ Failed to send market data to client (%T): %v", key, sendErr)
 				closeConn(key)
-				clients.(*sync.Map).Delete(key)
 			}
 			return true
 		})
@@ -339,46 +338,103 @@ func ForwardMarketData(update proto.Message) {
 	}
 }
 
-// Registers a TCP client for market data updates and forwards the
-// subscription to Rust Core so it starts broadcasting on this symbol.
-func SubscribeToMarketDataTCP(clientConn net.Conn, request *protobuf.MarketDataRequest) {
-	for _, symbol := range request.Symbols {
-		clients, _ := clientSubs.LoadOrStore(symbol, &sync.Map{})
-		clients.(*sync.Map).Store(clientConn, true)
-	}
-	log.Printf("✅ TCP Client subscribed to market data: %v", request.Symbols)
+const (
+	maxSubscriptionsPerClient  = 256
+	maxSubscriptionSymbols     = 4096
+	maxSubscriptionSymbolBytes = 128
+)
 
-	for _, symbol := range request.Symbols {
-		if subs, ok := clientSubs.Load(symbol); ok {
-			count := 0
-			subs.(*sync.Map).Range(func(_, _ any) bool {
-				count++
-				return true
-			})
-			slog.Debug("clients subscribed", "count", count, "symbol", symbol)
+// Serializes membership changes and reconnect snapshots.
+var subscriptionsMu sync.Mutex
+var subscriptionsByClient = make(map[any]map[string]struct{})
+var subscriptionRefCount = make(map[string]int)
+
+func SubscribeToMarketDataTCP(conn net.Conn, request *protobuf.MarketDataRequest) {
+	subscribeToMarketData(conn, request)
+}
+
+func SubscribeToMarketDataWS(conn *websocket.Conn, request *protobuf.MarketDataRequest) {
+	subscribeToMarketData(conn, request)
+}
+
+func subscribeToMarketData(conn any, request *protobuf.MarketDataRequest) {
+	symbols, ok := registerSubscriptions(conn, request.Symbols)
+	if !ok {
+		sendSessionError(conn, protobuf.ErrorType_RATE_LIMIT_EXCEEDED, "market data subscription limit exceeded")
+		return
+	}
+	if len(symbols) != 0 {
+		forwardSubscriptionToCore(&protobuf.MarketDataRequest{Symbols: symbols})
+	}
+}
+
+func registerSubscriptions(conn any, requested []string) ([]string, bool) {
+	subscriptionsMu.Lock()
+	defer subscriptionsMu.Unlock()
+
+	existing := subscriptionsByClient[conn]
+	symbols := make([]string, 0, min(len(requested), maxSubscriptionsPerClient))
+	seen := make(map[string]struct{})
+	newForClient, newGlobal := 0, 0
+	for _, symbol := range requested {
+		if symbol == "" {
+			continue
+		}
+		if len(symbol) > maxSubscriptionSymbolBytes {
+			return nil, false
+		}
+		if _, duplicate := seen[symbol]; duplicate {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		symbols = append(symbols, symbol)
+		if _, subscribed := existing[symbol]; !subscribed {
+			newForClient++
+			if subscriptionRefCount[symbol] == 0 {
+				newGlobal++
+			}
+		}
+		if len(existing)+newForClient > maxSubscriptionsPerClient ||
+			len(subscriptionRefCount)+newGlobal > maxSubscriptionSymbols {
+			return nil, false
 		}
 	}
-
-	// Forward subscription to Rust Core so it starts emitting incremental
-	// updates for this symbol on the persistent connection.
-	forwardSubscriptionToCore(request)
-}
-
-// Registers a WebSocket client for market data updates and forwards the
-// subscription to Rust Core.
-func SubscribeToMarketDataWS(clientConn *websocket.Conn, request *protobuf.MarketDataRequest) {
-	for _, symbol := range request.Symbols {
-		clients, _ := clientSubs.LoadOrStore(symbol, &sync.Map{})
-		clients.(*sync.Map).Store(clientConn, true)
+	if len(symbols) == 0 {
+		return nil, true
 	}
-	log.Printf("✅ WebSocket Client subscribed to market data: %v", request.Symbols)
-
-	forwardSubscriptionToCore(request)
+	if existing == nil {
+		existing = make(map[string]struct{})
+		subscriptionsByClient[conn] = existing
+	}
+	for _, symbol := range symbols {
+		if _, subscribed := existing[symbol]; subscribed {
+			continue
+		}
+		existing[symbol] = struct{}{}
+		subscriptionRefCount[symbol]++
+		clients, _ := clientSubs.LoadOrStore(symbol, &sync.Map{})
+		clients.(*sync.Map).Store(conn, true)
+	}
+	return symbols, true
 }
 
-// ====================================================
-// ✅ Graceful connection close for TCP or WebSocket
-// ====================================================
+func removeSubscriptions(conn any) {
+	subscriptionsMu.Lock()
+	defer subscriptionsMu.Unlock()
+
+	for symbol := range subscriptionsByClient[conn] {
+		subscriptionRefCount[symbol]--
+		clients, _ := clientSubs.Load(symbol)
+		clients.(*sync.Map).Delete(conn)
+		if subscriptionRefCount[symbol] == 0 {
+			delete(subscriptionRefCount, symbol)
+			clientSubs.Delete(symbol)
+			mdAwaiting.Delete(symbol)
+		}
+	}
+	delete(subscriptionsByClient, conn)
+}
+
 func closeConn(conn interface{}) {
 	switch c := conn.(type) {
 	case net.Conn:

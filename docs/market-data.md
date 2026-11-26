@@ -8,6 +8,15 @@ symbol (TCP `MarketDataRequest`, WebSocket subscription, or FIX `35=V` with
 market-data queue in the core; private `ExecutionReport`s use a separate
 critical queue and are never dropped in favor of market data.
 
+## Gateway subscription limits
+
+The gateway allows up to 256 distinct symbols per connection and 4,096
+distinct subscribed symbols across the process. A symbol can occupy up to
+128 bytes. Repeating a symbol consumes no additional membership slot.
+A request exceeding a limit is rejected in full with
+`RATE_LIMIT_EXCEEDED`. Disconnecting frees the connection's memberships,
+including unused symbol entries. A core reconnect replays active memberships.
+
 ## Public trade feed (protocol v2.5)
 
 The core emits exactly one `TradeCaptureReport` per fill, in matching order,

@@ -3,6 +3,7 @@
 package transport
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -135,14 +136,15 @@ func TestMarketDataConnectionRestoresSubscriptions(t *testing.T) {
 // A departed client's subscriptions must not keep the restore loop retrying.
 func TestUnregisterClientWriterDropsSubscriptions(t *testing.T) {
 	client := new(int)
-	subs := &sync.Map{}
-	subs.Store(client, true)
-	clientSubs.Store("DEPARTED", subs)
+	if _, ok := registerSubscriptions(client, []string{"DEPARTED"}); !ok {
+		t.Fatal("subscription rejected")
+	}
+	t.Cleanup(func() { removeSubscriptions(client) })
 	mdAwaiting.Store("DEPARTED", struct{}{})
 	t.Cleanup(func() { clientSubs.Delete("DEPARTED"); mdAwaiting.Delete("DEPARTED") })
 
 	unregisterClientWriter(client)
-	if _, ok := subs.Load(client); ok {
+	if _, ok := clientSubs.Load("DEPARTED"); ok {
 		t.Fatal("subscription survived unregister")
 	}
 	if n, err := replaySubscriptions(&pooledConn{}, true); n != 0 || err != nil {
@@ -150,5 +152,39 @@ func TestUnregisterClientWriterDropsSubscriptions(t *testing.T) {
 	}
 	if _, ok := mdAwaiting.Load("DEPARTED"); ok {
 		t.Fatal("departed symbol still awaiting a snapshot")
+	}
+}
+
+func TestSubscriptionBudgetIsAtomicAndReusable(t *testing.T) {
+	client, other := new(int), new(int)
+	t.Cleanup(func() {
+		removeSubscriptions(client)
+		removeSubscriptions(other)
+	})
+	symbols := make([]string, maxSubscriptionsPerClient)
+	for i := range symbols {
+		symbols[i] = fmt.Sprintf("BUDGET-%d", i)
+	}
+	if got, ok := registerSubscriptions(client, append(slices.Clone(symbols), symbols[0])); !ok || len(got) != len(symbols) {
+		t.Fatalf("duplicate counted against budget: %d, %t", len(got), ok)
+	}
+	if _, ok := registerSubscriptions(client, []string{symbols[0], "BUDGET-OVERFLOW"}); ok {
+		t.Fatal("request exceeded the per-client budget")
+	}
+	if _, ok := clientSubs.Load("BUDGET-OVERFLOW"); ok {
+		t.Fatal("rejected request left subscription state")
+	}
+	if _, ok := registerSubscriptions(other, symbols[:1]); !ok {
+		t.Fatal("second client could not share a symbol")
+	}
+	removeSubscriptions(client)
+	if _, ok := clientSubs.Load(symbols[0]); !ok {
+		t.Fatal("removal dropped another client's subscription")
+	}
+	if _, ok := clientSubs.Load(symbols[1]); ok {
+		t.Fatal("removal retained an unused symbol")
+	}
+	if _, ok := registerSubscriptions(client, symbols); !ok {
+		t.Fatal("removed subscriptions still consume the budget")
 	}
 }
